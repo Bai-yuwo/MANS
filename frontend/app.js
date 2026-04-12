@@ -60,3 +60,25 @@ function toggleSidebar() {
     const isCollapsed = sidebar.classList.contains('collapsed');
     localStorage.setItem('sidebarCollapsed', isCollapsed);
 }
+
+// 页面 DOM 加载完毕后立即执行
+document.addEventListener('DOMContentLoaded', async () => {
+    await checkLocalProjects();
+});
+
+async function checkLocalProjects() {
+    try{
+        const response = await fetch('/api/get_projects');
+        const data = await response.json();
+
+        const projects = data.projects;
+        if (projects.length === 0){
+            const div = document.getElementById('works-select-container');
+            div.style.display = 'None';
+            console.log("0");
+        }
+    }
+    catch(error){
+        console.log(error);
+    }
+}

@@ -55,10 +55,13 @@
                             margin-top:10px">
                     <!-- 中央选择区 -->
                     <div style="display: flex;grid-column: 2/3;justify-content: center; align-items: center;">
-                        <label for="works-select">作品选择：</label>
-                        <select class="custom-select" id="works-select">
-                            <option disabled hidden id="defult_option" selected value="">请选择作品</option>
-                        </select>
+                        <label>
+                            当前作品:
+                        </label>
+                        <label id="works-selected-label" style="width: 200px;text-align: center">
+                            请选择作品
+                        </label>
+
                     </div>
                     <!-- 右侧按钮区 -->
                     <button class="mans-btn primary"
@@ -67,7 +70,7 @@
                                    width: 100px;
                                    justify-self: end;
                                    margin-right: 20px">
-                        添加作品
+                        创建作品
                     </button>
                 </div>
                 <!-- 作品内容 -->

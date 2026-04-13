@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MANS - 多智能体小说创作系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* 流式内容容器样式 */
+        .streaming-container {
+            max-height: 500px;
+            overflow-y: auto;
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            scroll-behavior: smooth;
+        }
+        
+        .stream-block {
+            margin-bottom: 12px;
+            border-left: 3px solid #4a5568;
+            padding-left: 12px;
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        .stream-block.content {
+            border-left-color: #48bb78;
+        }
+        
+        .stream-block.thought {
+            border-left-color: #a0aec0;
+            opacity: 0.75;
+        }
+        
+        .stream-header {
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .agent-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+        }
+        
+        .agent-badge.a1 { background: #4299e1; }
+        .agent-badge.b { background: #ed8936; }
+        .agent-badge.c1 { background: #9f7aea; }
+        .agent-badge.system { background: #718096; }
+        
+        .content-type-label {
+            font-size: 11px;
+            color: #a0aec0;
+            font-weight: normal;
+        }
+        
+        .stream-content {
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            color: #e2e8f0;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* 滚动条样式 */
+        .streaming-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .streaming-container::-webkit-scrollbar-track {
+            background: #2d3748;
+            border-radius: 4px;
+        }
+        
+        .streaming-container::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 4px;
+        }
+        
+        .streaming-container::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
+    </style>
+</head>
+<body class="antialiased">
+    <div class="flex min-h-screen">
+        <!-- 侧边栏 -->
+        <aside class="sidebar w-64 fixed left-0 top-0 h-full z-10">
+            <div class="p-6">
+                <h1 class="text-2xl font-bold mb-1">
+                    <i class="fas fa-dragon text-indigo-500 mr-2"></i>MANS
+                </h1>
+                <p class="text-xs text-gray-400">多智能体小说创作系统 v1.0</p>
+            </div>
+            
+            <nav class="mt-4">
+                <div class="nav-item px-6 py-3 flex items-center active" onclick="showPage('dashboard')">
+                    <i class="fas fa-home w-6"></i>
+                    <span>概览</span>
+                </div>
+                <div class="nav-item px-6 py-3 flex items-center" onclick="showPage('projects')">
+                    <i class="fas fa-book w-6"></i>
+                    <span>项目管理</span>
+                </div>
+                <div class="nav-item px-6 py-3 flex items-center" onclick="showPage('create')">
+                    <i class="fas fa-pen-fancy w-6"></i>
+                    <span>创作工作台</span>
+                </div>
+                <div class="nav-item px-6 py-3 flex items-center" onclick="showPage('monitor')">
+                    <i class="fas fa-chart-line w-6"></i>
+                    <span>实时监控</span>
+                </div>
+                <div class="nav-item px-6 py-3 flex items-center" onclick="showPage('logs')">
+                    <i class="fas fa-terminal w-6"></i>
+                    <span>系统日志</span>
+                </div>
+                <div class="nav-item px-6 py-3 flex items-center" onclick="showPage('settings')">
+                    <i class="fas fa-cog w-6"></i>
+                    <span>设置</span>
+                </div>
+            </nav>
+            
+            <div class="absolute bottom-0 left-0 right-0 p-6 border-t border-gray-700">
+                <!-- API 状态 -->
+                <div class="flex items-center text-sm text-gray-400 mb-2">
+                    <div id="api-status-dot" class="w-2 h-2 rounded-full bg-gray-500 mr-2"></div>
+                    <span id="api-status-text">检查中...</span>
+                </div>
+                <div class="text-xs text-gray-500">
+                    <span id="monitor-uptime">运行时间: 计算中...</span>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- 主内容区 -->
+        <main class="flex-1 ml-64 p-8">
+            <!-- 概览页面 -->
+            <div id="page-dashboard" class="page fade-in">
+                <div class="mb-8">
+                    <h2 class="text-3xl font-bold mb-2">欢迎使用 MANS</h2>
+                    <p class="text-gray-400">多智能体协作，开启小说创作新纪元</p>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center">
+                                <i class="fas fa-book text-indigo-400 text-xl"></i>
+                            </div>
+                            <span id="stat-projects" class="text-3xl font-bold">-</span>
+                        </div>
+                        <p class="text-gray-400">项目总数</p>
+                    </div>
+                    
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center">
+                                <i class="fas fa-file-alt text-purple-400 text-xl"></i>
+                            </div>
+                            <span id="stat-chapters" class="text-3xl font-bold">-</span>
+                        </div>
+                        <p class="text-gray-400">总章节数</p>
+                    </div>
+                    
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center">
+                                <i class="fas fa-font text-green-400 text-xl"></i>
+                            </div>
+                            <span id="stat-words" class="text-3xl font-bold">-</span>
+                        </div>
+                        <p class="text-gray-400">总字数</p>
+                    </div>
+                    
+                    <div class="card p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="w-12 h-12 rounded-xl bg-yellow-500/20 flex items-center justify-center">
+                                <i class="fas fa-bolt text-yellow-400 text-xl"></i>
+                            </div>
+                            <span id="stat-api-calls" class="text-3xl font-bold">-</span>
+                        </div>
+                        <p class="text-gray-400">API调用</p>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="card p-6">
+                        <h3 class="text-xl font-bold mb-4">快速开始</h3>
+                        <div class="flex flex-col gap-3">
+                            <button class="btn-primary" onclick="showPage('create'); openNewProjectModal()">
+                                <i class="fas fa-plus mr-2"></i>创建新项目
+                            </button>
+                            <button class="btn-secondary" onclick="showPage('projects')">
+                                <i class="fas fa-folder-open mr-2"></i>查看项目
+                            </button>
+                            <button class="btn-secondary" onclick="showPage('monitor')">
+                                <i class="fas fa-chart-line mr-2"></i>监控面板
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="card p-6">
+                        <h3 class="text-xl font-bold mb-4">系统状态</h3>
+                        <div class="space-y-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-400">API状态</span>
+                                <span id="dash-api-status" class="status-badge status-pending">检查中</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-400">模型</span>
+                                <span id="model-display" class="text-white">加载中...</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-400">智能体</span>
+                                <span class="text-white">A1 + B + C1</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-400">运行模式</span>
+                                <span class="text-white">生产环境</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 项目管理页面 -->
+            <div id="page-projects" class="page hidden">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-3xl font-bold">项目管理</h2>
+                    <button class="btn-primary" onclick="openNewProjectModal()">
+                        <i class="fas fa-plus mr-2"></i>新建项目
+                    </button>
+                </div>
+                
+                <div id="projects-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div class="card p-6 text-center text-gray-400">
+                        <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                        <p>加载中...</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 创作工作台页面 -->
+            <div id="page-create" class="page hidden">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-3xl font-bold">创作工作台</h2>
+                    <select id="project-select" class="input-field w-64" onchange="loadProjectForWriting()">
+                        <option value="">选择项目...</option>
+                    </select>
+                </div>
+                
+                <div id="write-area" class="hidden">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- 左侧：创作控制 -->
+                        <div class="lg:col-span-1">
+                            <div class="card p-6 mb-6">
+                                <div class="mb-4">
+                                    <h3 id="current-project-title" class="text-xl font-bold">-</h3>
+                                    <p class="text-gray-400 text-sm">当前进度: 第 <span id="current-chapter-num">0</span> 章</p>
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <label class="block text-sm text-gray-400 mb-2">创作第几章</label>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" id="target-chapter" class="input-field flex-1" value="1" min="1">
+                                        <button id="btn-create-chapter" class="btn-primary" onclick="createChapter()">
+                                            <i class="fas fa-magic mr-1"></i>创作
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <div class="flex gap-2">
+                                    <button class="btn-secondary flex-1" onclick="createChapterQuick()">
+                                        <i class="fas fa-bolt mr-1"></i>快速创作
+                                    </button>
+                                    <button class="btn-secondary" onclick="loadChapterForEdit()">
+                                        <i class="fas fa-edit mr-1"></i>编辑
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- 创作进度 -->
+                            <div id="creation-progress" class="card p-6 hidden">
+                                <div class="flex items-center justify-between mb-3">
+                                    <h4 class="font-bold">创作进度</h4>
+                                    <div id="task-controls" class="flex gap-2">
+                                        <button id="btn-pause" class="btn-secondary text-sm hidden" onclick="pauseTask()">
+                                            <i class="fas fa-pause mr-1"></i>暂停
+                                        </button>
+                                        <button id="btn-resume" class="btn-secondary text-sm hidden" onclick="resumeTask()">
+                                            <i class="fas fa-play mr-1"></i>继续
+                                        </button>
+                                        <button id="btn-save" class="btn-secondary text-sm" onclick="saveProgress()">
+                                            <i class="fas fa-save mr-1"></i>保存
+                                        </button>
+                                        <button id="btn-stop" class="btn-danger text-sm" onclick="stopTask()">
+                                            <i class="fas fa-stop mr-1"></i>中断
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="mb-2">
+                                    <div class="flex justify-between text-sm mb-1">
+                                        <span id="progress-text">准备中...</span>
+                                        <span id="progress-percent">0%</span>
+                                    </div>
+                                    <div class="progress-bar">
+                                        <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div id="progress-logs" class="mt-4 max-h-60 overflow-y-auto space-y-2"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- 右侧：章节预览/编辑 - 双栏布局 -->
+                        <div class="lg:col-span-2">
+                            <div id="chapter-preview" class="card p-6 hidden">
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 id="preview-title" class="text-xl font-bold">章节预览</h3>
+                                    <div class="flex gap-2">
+                                        <button class="btn-secondary" onclick="toggleEdit()">
+                                            <i class="fas fa-edit mr-1"></i>编辑
+                                        </button>
+                                        <button class="btn-primary" onclick="saveChapterEdit()">
+                                            <i class="fas fa-save mr-1"></i>保存
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- 双栏布局 -->
+                                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                    <!-- 左栏：原始流式输出 -->
+                                    <div class="border border-gray-700 rounded-lg overflow-hidden">
+                                        <div class="bg-gray-800 px-4 py-2 flex items-center justify-between">
+                                            <span class="text-sm font-medium text-gray-300">
+                                                <i class="fas fa-terminal mr-2 text-indigo-400"></i>原始输出
+                                            </span>
+                                            <span id="raw-output-status" class="text-xs text-gray-500">等待...</span>
+                                        </div>
+                                        <div id="chapter-raw-output" class="editor h-96 overflow-y-auto bg-gray-900 p-4 text-sm" style="font-family: monospace;">
+                                            <div class="text-gray-500 text-center py-8">等待创作任务...</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- 右栏：正式章节内容 -->
+                                    <div class="border border-gray-700 rounded-lg overflow-hidden">
+                                        <div class="bg-gray-800 px-4 py-2 flex items-center justify-between">
+                                            <span class="text-sm font-medium text-gray-300">
+                                                <i class="fas fa-book mr-2 text-green-400"></i>章节内容
+                                            </span>
+                                            <span id="chapter-word-count-badge" class="text-xs text-gray-500">0 字</span>
+                                        </div>
+                                        <div id="chapter-editor-wrapper" class="relative">
+                                            <!-- 阅读模式：div 显示 -->
+                                            <div id="chapter-editor" class="editor h-96 overflow-y-auto bg-gray-900 p-4" style="display: block;"></div>
+                                            <!-- 编辑模式：textarea 替换 -->
+                                            <textarea id="chapter-textarea" class="editor h-96 w-full bg-gray-900 p-4 text-gray-200 resize-none border-none outline-none" style="display: none; font-family: inherit; line-height: 1.7;" placeholder="输入章节内容..."></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mt-4 flex justify-between text-sm text-gray-400">
+                                    <span><i class="fas fa-font mr-1"></i><span id="preview-word-count">0</span> 字</span>
+                                    <span><i class="fas fa-align-left mr-1"></i><span id="preview-paragraphs">0</span> 段</span>
+                                    <span id="chapter-status-badge" class="status-badge status-active">已完成</span>
+                                </div>
+                            </div>
+                            
+                            <div id="no-chapter-selected" class="card p-12 text-center">
+                                <i class="fas fa-book-open text-6xl text-gray-600 mb-4"></i>
+                                <h3 class="text-xl font-bold mb-2">选择章节开始创作</h3>
+                                <p class="text-gray-400">输入章节号并点击创作按钮</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="no-project-selected" class="card p-12 text-center">
+                    <i class="fas fa-book-open text-6xl text-gray-600 mb-4"></i>
+                    <h3 class="text-xl font-bold mb-2">请先选择项目</h3>
+                    <p class="text-gray-400 mb-4">从上方下拉菜单选择一个项目开始创作</p>
+                    <button class="btn-primary" onclick="showPage('projects')">
+                        去创建项目
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 实时监控页面 -->
+            <div id="page-monitor" class="page hidden">
+                <div class="mb-6">
+                    <h2 class="text-3xl font-bold">实时监控</h2>
+                    <p class="text-gray-400">系统运行状态与性能指标</p>
+                </div>
+                
+                <!-- 第一行：核心指标 -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+                    <div class="card p-6">
+                        <div class="text-gray-400 text-sm mb-2">API调用次数</div>
+                        <div id="monitor-api-calls" class="text-3xl font-bold text-indigo-400">0</div>
+                    </div>
+                    <div class="card p-6">
+                        <div class="text-gray-400 text-sm mb-2">平均响应时间</div>
+                        <div id="monitor-avg-time" class="text-3xl font-bold text-purple-400">-</div>
+                    </div>
+                    <div class="card p-6">
+                        <div class="text-gray-400 text-sm mb-2">CPU使用率</div>
+                        <div id="monitor-cpu" class="text-3xl font-bold text-green-400">-</div>
+                    </div>
+                    <div class="card p-6">
+                        <div class="text-gray-400 text-sm mb-2">内存使用率</div>
+                        <div id="monitor-memory" class="text-3xl font-bold text-yellow-400">-</div>
+                    </div>
+                </div>
+
+                <!-- 第二行：任务统计 + 运行时长 -->
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
+                    <div class="card p-6 border-l-4 border-l-blue-500">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-gray-400 text-sm">累计任务</div>
+                                <div id="monitor-tasks-total" class="text-2xl font-bold text-blue-400">0</div>
+                            </div>
+                            <i class="fas fa-tasks text-blue-400/30 text-3xl"></i>
+                        </div>
+                    </div>
+                    <div class="card p-6 border-l-4 border-l-green-500">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-gray-400 text-sm">已完成</div>
+                                <div id="monitor-tasks-completed" class="text-2xl font-bold text-green-400">0</div>
+                            </div>
+                            <i class="fas fa-check-circle text-green-400/30 text-3xl"></i>
+                        </div>
+                    </div>
+                    <div class="card p-6 border-l-4 border-l-yellow-500">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-gray-400 text-sm">运行中</div>
+                                <div id="monitor-tasks-running" class="text-2xl font-bold text-yellow-400">0</div>
+                            </div>
+                            <i class="fas fa-spinner fa-spin text-yellow-400/30 text-3xl"></i>
+                        </div>
+                    </div>
+                    <div class="card p-6 border-l-4 border-l-red-500">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-gray-400 text-sm">失败</div>
+                                <div id="monitor-tasks-failed" class="text-2xl font-bold text-red-400">0</div>
+                            </div>
+                            <i class="fas fa-exclamation-circle text-red-400/30 text-3xl"></i>
+                        </div>
+                    </div>
+                    <div class="card p-6 border-l-4 border-l-purple-500">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-gray-400 text-sm">运行时长</div>
+                                <div id="monitor-uptime-val" class="text-xl font-bold text-purple-400">-</div>
+                            </div>
+                            <i class="fas fa-clock text-purple-400/30 text-3xl"></i>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- 实时事件流（改为流式日志展示区） -->
+                    <div class="card p-6">
+                        <h3 class="text-xl font-bold mb-4">
+                            <i class="fas fa-stream mr-2 text-indigo-400"></i>实时流式日志
+                        </h3>
+                        <div id="event-stream" class="max-h-96 overflow-y-auto space-y-2 bg-gray-900 rounded-lg p-3">
+                            <div class="text-gray-500 text-center py-8">等待创作任务启动...</div>
+                        </div>
+                    </div>
+                    
+                    <div class="card p-6">
+                        <h3 class="text-xl font-bold mb-4">
+                            <i class="fas fa-server mr-2 text-green-400"></i>系统资源
+                        </h3>
+                        <div class="space-y-4">
+                            <div>
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span>CPU</span>
+                                    <span id="cpu-percent">0%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div id="cpu-bar" class="progress-fill bg-green-500" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span>内存</span>
+                                    <span id="memory-percent">0%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div id="memory-bar" class="progress-fill bg-yellow-500" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-sm mb-1">
+                                    <span>磁盘</span>
+                                    <span id="disk-percent">0%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div id="disk-bar" class="progress-fill bg-blue-500" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <button class="btn-primary mt-6 w-full" onclick="refreshSystemInfo()">
+                            <i class="fas fa-sync mr-2"></i>刷新系统信息
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 系统日志页面 -->
+            <div id="page-logs" class="page hidden">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-3xl font-bold">系统日志</h2>
+                    <div class="flex gap-2">
+                        <select id="log-type" class="input-field w-40" onchange="loadLogs()">
+                            <option value="all">全部日志</option>
+                            <option value="api">API请求</option>
+                            <option value="error">错误日志</option>
+                        </select>
+                        <button class="btn-secondary" onclick="loadLogs()">
+                            <i class="fas fa-sync mr-1"></i>刷新
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="card p-6">
+                    <div id="logs-container" class="max-h-[calc(100vh-300px)] overflow-y-auto space-y-2">
+                        <div class="text-gray-500 text-center py-8">加载中...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 设置页面 -->
+            <div id="page-settings" class="page hidden">
+                <h2 class="text-3xl font-bold mb-6">系统设置</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="card p-6">
+                        <h3 class="text-lg font-bold mb-4">API配置</h3>
+                        <div class="mb-4">
+                            <label class="block text-sm text-gray-400 mb-2">DashScope API Key</label>
+                            <div class="flex gap-2">
+                                <input type="password" id="api-key-input" class="input-field flex-1" placeholder="输入你的DashScope API Key">
+                                <button class="btn-secondary" onclick="saveApiKey()">保存</button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">
+                                获取地址: <a href="https://dashscope.console.aliyun.com/" target="_blank" class="text-indigo-400">https://dashscope.console.aliyun.com/</a>
+                            </p>
+                            <p class="text-xs text-yellow-500 mt-2" id="api-key-hint" style="display: none;">
+                                ⚠️ 修改后请重启Web服务使配置生效
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="card p-6">
+                        <h3 class="text-lg font-bold mb-4">模型配置</h3>
+                        <div class="space-y-3">
+                            <div class="flex justify-between items-center p-3 bg-gray-800 rounded-lg">
+                                <div>
+                                    <div class="text-sm text-gray-400">规划模型 (A1)</div>
+                                    <div class="font-mono" id="model-planning">qwen3.6-plus</div>
+                                </div>
+                                <div class="text-xs text-gray-500">温度: 0.7</div>
+                            </div>
+                            <div class="flex justify-between items-center p-3 bg-gray-800 rounded-lg">
+                                <div>
+                                    <div class="text-sm text-gray-400">写作模型 (B)</div>
+                                    <div class="font-mono" id="model-writing">qwen3.6-plus</div>
+                                </div>
+                                <div class="text-xs text-gray-500">温度: 0.8</div>
+                            </div>
+                            <div class="flex justify-between items-center p-3 bg-gray-800 rounded-lg">
+                                <div>
+                                    <div class="text-sm text-gray-400">校验模型 (C1)</div>
+                                    <div class="font-mono" id="model-review">qwen3.6-plus</div>
+                                </div>
+                                <div class="text-xs text-gray-500">温度: 0.3</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card p-6">
+                        <h3 class="text-lg font-bold mb-4">系统信息</h3>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-gray-400">版本</span>
+                                <span>MANS v1.0.0 MVP</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-400">提供商</span>
+                                <span id="provider-display">加载中...</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-400">智能体</span>
+                                <span>A1规划 + B写作 + C1校验</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-400">结构化输出</span>
+                                <span class="text-green-400">✅ instructor</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-400">人机协同</span>
+                                <span class="text-green-400">✅ 规划确认</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card p-6">
+                        <h3 class="text-lg font-bold mb-4">操作</h3>
+                        <div class="space-y-3">
+                            <button class="btn-secondary w-full" onclick="exportAllData()">
+                                <i class="fas fa-download mr-2"></i>导出数据
+                            </button>
+                            <button class="btn-secondary w-full" onclick="clearAllCache()">
+                                <i class="fas fa-broom mr-2"></i>清理缓存
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- 新建项目弹窗 -->
+    <div id="new-project-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="text-xl font-bold mb-4">创建新项目</h3>
+            <div class="mb-4">
+                <label class="block text-sm text-gray-400 mb-2">项目名称 (英文)</label>
+                <input type="text" id="new-project-name" class="input-field" placeholder="my-novel">
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm text-gray-400 mb-2">小说标题</label>
+                <input type="text" id="new-project-title" class="input-field" placeholder="我的小说">
+            </div>
+            <div class="mb-6">
+                <label class="block text-sm text-gray-400 mb-2">题材</label>
+                <select id="new-project-genre" class="input-field">
+                    <option value="都市奇幻">都市奇幻</option>
+                    <option value="仙侠">仙侠</option>
+                    <option value="玄幻">玄幻</option>
+                    <option value="科幻">科幻</option>
+                </select>
+            </div>
+            <div class="flex justify-end gap-3">
+                <button class="btn-secondary" onclick="closeNewProjectModal()">取消</button>
+                <button class="btn-primary" onclick="submitNewProject()">创建</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 项目详情弹窗 -->
+    <div id="project-detail-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+            <div class="flex items-center justify-between mb-4">
+                <h3 id="detail-project-name" class="text-xl font-bold">项目详情</h3>
+                <button onclick="closeProjectDetailModal()" class="text-gray-400 hover:text-white">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="project-detail-content">
+                <!-- 动态内容 -->
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

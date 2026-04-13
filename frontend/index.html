@@ -2,9 +2,9 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
     <title>MANS</title>
-    <link rel="stylesheet" href="/frontend/styles.css">
+    <link href="/frontend/styles.css" rel="stylesheet">
 </head>
 <body>
     <!-- 上边栏 -->
@@ -25,7 +25,7 @@
                     <svg viewBox="0 0 24 24">
                         <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
                     </svg>
-                    <span class="sidebar-item-text">作品选择</span>
+                    <span class="sidebar-item-text">作品创作</span>
                 </li>
                 <li class="sidebar-item" data-panel="settings">
                     <svg viewBox="0 0 24 24">
@@ -44,15 +44,36 @@
 
         <!-- 内容区域 -->
         <div class="content-area">
-            <!-- 作品选择面板 -->
+            <!-- 作品创作面板 -->
             <div class="content-panel active" id="works-panel">
-                <div id="works-select-container" style="height: 40px; display: flex; justify-content: center; align-items: center;">
-                    <label for="works-select">作品选择：</label>
-                    <select id="works-select" class="custom-select">
-                        <option value="" disabled selected hidden id="defult_option">请选择作品</option>
-                    </select>
+                <!-- top栏 -->
+                <div id="works-select-container"
+                     style="height: 40px;
+                            display: grid;
+                            grid-template-columns: 1fr auto 1fr;
+                            align-items: center;
+                            margin-top:10px">
+                    <!-- 中央选择区 -->
+                    <div style="display: flex;grid-column: 2/3;justify-content: center; align-items: center;">
+                        <label for="works-select">作品选择：</label>
+                        <select class="custom-select" id="works-select">
+                            <option disabled hidden id="defult_option" selected value="">请选择作品</option>
+                        </select>
+                    </div>
+                    <!-- 右侧按钮区 -->
+                    <button class="mans-btn primary"
+                            id="works-add-btn"
+                            style="grid-column: 3/4;
+                                   width: 100px;
+                                   justify-self: end;
+                                   margin-right: 20px">
+                        添加作品
+                    </button>
                 </div>
-
+                <!-- 作品内容 -->
+                <div id="works-content" style="padding: 10px; display: flex">
+                    <hr style="width: 100%; border-color: var(--bg-hover); border-width: 2px;">
+                </div>
             </div>
 
             <!-- 系统设置面板 -->

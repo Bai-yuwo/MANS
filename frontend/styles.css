@@ -1,209 +1,258 @@
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+:root {
+    --primary: #6366f1;
+    --primary-dark: #4f46e5;
+    --primary-light: #818cf8;
+    --bg-dark: #0f172a;      /* 最深底色：用于大背景 */
+    --bg-card: #1e293b;      /* 次深底色：用于面板、顶栏、侧边栏 */
+    --bg-hover: #334155;     /* 悬停色/边框线色 */
+    --text-primary: #f8fafc; /* 主文字：极白，确保极高清晰度 */
+    --text-secondary: #94a3b8;/* 副文字：灰蓝色，降低视觉干扰 */
+    --success: #22c55e;
+    --warning: #eab308;
+    --error: #ef4444;
+    --info: #3b82f6;
+}
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-            height: 100vh;
-            overflow: hidden;
-            background-color: #f5f5f5;
-        }
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
 
-        /* 上边栏 */
-        .top-bar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 60px;
-            background-color: #2c3e50;
-            color: white;
-            display: flex;
-            align-items: center;
-            padding: 0;
-            z-index: 1000;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    height: 100vh;
+    overflow: hidden;
+    background-color: var(--bg-dark);
+    color: var(--text-primary); /* 关键修复：确保全局默认字体为亮白色 */
+    -webkit-font-smoothing: antialiased; /* 让暗色背景上的字体更平滑锐利 */
+}
 
-        .top-bar-icon {
-            width: 60px;
-            height: 60px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-left: 0;
-            cursor: pointer;
-            border-radius: 4px;
-            transition: background-color 0.3s;
-        }
+/* ================= 上边栏 ================= */
+.top-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 60px;
+    background-color: var(--bg-card); /* 关键修复：弃用大面积高亮色，改用卡片色 */
+    border-bottom: 1px solid var(--bg-hover); /* 暗黑模式下用边框区分层级 */
+    color: var(--text-primary);
+    display: flex; align-items: center; padding: 0;
+    z-index: 1000;
+}
 
-        .top-bar-icon:hover {
-            background-color: rgba(255,255,255,0.1);
-        }
+.top-bar-icon {
+    width: 60px; height: 60px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: background-color 0.2s;
+}
 
-        .top-bar-icon svg {
-            width: 24px;
-            height: 24px;
-            fill: white;
-        }
+.top-bar-icon:hover {
+    background-color: var(--bg-hover);
+}
 
-        .top-bar-title {
-            font-size: 20px;
-            font-weight: 500;
-            flex: 1;
-        }
+.top-bar-icon svg {
+    width: 24px; height: 24px;
+    fill: var(--text-secondary); /* 图标默认稍暗 */
+    transition: fill 0.2s;
+}
 
-        .top-bar-actions {
-            display: flex;
-            gap: 10px;
-        }
+.top-bar-icon:hover svg {
+    fill: var(--text-primary); /* 悬停变亮 */
+}
 
-        .top-bar-btn {
-            padding: 8px 16px;
-            background-color: rgba(255,255,255,0.1);
-            border: none;
-            color: white;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
+.top-bar-title {
+    font-size: 20px; font-weight: 600; flex: 1; letter-spacing: 0.5px;
+}
 
-        .top-bar-btn:hover {
-            background-color: rgba(255,255,255,0.2);
-        }
+/* 顶部通用按钮 */
+.top-bar-btn {
+    padding: 8px 16px;
+    background-color: var(--primary); /* 按钮使用主色调提亮 */
+    border: none;
+    color: #ffffff;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer; transition: background-color 0.2s;
+}
 
-        /* 主容器 */
-        .main-container {
-            display: flex;
-            margin-top: 60px;
-            height: calc(100vh - 60px);
-        }
+.top-bar-btn:hover {
+    background-color: var(--primary-dark);
+}
 
-        /* 左侧边栏 */
-        .sidebar {
-            width: 150px;
-            background-color: #34495e;
-            color: white;
-            overflow-y: auto;
-            flex-shrink: 0;
-            transition: width 0.3s ease;
-        }
+/* ================= 主容器与侧边栏 ================= */
+.main-container {
+    display: flex; margin-top: 60px; height: calc(100vh - 60px);
+}
 
-        .sidebar.collapsed {
-            width: 60px;
-        }
+.sidebar {
+    width: 150px;
+    background-color: var(--bg-card);
+    border-right: 1px solid var(--bg-hover); /* 侧边栏分割线 */
+    overflow-y: auto; flex-shrink: 0; transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
 
-        .sidebar-menu {
-            list-style: none;
-            padding: 10px 0;
-        }
+.sidebar.collapsed { width: 60px; }
 
-        .sidebar-item {
-            padding: 15px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-            border-left: 3px solid transparent;
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            white-space: nowrap;
-            overflow: hidden;
-        }
+.sidebar-menu { list-style: none; padding: 15px 0; }
 
-        .sidebar-item:hover {
-            background-color: rgba(255,255,255,0.1);
-        }
+.sidebar-item {
+    padding: 12px 15px;
+    margin: 4px 8px; /* 给侧边栏菜单加一点外边距，变身为胶囊形状，更现代 */
+    border-radius: 6px;
+    cursor: pointer; transition: all 0.2s;
+    display: flex; align-items: center; gap: 15px;
+    color: var(--text-secondary); /* 默认用次级文字，不抢风头 */
+    white-space: nowrap; overflow: hidden;
+}
 
-        .sidebar-item.active {
-            background-color: rgba(255,255,255,0.15);
-            border-left-color: #3498db;
-        }
+.sidebar-item:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+}
 
-        .sidebar-item svg {
-            width: 25px;
-            height: 25px;
-            fill: currentColor;
-            flex-shrink: 0;
-        }
+.sidebar-item.active {
+    background-color: rgba(99, 102, 241, 0.15); /* 激活时使用带透明度的主题色 */
+    color: var(--primary-light);
+}
 
-        .sidebar-item-text {
-            font-size: 14px;
-            opacity: 1;
-            transition: opacity 0.2s ease;
-        }
+.sidebar-item svg {
+    width: 20px; height: 20px; fill: currentColor; flex-shrink: 0;
+}
 
-        .sidebar.collapsed .sidebar-item-text {
-            opacity: 0;
-            width: 0;
-        }
+.sidebar-item-text {
+    font-size: 14px; opacity: 1; transition: opacity 0.2s; font-weight: 500;
+}
 
-        /* 内容区域 */
-        .content-area {
-            flex: 1;
-            padding: 20px;
-            overflow-y: auto;
-            background-color: #ecf0f1;
-        }
+.sidebar.collapsed .sidebar-item-text { opacity: 0; width: 0; }
 
-        .content-panel {
-            display: none;
-            background-color: white;
-            border-radius: 8px;
-            padding: 30px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            min-height: 100%;
-        }
+/* ================= 内容区域 ================= */
+.content-area {
+    flex: 1;
+    padding: 15px; /* 增加整体呼吸感 */
+    overflow-y: auto;
+    background-color: var(--bg-dark);
+}
 
-        .content-panel.active {
-            display: block;
-        }
+.content-panel {
+    display: none;
+    background-color: var(--bg-card);
+    border: 1px solid var(--bg-hover); /* 增加微妙边框 */
+    border-radius: 12px; /* 圆角变大更贴合现代审美 */
+    padding: 5px; /* 关键修复：从5px改大，让内容不再挤压 */
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+    min-height: calc(100% - 10px);
+}
 
-        .panel-title {
-            font-size: 24px;
-            margin-bottom: 20px;
-            color: #2c3e50;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 10px;
-        }
+.content-panel.active { display: block; }
 
-        .panel-content {
-            color: #7f8c8d;
-            line-height: 1.6;
-        }
+.panel-title {
+    font-size: 22px; margin-bottom: 24px;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--bg-hover); /* 分割线变细变暗 */
+    padding-bottom: 12px; font-weight: 600;
+}
 
-        .custom-select {
-            padding: 8px 12px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            background-color: white;
-            font-family: inherit; /* 继承 body 的字体 */
-            cursor: pointer;
-            outline: none;
-            width: 200px;
-            align-items: center;
-            justify-content: center;
-            display: flex;
-        }
+.panel-content {
+    color: var(--text-secondary); line-height: 1.7; font-size: 15px;
+}
 
-        .custom-select:focus {
-            border-color: #007bff; /* 选中时变蓝 */
-            box-shadow: 0 0 0 2px rgba(0,123,255,0.25);
-        }
+/* ================= 表单组件 ================= */
+.custom-select {
+    padding: 8px 36px 8px 16px; /* 右侧留空间给下拉箭头 */
+    border: 1px solid var(--bg-hover);
+    border-radius: 6px;
+    background-color: var(--bg-dark); /* 下拉框用更深的背景，形成凹陷感 */
+    color: var(--text-primary);
+    font-family: inherit; font-size: 14px;
+    cursor: pointer; outline: none; width: 220px;
+    transition: all 0.2s ease;
+    appearance: none; /* 移除原生丑陋的箭头 */
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+}
 
-        /* 响应式设计 */
-        @media (max-width: 768px) {
-            .sidebar {
-                width: 60px;
-            }
+.custom-select:hover {
+    border-color: var(--text-secondary);
+}
 
-            .sidebar .sidebar-item-text {
-                opacity: 0;
-                width: 0;
-            }
+.custom-select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
 
-            .top-bar-title {
-                font-size: 16px;
-            }
-        }
+/* ================= 通用按钮类 ================= */
+.mans-btn {
+    /* 1. 绝对居中：利用内联弹性盒子，文本和图标永远在正中间 */
+    display: inline-flex;
+    align-items: center;      /* 纵向居中 */
+    justify-content: center;  /* 横向居中 */
+    gap: 8px;                 /* 如果后续放入 SVG 图标，图标和文字会自动隔开 8px */
+
+    /* 2. 尺寸自适应：千万不要写死 width 和 height，用内边距撑开 */
+    padding: 8px 18px;
+
+    /* 3. 外观与目前风格一致：圆角、暗色系默认态 */
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+    border: 1px solid transparent; /* 预留边框，防止加上边框时按钮发生抖动 */
+    border-radius: 6px;
+
+    /* 4. 字体显示清晰 */
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;         /* 微微加粗，在暗黑模式下更容易阅读 */
+    letter-spacing: 0.5px;
+
+    /* 5. 交互与动画 */
+    cursor: pointer;
+    user-select: none;        /* 防止用户疯狂连击时意外选中了按钮上的文字 */
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); /* 丝滑的过渡动画 */
+}
+
+/* 默认按钮悬停态：微微提亮，显示边框轮廓 */
+.mans-btn:hover {
+    background-color: #475569; /* 比 bg-hover 稍微亮一阶的深灰蓝 */
+    border-color: #64748b;
+}
+
+/* 核心灵魂：点击时的物理按压反馈（现代 UI 高级感的来源） */
+.mans-btn:active {
+    transform: scale(0.96);
+}
+
+
+/* === 变体：主操作按钮 (叠加类) === */
+.mans-btn.primary {
+    background-color: var(--primary);
+    color: #ffffff;
+    border-color: var(--primary);
+}
+
+.mans-btn.primary:hover {
+    background-color: var(--primary-dark);
+    border-color: var(--primary-dark);
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.3); /* 悬停时带有一点点赛博光晕 */
+}
+
+/* === 变体：危险/警告按钮 (叠加类) === */
+.mans-btn.danger {
+    background-color: transparent;
+    color: var(--error);
+    border-color: var(--error);
+}
+
+.mans-btn.danger:hover {
+    background-color: var(--error);
+    color: #ffffff;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .sidebar { width: 60px; }
+    .sidebar .sidebar-item-text { opacity: 0; width: 0; }
+    .top-bar-title { font-size: 16px; }
+    .content-area { padding: 12px; }
+    .content-panel { padding: 20px; }
+}

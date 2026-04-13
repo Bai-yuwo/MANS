@@ -34,15 +34,21 @@ function initSidebar() {
 
 // 上边栏菜单按钮点击事件
 const menuIcon = document.querySelector('.top-bar-icon');
+const sidebar = document.querySelector('.sidebar-item');
 if (menuIcon) {
     menuIcon.addEventListener('click', function() {
         toggleSidebar();
     });
 }
 
-// 初始化侧边栏收起/展开功能
+
+/**
+ * 初始化侧边栏收起/展开状态
+ * 
+ * 从localStorage中读取用户之前保存的侧边栏状态，
+ * 如果侧边栏处于收起状态，则应用相应的CSS类
+ */
 function initToggleSidebar() {
-    // 从localStorage读取侧边栏状态
     const sidebar = document.querySelector('.sidebar');
     const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
     
@@ -66,6 +72,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await checkLocalProjects();
 });
 
+// 检查本地项目
 async function checkLocalProjects() {
     try{
         const response = await fetch('/api/get_projects');
@@ -76,6 +83,16 @@ async function checkLocalProjects() {
             const div = document.getElementById('works-select-container');
             div.style.display = 'None';
             console.log("0");
+        }
+        else{
+            const select = document.getElementById('works-select');
+            for (let i = 0; i < projects.length; i++){
+                const option = document.createElement('option');
+                option.value = projects[i].id;
+                option.textContent = projects[i].name;
+                select.appendChild(option);
+            }
+            console.log("1");
         }
     }
     catch(error){

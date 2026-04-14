@@ -12,7 +12,7 @@ async def root():
 async def get_projects():
     workspace_path = "workspace"
     works_jsons = list(Path(workspace_path).glob("*.json"))
-    local_projects = [{"id": "1", "name": "为了省电，天道禁止成仙"}]
+    local_projects = [{"id": "1", "name": "龙与少年"}]
     return {"projects": local_projects}
 
 app.mount("/", StaticFiles(directory="."), name="static")

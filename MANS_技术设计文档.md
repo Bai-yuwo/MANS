@@ -1,0 +1,1507 @@
+# MANS — Multi-Agent Novel System
+## 完整技术设计文档 v1.0
+
+---
+
+# 目录
+
+1. [项目概述](#1-项目概述)
+2. [设计哲学与核心原则](#2-设计哲学与核心原则)
+3. [项目架构](#3-项目架构)
+   - 3.1 [完整目录结构](#31-完整目录结构)
+   - 3.2 [各文件职责说明](#32-各文件职责说明)
+4. [数据结构设计](#4-数据结构设计)
+   - 4.1 [核心 Schema](#41-核心-schema)
+   - 4.2 [知识库数据格式](#42-知识库数据格式)
+   - 4.3 [运行时状态格式](#43-运行时状态格式)
+5. [系统组件详解](#5-系统组件详解)
+   - 5.1 [Injection Engine（注入引擎）](#51-injection-engine注入引擎)
+   - 5.2 [Update Extractor（异步更新器）](#52-update-extractor异步更新器)
+   - 5.3 [Writer（唯一生成器）](#53-writer唯一生成器)
+   - 5.4 [知识库系统](#54-知识库系统)
+   - 5.5 [Generators（初始化生成器）](#55-generators初始化生成器)
+6. [完整运行流程](#6-完整运行流程)
+   - 6.1 [初始化阶段（一次性）](#61-初始化阶段一次性)
+   - 6.2 [写作阶段（每章循环）](#62-写作阶段每章循环)
+7. [API 接口设计](#7-api-接口设计)
+8. [存储结构设计](#8-存储结构设计)
+9. [提示词工程规范](#9-提示词工程规范)
+10. [组件分工与调用规则](#10-组件分工与调用规则)
+11. [技术选型说明](#11-技术选型说明)
+12. [环境配置与依赖](#12-环境配置与依赖)
+
+---
+
+# 1. 项目概述
+
+MANS（Multi-Agent Novel System）是一个基于注入式架构的 AI 长篇小说辅助创作系统。
+
+**核心定位**：辅助人类作者创作，而非替代作者。系统负责在作者意图的指导下，快速生成高质量的章节草稿，同时维护故事世界的内部一致性。
+
+**目标场景**：中文玄幻、仙侠、都市等类型的长篇网络小说创作，支持从设定构建到百万字正文生成的全流程。
+
+**核心技术决策**：
+
+- 单一生成器架构：只有 Writer 调用主力大模型生成正文，其他组件负责维护知识库
+- 注入式上下文：Injection Engine 在每次生成前动态组装最相关的上下文，而非堆叠全部历史
+- 异步状态更新：生成完成后 Update Extractor 异步提取状态变更，不阻塞写作流程
+- 向量检索记忆：长期信息通过向量相似度检索按需注入，突破 context window 限制
+
+---
+
+# 2. 设计哲学与核心原则
+
+## 2.1 为什么是注入式而非多 Agent 串联
+
+传统多 Agent 串联的问题在于：小说创作中的设定层、故事层、写作层之间并非单向流水线，而是一个耦合震荡系统——每一句话同时携带世界观信息、人物信息、情节信息和情感信息，无法拆分。
+
+注入式架构的核心思想是：**不模拟这个耦合系统的内部机制，而是拟合其输出**。
+
+人脑写作时并不是同时运行多个独立的"思维模块"，而是将所有信息融合后输出一句话，同时这句话又反过来影响后续的认知状态。我们的架构模拟的是这种"融合输出 + 状态更新"的循环，而非分层流水线。
+
+## 2.2 颗粒度原则
+
+知识库的组织不按"功能"分层（设定/故事/写作），而按**颗粒度**分层：
+
+- 小说级（Bible）：全局不变的世界规则，只增不减
+- 弧线级（Arc）：10-30 章的情节规划，阶段性更新
+- 章节级（Chapter Plan）：单章目标，写前规划，写后归档
+- 场景级（Scene）：单次 Writer 调用的最小单元
+
+每个颗粒度都同时包含设定、故事、风格信息，Injection Engine 负责按需从各颗粒度取用。
+
+## 2.3 注意力预算原则
+
+Writer 的 prompt 有固定的 token 预算（约 3000-4000 tokens 用于上下文注入）。这个预算就是系统的"注意力"，Injection Engine 的工作是在这个预算内塞入最有价值的信息，而非尽可能多地塞入所有信息。
+
+信息注入的优先级：
+
+1. 当前场景的直接上下文（上一段文字、当前场景意图）—— 必须注入
+2. 出场人物的当前状态 —— 必须注入
+3. 本章目标和情绪基调 —— 必须注入
+4. 语义相关的世界规则 —— 向量检索，按预算注入
+5. 相关历史场景片段 —— 向量检索，按预算注入
+6. 文风范例 —— 按预算注入
+
+## 2.4 异步更新原则
+
+生成文本后的状态更新（Update Extractor）与下一场景的生成（Injection Engine + Writer）并发执行，不存在阻塞关系。这意味着：
+
+- 当前场景 n 的更新结果，会在场景 n+2 或更后的生成中生效
+- 这与人类写作时"意识到某处需要更新设定，但先写完当前段落"的行为一致
+- 对于重要的强一致性场景（如关键战力突破），可以设置 `sync_update=True` 强制等待
+
+---
+
+# 3. 项目架构
+
+## 3.1 完整目录结构
+
+```
+MANS/
+├── main.py                          # 入口：启动 FastAPI + Uvicorn
+├── requirements.txt                 # Python 依赖
+├── .env.example                     # 环境变量模板
+├── .gitignore
+├── README.md
+│
+├── core/                            # 系统神经中枢
+│   ├── __init__.py
+│   ├── schemas.py                   # 全局数据契约（Pydantic）
+│   ├── injection_engine.py          # 注入引擎：系统的注意力机制
+│   ├── update_extractor.py          # 异步更新器：从生成文本提取状态变更
+│   ├── llm_client.py                # LLM 统一调用封装
+│   └── config.py                    # 全局配置读取
+│
+├── knowledge_bases/                 # 知识库系统：各 Agent 维护自己的库
+│   ├── __init__.py
+│   ├── base_db.py                   # 知识库基类：通用读写/向量化接口
+│   ├── bible_db.py                  # 世界观库：世界规则、战力体系、地理势力
+│   ├── character_db.py              # 人物库：人物状态、关系网、声线
+│   ├── story_db.py                  # 故事库：大纲、弧线计划、章节计划、摘要
+│   ├── foreshadowing_db.py          # 伏笔库：伏笔清单与状态追踪
+│   └── style_db.py                  # 文风库：情感基调、参考范文片段
+│
+├── generators/                      # 初始化生成器（项目创建时一次性调用）
+│   ├── __init__.py
+│   ├── bible_generator.py           # 生成世界观 Bible
+│   ├── character_generator.py       # 生成人物设定
+│   ├── outline_generator.py         # 生成全局大纲
+│   ├── arc_planner.py               # 生成弧线级详细规划
+│   └── chapter_planner.py           # 生成单章场景序列
+│
+├── writer/                          # 唯一生成器
+│   ├── __init__.py
+│   ├── writer.py                    # Writer 核心逻辑
+│   └── prompts/
+│       ├── writer.j2                # Writer 主提示词模板
+│       ├── scene_intent.j2          # 场景意图格式化模板
+│       └── style_injection.j2       # 文风注入格式化模板
+│
+├── vector_store/                    # 向量存储层
+│   ├── __init__.py
+│   ├── store.py                     # ChromaDB 封装：索引管理、检索接口
+│   └── embedder.py                  # 文本向量化封装
+│
+├── frontend/                        # Web 前端
+│   ├── web_app.py                   # FastAPI 路由定义
+│   ├── index.html                   # 主页面
+│   ├── app.js                       # 前端交互逻辑
+│   └── styles.css                   # 样式
+│
+└── workspace/                       # 运行时数据（gitignore，不进版本库）
+    └── {project_id}/                # 每个项目独立目录，project_id 为 UUID
+        ├── project_meta.json        # 项目元信息（名称、类型、创建时间等）
+        ├── bible.json               # 世界观 Bible（用户确认后的版本）
+        ├── outline.json             # 全局大纲
+        ├── characters/
+        │   ├── {char_id}.json       # 每个人物独立 JSON
+        │   └── relationships.json   # 人物关系网
+        ├── arcs/
+        │   └── arc_{n}.json         # 每段弧线的详细规划
+        ├── chapters/
+        │   ├── chapter_{n}_plan.json    # 第 n 章的场景序列规划
+        │   ├── chapter_{n}_draft.json   # 第 n 章各场景生成结果
+        │   └── chapter_{n}_final.json   # 第 n 章最终完稿（含摘要）
+        ├── foreshadowing.json       # 全局伏笔状态表
+        ├── style_config.json        # 文风配置（基调、参考词等）
+        └── vectors/                 # 本项目的向量索引（ChromaDB 持久化目录）
+```
+
+## 3.2 各文件职责说明
+
+### core/schemas.py
+
+系统所有数据结构的单一来源（Single Source of Truth）。所有模块的输入输出都必须符合此文件定义的 Pydantic 模型。任何新增字段必须先在此文件定义，再在其他文件使用。
+
+### core/injection_engine.py
+
+系统最核心的组件。职责：在每次 Writer 调用之前，从各知识库收集信息，在 token 预算内组装最优的上下文注入块。
+
+内部分为三层：
+- 规则层：程序逻辑直接获取，零 LLM 调用
+- 检索层：向量相似度检索，使用小型 embedding 模型
+- 裁剪层：超出预算时调用小模型（如 qwen-turbo）压缩
+
+### core/update_extractor.py
+
+Writer 生成后的异步处理器。职责：从生成的文本中提取结构化的状态变更，并将变更写回各知识库。使用小模型执行，异步运行，不阻塞主写作流程。
+
+### core/llm_client.py
+
+所有 LLM API 调用的统一入口。支持多 provider（OpenAI、DashScope、豆包等），统一处理流式输出、重试、错误处理。外部模块不直接调用 API，只调用此模块。
+
+### core/config.py
+
+从 `.env` 文件读取所有配置，提供全局访问。包括 API Key、模型名称、token 预算、向量索引路径等。
+
+### knowledge_bases/base_db.py
+
+所有知识库的基类。定义通用的：
+- `get(key)` / `set(key, value)` —— JSON 读写
+- `search(query, n)` —— 向量检索（调用 vector_store）
+- `append(key, item)` —— 追加更新（知识库只增不覆盖）
+- `get_all_for_vectorization()` —— 获取需要向量化的全部条目
+
+各子类继承此基类，实现各自特有的业务方法。
+
+### knowledge_bases/bible_db.py
+
+世界观知识库。存储：世界地理与势力格局、修炼/战力体系（等级体系、突破条件、战力规则）、核心世界规则（物理法则、社会法则）、禁忌与特殊设定。
+
+**重要约束**：Bible 一旦用户确认，只允许追加（append），不允许覆盖修改。追加的条目标记时间戳和来源章节。
+
+### knowledge_bases/character_db.py
+
+人物知识库。每个人物为独立条目，存储其当前状态（位置、实力、情绪）、固有属性（外貌、性格核心）、声线关键词（用于 Writer 保持对话一致性）、关系网（与其他人物的关系及变化历史）。
+
+状态字段随每章更新，固有属性字段只可追加（人物成长轨迹保留）。
+
+### knowledge_bases/story_db.py
+
+故事知识库。存储：全局大纲、弧线计划（arc plans）、章节计划（chapter plans）、已完成章节的摘要。章节摘要是后续章节上下文注入的重要来源。
+
+### knowledge_bases/foreshadowing_db.py
+
+伏笔知识库。每条伏笔有唯一 ID、埋设章节、描述内容、当前状态（planted/hinted/resolved）、计划触发章节范围。Injection Engine 会在接近触发章节时自动将伏笔注入 Writer 的上下文。
+
+### knowledge_bases/style_db.py
+
+文风知识库。存储：整体情感基调描述、参考文风关键词、用户提供的参考段落（向量化后按语义检索）、各类情绪场景的范文片段（战斗/离别/突破等）。
+
+### generators/
+
+初始化阶段的一次性生成器。每个生成器的模式相同：接收已有知识库内容作为输入，调用主力大模型，输出结构化 JSON，写入对应知识库。生成器不在写作阶段运行。
+
+### writer/writer.py
+
+唯一的正文生成器。接收 Injection Engine 组装好的上下文，调用主力大模型，流式输出文本，同时触发 Update Extractor 的异步更新。
+
+### vector_store/store.py
+
+ChromaDB 的业务封装。每个项目有独立的 collection（命名空间），不同知识库的内容存入不同 collection。提供：索引写入（upsert）、语义检索（query）、批量重建接口。
+
+### writer/prompts/writer.j2
+
+Writer 的核心提示词模板。使用 Jinja2 语法，接收 Injection Engine 组装的上下文对象，渲染为最终的 prompt 字符串。这是系统中最需要迭代优化的文件。
+
+---
+
+# 4. 数据结构设计
+
+## 4.1 核心 Schema
+
+以下为 `core/schemas.py` 的完整定义：
+
+```python
+from pydantic import BaseModel, Field
+from typing import Literal, Optional
+from datetime import datetime
+import uuid
+
+# ============================================================
+# 基础类型
+# ============================================================
+
+class CultivationLevel(BaseModel):
+    """修炼境界"""
+    realm: str                          # 大境界，如"筑基期"
+    stage: str                          # 小阶段，如"初期/中期/后期/圆满"
+    combat_power_estimate: str          # 战力估算描述，如"可秒杀普通筑基初期"
+
+class Relationship(BaseModel):
+    """人物关系条目"""
+    target_character_id: str
+    target_name: str
+    relation_type: str                  # 如"师父/敌人/挚友"
+    current_sentiment: str             # 如"信任/敌对/复杂"
+    history_notes: list[str]            # 关系变化记录，只增不减
+
+# ============================================================
+# 人物相关
+# ============================================================
+
+class CharacterCard(BaseModel):
+    """人物卡：单个人物的完整信息"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    name: str
+    aliases: list[str] = []
+
+    # 固有属性（只追加）
+    appearance: str                     # 外貌描述
+    personality_core: str               # 性格核心关键词（3-5个词）
+    voice_keywords: list[str]           # 声线关键词，供 Writer 保持对话一致性
+    background: str                     # 背景设定
+
+    # 动态状态（每章可能更新）
+    current_location: str
+    cultivation: CultivationLevel
+    current_emotion: str                # 当前情绪状态
+    active_goals: list[str]             # 当前驱动人物行动的目标
+
+    # 关系网
+    relationships: list[Relationship] = []
+
+    # 元信息
+    first_appeared_chapter: int = 0
+    last_updated_chapter: int = 0
+
+class CharacterStateUpdate(BaseModel):
+    """Update Extractor 提取出的人物状态变更"""
+    character_id: str
+    character_name: str
+    location_change: Optional[str] = None
+    cultivation_change: Optional[str] = None
+    emotion_change: Optional[str] = None
+    goal_updates: list[str] = []        # 新增或完成的目标
+    relationship_updates: list[dict] = []  # 关系变化
+
+# ============================================================
+# 世界观相关
+# ============================================================
+
+class WorldRule(BaseModel):
+    """单条世界规则"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    category: Literal["cultivation", "geography", "social", "physics", "special"]
+    content: str                        # 规则描述
+    source_chapter: int                 # 首次明确的章节
+    importance: Literal["critical", "major", "minor"]  # 重要性，影响注入优先级
+
+class CombatSystem(BaseModel):
+    """战力体系"""
+    name: str                           # 体系名称，如"九天修仙体系"
+    realms: list[str]                   # 大境界列表（从低到高）
+    breakthrough_conditions: dict[str, str]  # 各境界突破条件
+    special_abilities: list[str]        # 特殊能力类型
+    power_ceiling: str                  # 当前故事中的战力上限说明
+
+# ============================================================
+# 伏笔相关
+# ============================================================
+
+class ForeshadowingItem(BaseModel):
+    """伏笔条目"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    type: Literal["plot", "character", "world", "emotional"]  # 伏笔类型
+    planted_chapter: int
+    description: str                    # 伏笔内容描述
+    trigger_range: tuple[int, int]      # 计划触发章节范围（start, end）
+    status: Literal["planted", "hinted", "triggered", "resolved"] = "planted"
+    resolution_description: Optional[str] = None  # 解决方式（resolved 后填写）
+    urgency: Literal["low", "medium", "high"] = "medium"
+
+# ============================================================
+# 故事结构相关
+# ============================================================
+
+class ScenePlan(BaseModel):
+    """单个场景的规划"""
+    scene_index: int                    # 在本章内的序号
+    intent: str                         # 场景意图（1-2句话）
+    pov_character: str                  # 主视角人物名
+    present_characters: list[str]       # 出场人物名列表
+    emotional_tone: str                 # 情绪基调，如"压抑/热血/温情"
+    foreshadowing_to_plant: list[str]   # 本场景需要埋入的伏笔 ID
+    foreshadowing_to_trigger: list[str] # 本场景需要触发的伏笔 ID
+    target_word_count: int = 1200       # 目标字数
+    special_instructions: str = ""      # 特殊写作指示
+
+class ChapterPlan(BaseModel):
+    """章节规划"""
+    chapter_number: int
+    title: str                          # 章节名（可选）
+    arc_id: str                         # 所属弧线 ID
+    chapter_goal: str                   # 本章对主线的推进目标
+    emotional_arc: str                  # 本章的情绪走向（开头-中间-结尾）
+    key_events: list[str]               # 本章必须发生的关键事件
+    scenes: list[ScenePlan]             # 场景序列
+    previous_chapter_summary: str = "" # 上一章摘要（写作时从 story_db 获取）
+
+class ChapterFinal(BaseModel):
+    """章节完稿"""
+    chapter_number: int
+    title: str
+    full_text: str                      # 完整正文
+    word_count: int
+    scene_texts: list[str]              # 各场景文本列表
+    summary: str                        # 本章摘要（200字，供后续章节注入）
+    state_snapshot: dict                # 本章结束时各主要人物状态快照
+    issues_found: list[str] = []        # Review 发现的问题
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+# ============================================================
+# 注入上下文相关
+# ============================================================
+
+class InjectionContext(BaseModel):
+    """Injection Engine 组装完成的上下文，直接传入 Writer"""
+    # 强制注入（规则层）
+    scene_plan: ScenePlan
+    chapter_goal: str
+    previous_text: str                  # 上一场景末尾 300-500 字
+    present_character_cards: list[CharacterCard]  # 出场人物卡
+
+    # 检索注入（向量层）
+    relevant_world_rules: list[WorldRule]         # 相关世界规则
+    active_foreshadowing: list[ForeshadowingItem] # 需要处理的伏笔
+    similar_scenes_reference: list[str]           # 相似历史场景文本片段
+    style_reference: str                          # 文风参考描述
+
+    # 预算信息
+    total_tokens_used: int
+    token_budget_remaining: int
+
+# ============================================================
+# 更新提取相关
+# ============================================================
+
+class ExtractedUpdates(BaseModel):
+    """Update Extractor 从生成文本中提取的所有变更"""
+    source_chapter: int
+    source_scene_index: int
+    character_updates: list[CharacterStateUpdate] = []
+    new_world_rules: list[WorldRule] = []
+    foreshadowing_status_changes: list[dict] = []  # {id, new_status, notes}
+    new_foreshadowing: list[ForeshadowingItem] = []
+    implicit_issues: list[str] = []    # 发现的潜在矛盾，写入 Issue Pool
+
+# ============================================================
+# 项目元信息
+# ============================================================
+
+class ProjectMeta(BaseModel):
+    """项目元信息"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    genre: Literal["玄幻", "仙侠", "都市", "科幻", "武侠", "历史", "其他"]
+    core_idea: str                      # 用户填写的核心 idea
+    protagonist_seed: str               # 主角起点描述
+    target_length: Literal["短篇(<10万)", "中篇(10-50万)", "长篇(50-200万)", "超长篇(200万+)"]
+    tone: str                           # 基调描述
+    style_reference: str = ""          # 文风参考
+    forbidden_elements: list[str] = [] # 禁忌元素
+    current_chapter: int = 0           # 当前已完成章节数
+    status: Literal["initializing", "writing", "paused", "completed"] = "initializing"
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+```
+
+## 4.2 知识库数据格式
+
+每个知识库对应 `workspace/{project_id}/` 下的 JSON 文件，格式如下：
+
+**bible.json**
+```json
+{
+  "version": 1,
+  "world_name": "九天大陆",
+  "combat_system": { ... },           // CombatSystem 对象
+  "world_rules": [ ... ],             // WorldRule 对象列表
+  "geography": {
+    "major_regions": [...],
+    "important_locations": [...]
+  },
+  "factions": [
+    {
+      "name": "天剑宗",
+      "type": "cultivation_sect",
+      "power_level": "major",
+      "description": "..."
+    }
+  ],
+  "history_notes": []                 // 追加记录，保留变更历史
+}
+```
+
+**characters/{char_id}.json**
+```json
+{
+  // CharacterCard 对象的完整序列化
+  // 动态状态字段每章更新，但历史版本通过 state_history 字段保留
+  "state_history": [
+    {
+      "chapter": 3,
+      "location": "天剑宗外门",
+      "cultivation": {...},
+      "snapshot_note": "拜入天剑宗，获得入门功法"
+    }
+  ]
+}
+```
+
+**foreshadowing.json**
+```json
+{
+  "items": [
+    {
+      // ForeshadowingItem 对象
+      "id": "fw_001",
+      "type": "plot",
+      "planted_chapter": 2,
+      "description": "主角在废墟中发现一枚奇异玉佩，来历不明",
+      "trigger_range": [15, 25],
+      "status": "planted"
+    }
+  ],
+  "resolved_items": []  // 已解决的伏笔归档到此
+}
+```
+
+## 4.3 运行时状态格式
+
+**chapters/chapter_{n}_plan.json**（写前生成）
+```json
+{
+  // ChapterPlan 对象完整序列化
+  "chapter_number": 5,
+  "title": "第五章 入门考核",
+  "arc_id": "arc_1",
+  "chapter_goal": "主角通过入门考核，展示异于常人的潜力，引起长老注意",
+  "emotional_arc": "紧张期待 → 险象环生 → 意外惊喜",
+  "key_events": [
+    "考核规则公布，主角发现自己处于劣势",
+    "考核中意外触发玉佩能力",
+    "以弱胜强，引起玄真长老注意"
+  ],
+  "scenes": [...]
+}
+```
+
+**chapters/chapter_{n}_draft.json**（写作中逐场景填充）
+```json
+{
+  "chapter_number": 5,
+  "scenes": [
+    {
+      "scene_index": 0,
+      "text": "...",        // 生成的场景文本
+      "word_count": 1247,
+      "generated_at": "2026-04-13T10:30:00",
+      "injection_context_summary": "...",  // 调试用：记录本次注入了什么
+      "updates_extracted": { ... }          // ExtractedUpdates 对象
+    }
+  ]
+}
+```
+
+---
+
+# 5. 系统组件详解
+
+## 5.1 Injection Engine（注入引擎）
+
+**文件**：`core/injection_engine.py`
+
+**职责**：在 Writer 每次生成之前，从各知识库和向量索引中收集信息，在 token 预算内组装最优的 `InjectionContext`。
+
+**三层处理逻辑**：
+
+### 第一层：规则层（程序直接获取，零 LLM）
+
+```python
+def _get_mandatory_context(self, scene_plan: ScenePlan, chapter_plan: ChapterPlan) -> dict:
+    """
+    必须注入的信息，直接从存储读取，不经过任何 AI 处理
+    """
+    project = self.project_id
+
+    # 1. 当前场景意图（直接从 scene_plan 取）
+    scene_intent = scene_plan.intent
+
+    # 2. 本章目标（从 chapter_plan 取）
+    chapter_goal = chapter_plan.chapter_goal
+
+    # 3. 上一场景末尾文本（从 draft JSON 取最后 400 字）
+    previous_text = self._get_previous_scene_tail(chapter_plan.chapter_number,
+                                                    scene_plan.scene_index,
+                                                    tail_chars=400)
+
+    # 4. 出场人物卡（从 character_db 取）
+    character_cards = [
+        self.character_db.get_character(name)
+        for name in scene_plan.present_characters
+    ]
+
+    # 5. 需要处理的伏笔（从 foreshadowing_db 取 status 为 planted 且接近触发的）
+    active_foreshadowing = self.foreshadowing_db.get_active_for_chapter(
+        current_chapter=chapter_plan.chapter_number,
+        trigger_ids=scene_plan.foreshadowing_to_trigger + scene_plan.foreshadowing_to_plant
+    )
+
+    return {
+        "scene_intent": scene_intent,
+        "chapter_goal": chapter_goal,
+        "previous_text": previous_text,
+        "character_cards": character_cards,
+        "active_foreshadowing": active_foreshadowing,
+    }
+```
+
+### 第二层：向量检索层
+
+```python
+def _get_retrieved_context(self, scene_plan: ScenePlan, budget_tokens: int) -> dict:
+    """
+    通过语义检索获取相关背景知识，预算内尽量多取
+    """
+    # 构建检索 query：场景意图 + 出场人物 + 情绪基调
+    query = f"{scene_plan.intent} {' '.join(scene_plan.present_characters)} {scene_plan.emotional_tone}"
+
+    results = {}
+
+    # 检索相关世界规则（bible collection）
+    world_rules = self.vector_store.search(
+        collection="bible_rules",
+        query=query,
+        n_results=5
+    )
+
+    # 检索相似历史场景（chapters collection，只检索已完稿章节）
+    similar_scenes = self.vector_store.search(
+        collection="chapter_scenes",
+        query=query,
+        n_results=3
+    )
+
+    # 检索文风范例（style collection）
+    style_examples = self.vector_store.search(
+        collection="style_examples",
+        query=scene_plan.emotional_tone,
+        n_results=2
+    )
+
+    return {
+        "world_rules": world_rules,
+        "similar_scenes": similar_scenes,
+        "style_examples": style_examples,
+    }
+```
+
+### 第三层：裁剪层
+
+```python
+def _trim_to_budget(self, context: dict, budget_tokens: int) -> InjectionContext:
+    """
+    当检索结果超出预算时，调用小模型做重要性排序和压缩
+    预算不超出时直接组装，不调用任何模型
+    """
+    total_tokens = self._estimate_tokens(context)
+
+    if total_tokens <= budget_tokens:
+        return self._assemble_context(context)
+
+    # 超出预算，调用小模型压缩
+    trim_prompt = f"""
+    当前写作场景：{context['scene_intent']}
+    token 预算：{budget_tokens}
+
+    以下是候选背景信息（已超出预算），请按重要性选取并压缩，优先保留：
+    1. 与当前场景人物直接相关的世界规则
+    2. 与当前情感基调相似的范文
+    3. 最近 3 章内发生的相似场景
+
+    候选内容：{context['retrieved']}
+
+    输出压缩后的内容（JSON格式），总 token 不超过 {budget_tokens}。
+    """
+
+    trimmed = self.llm_client.call(
+        model=self.config.TRIM_MODEL,  # 小模型，如 qwen-turbo
+        prompt=trim_prompt,
+        max_tokens=budget_tokens + 200
+    )
+
+    return self._assemble_context({**context, "retrieved": trimmed})
+```
+
+**Token 预算分配建议**（Writer 总 prompt 约 6000 tokens）：
+
+| 内容 | 分配 token | 说明 |
+|---|---|---|
+| 系统指令 + 写作规则 | 800 | 固定 |
+| 场景意图 + 章节目标 | 200 | 固定 |
+| 上一场景末尾文本 | 400 | 固定 |
+| 出场人物卡 | 600/人 | 最多 3 人 = 1800 |
+| 激活的伏笔 | 300 | 最多 2 条 |
+| 世界规则 | 400 | 向量检索，可变 |
+| 文风/情感范例 | 300 | 向量检索，可变 |
+| 相似历史场景 | 400 | 向量检索，可变 |
+| 预留 buffer | 400 | 防止溢出 |
+
+## 5.2 Update Extractor（异步更新器）
+
+**文件**：`core/update_extractor.py`
+
+**职责**：Writer 每生成完一个场景后，异步地从文本中提取状态变更，更新各知识库。
+
+**执行时机**：Writer 生成完成并将文本流式输出给前端后，立即触发异步任务，与下一场景的 Injection Engine 并发执行。
+
+**提取流程**：
+
+```python
+async def extract_and_update(self,
+                              generated_text: str,
+                              chapter_number: int,
+                              scene_index: int,
+                              scene_plan: ScenePlan) -> ExtractedUpdates:
+    """
+    从生成的场景文本中提取状态变更，异步写回知识库
+    """
+    extraction_prompt = f"""
+    分析以下小说场景文本，提取所有对故事状态的变更。
+    输出严格的 JSON 格式，不要输出任何其他内容。
+
+    场景背景：{scene_plan.intent}
+    出场人物：{', '.join(scene_plan.present_characters)}
+
+    场景文本：
+    {generated_text}
+
+    请提取以下信息：
+    1. 人物状态变化（位置/修为/情绪/目标/关系）
+    2. 新发现或确认的世界规则
+    3. 伏笔状态变化（planted→hinted 或 triggered 或 resolved）
+    4. 新埋入的伏笔（如有）
+    5. 发现的潜在矛盾或问题
+
+    输出 JSON 格式：
+    {{
+      "character_updates": [...],
+      "new_world_rules": [...],
+      "foreshadowing_changes": [...],
+      "new_foreshadowing": [...],
+      "issues": [...]
+    }}
+    """
+
+    response = await self.llm_client.async_call(
+        model=self.config.EXTRACT_MODEL,  # 小模型，如 qwen-plus
+        prompt=extraction_prompt,
+        response_format="json"
+    )
+
+    updates = ExtractedUpdates(
+        source_chapter=chapter_number,
+        source_scene_index=scene_index,
+        **response
+    )
+
+    # 并发写入各知识库
+    await asyncio.gather(
+        self.character_db.apply_updates(updates.character_updates),
+        self.bible_db.append_rules(updates.new_world_rules),
+        self.foreshadowing_db.apply_status_changes(updates.foreshadowing_status_changes),
+        self.foreshadowing_db.add_new_items(updates.new_foreshadowing),
+    )
+
+    # 将生成场景文本向量化，存入 vector_store
+    await self.vector_store.upsert(
+        collection="chapter_scenes",
+        id=f"ch{chapter_number}_sc{scene_index}",
+        text=generated_text,
+        metadata={
+            "chapter": chapter_number,
+            "scene": scene_index,
+            "emotional_tone": scene_plan.emotional_tone
+        }
+    )
+
+    return updates
+```
+
+## 5.3 Writer（唯一生成器）
+
+**文件**：`writer/writer.py`
+
+**职责**：接收 InjectionContext，渲染 Jinja2 提示词，调用主力大模型，流式输出文本，触发异步更新。
+
+```python
+async def write_scene(self,
+                       scene_plan: ScenePlan,
+                       chapter_plan: ChapterPlan,
+                       stream_callback) -> str:
+    """
+    生成单个场景文本
+    stream_callback: 用于将流式 token 发送到前端的回调函数（SSE）
+    """
+    # Step 1: Injection Engine 组装上下文
+    injection_ctx = await self.injection_engine.build_context(
+        scene_plan=scene_plan,
+        chapter_plan=chapter_plan
+    )
+
+    # Step 2: 渲染 Jinja2 提示词
+    prompt = self.template_env.get_template("writer.j2").render(
+        context=injection_ctx
+    )
+
+    # Step 3: 调用主力大模型，流式输出
+    full_text = ""
+    async for token in self.llm_client.stream(
+        model=self.config.WRITER_MODEL,
+        prompt=prompt,
+        max_tokens=scene_plan.target_word_count * 2  # 中文字符 * 2 约等于 tokens
+    ):
+        full_text += token
+        await stream_callback(token)  # 实时推送到前端
+
+    # Step 4: 触发异步更新（不等待完成）
+    asyncio.create_task(
+        self.update_extractor.extract_and_update(
+            generated_text=full_text,
+            chapter_number=chapter_plan.chapter_number,
+            scene_index=scene_plan.scene_index,
+            scene_plan=scene_plan
+        )
+    )
+
+    # Step 5: 保存到 draft JSON
+    await self._save_scene_draft(
+        chapter_number=chapter_plan.chapter_number,
+        scene_index=scene_plan.scene_index,
+        text=full_text,
+        injection_ctx=injection_ctx
+    )
+
+    return full_text
+```
+
+**writer.j2 提示词模板结构**（核心设计，需反复迭代）：
+
+```jinja2
+# 系统角色定义（固定）
+你是一位中文网络小说作家，专注于{{ context.scene_plan.emotional_tone }}风格的场景描写。
+写作要求：文笔流畅，节奏感强，对话自然，细节生动。严格基于提供的设定信息创作，不引入设定外内容。
+
+---
+# 本章目标
+{{ context.chapter_goal }}
+
+---
+# 当前场景任务
+{{ context.scene_plan.intent }}
+情绪基调：{{ context.scene_plan.emotional_tone }}
+视角人物：{{ context.scene_plan.pov_character }}
+目标字数：约 {{ context.scene_plan.target_word_count }} 字
+
+---
+# 出场人物
+
+{% for char in context.present_character_cards %}
+【{{ char.name }}】
+- 当前位置：{{ char.current_location }}
+- 当前修为：{{ char.cultivation.realm }}{{ char.cultivation.stage }}
+- 当前情绪：{{ char.current_emotion }}
+- 性格关键词：{{ char.personality_core }}
+- 声线特征：{{ char.voice_keywords | join('、') }}
+{% endfor %}
+
+---
+# 相关世界规则
+{% for rule in context.relevant_world_rules %}
+- {{ rule.content }}
+{% endfor %}
+
+---
+{% if context.active_foreshadowing %}
+# 本场景需处理的伏笔
+{% for fs in context.active_foreshadowing %}
+- [{{ fs.id }}] {{ fs.description }}（当前状态：{{ fs.status }}，本场景需：{{ '触发' if fs.id in context.scene_plan.foreshadowing_to_trigger else '埋入' }}）
+{% endfor %}
+{% endif %}
+
+---
+{% if context.style_reference %}
+# 文风参考
+{{ context.style_reference }}
+{% endif %}
+
+---
+# 上一场景末尾（续写参考）
+{{ context.previous_text }}
+
+---
+# 开始写作
+请直接输出场景正文，不要输出任何标题或说明文字：
+```
+
+## 5.4 知识库系统
+
+**文件**：`knowledge_bases/base_db.py` 及各子类
+
+所有知识库遵循以下接口规范：
+
+```python
+class BaseDB:
+    def __init__(self, project_id: str):
+        self.project_id = project_id
+        self.data_path = Path(f"workspace/{project_id}")
+        self.vector_store = VectorStore(project_id)
+
+    # 核心接口
+    def load(self) -> dict: ...           # 从 JSON 文件加载全部数据
+    def save(self, data: dict): ...       # 保存到 JSON 文件
+    def append(self, key: str, item): ... # 追加条目（不覆盖，保留历史）
+    def update_field(self, id: str, field: str, value): ...  # 更新特定字段
+
+    # 向量检索接口
+    def vectorize_all(self): ...          # 全量向量化（项目初始化时调用）
+    def search(self, query: str, n=5) -> list: ...  # 语义检索
+    def upsert_vector(self, id: str, text: str, metadata: dict): ...
+```
+
+**重要设计规则**：
+- 知识库的 JSON 文件是**主数据源**，vector_store 是 JSON 的派生索引
+- JSON 文件损坏或删除不会丢失知识，可从向量索引重建摘要
+- 向量索引损坏可从 JSON 文件完整重建
+- 所有写操作先写 JSON，成功后再更新向量索引
+
+## 5.5 Generators（初始化生成器）
+
+所有 Generator 遵循相同模式：
+
+```python
+class BibleGenerator:
+    def generate(self, project_meta: ProjectMeta) -> dict:
+        """
+        1. 构建 prompt（基于 project_meta）
+        2. 调用主力大模型
+        3. 解析 JSON 输出
+        4. 验证数据完整性
+        5. 写入 bible_db
+        6. 触发向量化
+        7. 返回生成结果供用户确认
+        """
+```
+
+**生成顺序约束**（有依赖关系，必须顺序执行）：
+
+```
+bible_generator → character_generator → outline_generator → arc_planner → chapter_planner
+     ↑                    ↑依赖Bible              ↑依赖Bible+人物          ↑依赖大纲
+```
+
+每步完成后必须等待用户确认，再进入下一步。用户确认后的数据进入知识库并向量化，之后的生成器可以通过向量检索使用这些数据。
+
+---
+
+# 6. 完整运行流程
+
+## 6.1 初始化阶段（一次性）
+
+### Step 1 — 用户填写创作表单
+
+**触发**：用户点击"创建作品"按钮
+
+**用户输入**：
+- 必填：作品名称、核心 idea（1-3句话）、故事类型、主角起点（名字+一句话身份）
+- 可选：目标篇幅、世界观基调、文风参考、战力体系草案、禁忌元素
+
+**系统动作**：
+- 创建 `ProjectMeta` 对象
+- 生成 `project_id`（UUID）
+- 创建 `workspace/{project_id}/` 目录结构
+- 保存 `project_meta.json`
+- 将项目状态设为 `initializing`
+
+---
+
+### Step 2 — 生成 Bible（系统）
+
+**触发**：用户提交表单后自动执行
+
+**输入**：`ProjectMeta`
+
+**调用**：`generators/bible_generator.py`，使用主力大模型
+
+**Prompt 核心指令**：
+```
+基于以下创作信息，为这部[类型]小说构建完整的世界观设定。
+输出严格的 JSON 格式，包含以下字段：...
+
+创作信息：
+- 核心 idea：{core_idea}
+- 类型：{genre}
+- 基调：{tone}
+- 战力体系草案：{combat_system_draft（如有）}
+- 禁忌元素：{forbidden_elements（如有）}
+```
+
+**输出**：`bible.json` 草稿，前端展示给用户
+
+**向量化**：`bible.world_rules` 中每条规则向量化存入 `bible_rules` collection
+
+---
+
+### Step 3 — 用户确认/修改 Bible
+
+**用户操作**：在前端 Bible 编辑器中查看、修改
+**确认后**：Bible 写入 `bible.json`，版本标记为 v1，触发全量向量化重建
+
+---
+
+### Step 4 — 生成人物设定（系统）
+
+**输入**：`ProjectMeta.protagonist_seed` + `bible.json`
+
+**调用**：`generators/character_generator.py`
+
+**输出**：
+- 主角完整人物卡 → `characters/{main_char_id}.json`
+- 3-5个主要配角人物卡 → `characters/{char_id}.json`
+- 人物关系网 → `characters/relationships.json`
+- 所有人物卡向量化（按人物姓名+性格+背景）→ `character_cards` collection
+
+---
+
+### Step 5 — 用户确认/修改人物设定
+
+用户可修改任意人物，手动新增人物。确认后人物数据 v1 进入知识库。
+
+---
+
+### Step 6 — 生成全局大纲（系统）
+
+**输入**：`bible.json` + 全部 `characters/`
+
+**调用**：`generators/outline_generator.py`
+
+**输出**：`outline.json`，包含：
+- 三幕结构划分（幕1/幕2a/幕2b/幕3，对应章节范围）
+- 主线矛盾与核心冲突
+- 5-10个关键转折点（含大致章节位置）
+- 结局方向（可模糊）
+- 初版全局伏笔清单（5-8条主线伏笔）→ 写入 `foreshadowing.json`
+
+---
+
+### Step 7 — 用户确认全局大纲
+
+**这是最关键的确认节点**。大纲确定了整部作品的走向，用户修改后系统重新生成后续内容。前端提示：修改大纲后，已生成的弧线规划将失效并需重新生成。
+
+---
+
+### Step 8 — 生成 Arc 1 详细规划（系统）
+
+**输入**：`outline.json` 第一幕 + `bible.json` + 人物设定
+
+**调用**：`generators/arc_planner.py`
+
+**输出**：`arcs/arc_1.json`，包含：
+- 前 N 章（通常 10-20 章）每章的关键事件
+- 情绪曲线节点（哪些章节需要高潮/低谷）
+- 伏笔布局节点（哪章埋、哪章触发、哪章解决）
+- 章节间因果链描述
+
+同时为每章生成简版 `ChapterPlan` 存入 `story_db`。
+
+---
+
+### Step 9 — 生成第 1 章场景序列（系统）
+
+**输入**：`arc_1.json` 中第 1 章的规划 + 人物当前状态
+
+**调用**：`generators/chapter_planner.py`
+
+**输出**：`chapters/chapter_1_plan.json`（完整 `ChapterPlan`，含 `scenes` 列表）
+
+**完成后**：初始化阶段结束，进入写作阶段。
+
+---
+
+## 6.2 写作阶段（每章循环）
+
+以下流程针对单章内的**每个场景**循环执行。
+
+### Step 10 — Injection Engine 组装上下文
+
+**触发**：用户点击"生成下一场景"，或上一场景完成后自动触发
+
+**执行**（`core/injection_engine.py`）：
+
+```
+规则层（同步，<10ms）：
+  - 读取 scene_plan（当前场景意图）
+  - 读取 chapter_plan（本章目标）
+  - 读取上一场景末尾文本
+  - 读取出场人物当前状态（character_db）
+  - 读取需处理的伏笔（foreshadowing_db）
+
+向量层（异步，~200ms）：
+  - 用"场景意图 + 人物 + 情绪基调"做 query
+  - 检索 bible_rules collection（相关世界规则）
+  - 检索 chapter_scenes collection（相似历史场景）
+  - 检索 style_examples collection（文风范例）
+
+裁剪层（条件执行，仅超预算时触发，~500ms）：
+  - 调用小模型压缩检索结果到 token 预算内
+
+组装（同步，<5ms）：
+  - 构建 InjectionContext 对象
+```
+
+---
+
+### Step 11 — Writer 生成场景文本
+
+**触发**：Injection Engine 完成后
+
+**执行**（`writer/writer.py`）：
+
+```
+1. 将 InjectionContext 渲染为 writer.j2 prompt
+2. 调用主力大模型（流式）
+3. 每个 token 通过 SSE 推送到前端
+4. 生成完成后保存到 chapters/chapter_{n}_draft.json
+5. 触发 asyncio.create_task(update_extractor.extract_and_update(...))
+   - 注意：create_task 不 await，立即返回，异步执行
+```
+
+**SSE 推送格式**：
+```json
+{"type": "token", "data": "字"}
+{"type": "scene_complete", "data": {"scene_index": 0, "word_count": 1247}}
+```
+
+---
+
+### Step 12 — Update Extractor 异步更新知识库
+
+**执行时机**：Step 11 触发后，与 Step 10/11（下一场景）并发运行
+
+**执行**（`core/update_extractor.py`）：
+
+```
+1. 调用小模型从生成文本中提取 ExtractedUpdates（JSON格式输出）
+2. 并发写入：
+   - character_db：更新出场人物的状态字段
+   - bible_db：追加新发现的世界规则
+   - foreshadowing_db：更新伏笔状态
+3. 将生成文本向量化，存入 chapter_scenes collection
+4. 如果发现 issues，写入项目的 issue_pool.json
+```
+
+**时序保证**：当前章节第 n 场景的更新结果，将在第 n+1 场景的注入中生效（因为 Injection Engine 每次从知识库实时读取）。
+
+---
+
+### Step 13 — 章节内循环
+
+对 `chapter_plan.scenes` 中的每个场景重复 Step 10-12。
+
+场景间状态流转：
+- 每个场景的 `previous_text` = 上一场景末尾 400 字
+- 每个场景的人物状态 = 知识库当前状态（含上一场景的异步更新结果）
+
+---
+
+### Step 14 — 章节级 Review
+
+**触发**：当前章节所有场景生成完成后
+
+**执行**：
+
+```
+自动检查（程序，无 LLM）：
+  - 字数统计（是否达到目标字数）
+  - 伏笔完成检查（chapter_plan 中要求处理的伏笔是否都处理了）
+  - 人物出场检查（chapter_plan 中的人物是否都出场了）
+
+AI 检查（小模型）：
+  - 将本章全文 + chapter_plan 传给小模型
+  - 检查：情节是否完整、是否存在前后矛盾、章节目标是否达成
+
+结果展示：
+  - 前端展示 Issue 列表
+  - 用户可以：忽略 issue / 指定某场景重新生成 / 手动编辑
+```
+
+---
+
+### Step 15 — 章节完稿归档
+
+**触发**：用户确认本章（或选择忽略所有 issue）
+
+**执行**：
+
+```
+1. 合并所有场景文本 → 生成 chapter_{n}_final.json
+2. 调用小模型生成本章 200 字摘要
+3. 摘要写入 story_db（供后续章节的 previous_chapter_summary 注入）
+4. 生成本章人物状态快照，写入 characters/state_history
+5. project_meta.current_chapter += 1
+6. 触发下一章的 chapter_planner（生成 chapter_{n+1}_plan.json）
+7. 如果当前章是某弧线的最后一章，触发下一弧线的 arc_planner
+```
+
+---
+
+# 7. API 接口设计
+
+**文件**：`frontend/web_app.py`
+
+## 项目管理
+
+```
+POST   /api/projects                    # 创建项目（提交创作表单）
+GET    /api/projects                    # 获取项目列表
+GET    /api/projects/{project_id}       # 获取项目详情
+DELETE /api/projects/{project_id}       # 删除项目
+
+GET    /api/projects/{project_id}/status  # 获取当前初始化/写作状态
+```
+
+## 初始化流程
+
+```
+POST   /api/projects/{project_id}/generate/bible         # 触发 Bible 生成
+POST   /api/projects/{project_id}/confirm/bible          # 用户确认 Bible
+PUT    /api/projects/{project_id}/bible                  # 用户修改 Bible 内容
+
+POST   /api/projects/{project_id}/generate/characters    # 触发人物生成
+POST   /api/projects/{project_id}/confirm/characters     # 用户确认人物
+
+POST   /api/projects/{project_id}/generate/outline       # 触发大纲生成
+POST   /api/projects/{project_id}/confirm/outline        # 用户确认大纲
+```
+
+## 写作接口
+
+```
+GET    /api/projects/{project_id}/chapters/{chapter_num}/plan
+                                        # 获取章节规划（供前端展示）
+
+POST   /api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}/write
+                                        # 触发单场景生成（返回 task_id）
+
+GET    /api/projects/{project_id}/stream/{task_id}
+                                        # SSE 接口：流式接收生成 token
+
+POST   /api/projects/{project_id}/chapters/{chapter_num}/confirm
+                                        # 用户确认章节完稿
+
+PUT    /api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}
+                                        # 用户手动编辑某场景内容
+```
+
+## 知识库查看
+
+```
+GET    /api/projects/{project_id}/bible
+GET    /api/projects/{project_id}/characters
+GET    /api/projects/{project_id}/characters/{char_id}
+GET    /api/projects/{project_id}/foreshadowing
+GET    /api/projects/{project_id}/issues             # 查看 Issue Pool
+```
+
+## SSE 数据格式
+
+所有 SSE 事件格式统一：
+
+```
+data: {"type": "token",          "data": "生成的字符"}
+data: {"type": "scene_start",    "data": {"scene_index": 0, "intent": "..."}}
+data: {"type": "scene_complete", "data": {"scene_index": 0, "word_count": 1247}}
+data: {"type": "chapter_review", "data": {"issues": [...], "word_count": 4823}}
+data: {"type": "error",          "data": {"message": "...", "code": "..."}}
+data: {"type": "done"}
+```
+
+---
+
+# 8. 存储结构设计
+
+## 8.1 文件存储（主数据源）
+
+所有 JSON 文件使用 UTF-8 编码，缩进 2 空格。
+
+**路径约定**：
+```python
+BASE = Path("workspace") / project_id
+
+# 各类文件路径
+BIBLE         = BASE / "bible.json"
+OUTLINE       = BASE / "outline.json"
+FORESHADOWING = BASE / "foreshadowing.json"
+STYLE_CONFIG  = BASE / "style_config.json"
+META          = BASE / "project_meta.json"
+ISSUES        = BASE / "issue_pool.json"
+
+CHARACTERS    = BASE / "characters"      # 目录
+CHAPTERS      = BASE / "chapters"        # 目录
+ARCS          = BASE / "arcs"            # 目录
+VECTORS       = BASE / "vectors"         # ChromaDB 持久化目录
+```
+
+**写操作规范**：
+- 使用原子写（先写临时文件，再 rename）防止意外中断导致 JSON 损坏
+- 每次写操作附加 `_updated_at` 时间戳字段
+- 知识库数据只追加（append-only）历史字段，不物理删除
+
+## 8.2 向量存储（检索索引）
+
+使用 ChromaDB，每个项目有独立的持久化目录（`workspace/{project_id}/vectors/`）。
+
+**Collection 设计**：
+
+| Collection 名 | 存储内容 | 向量化文本 | metadata 字段 |
+|---|---|---|---|
+| `bible_rules` | 世界规则条目 | rule.content | category, importance, source_chapter |
+| `character_cards` | 人物卡摘要 | 姓名+性格+背景描述 | char_id, name, first_appeared |
+| `chapter_scenes` | 已完成场景文本 | 场景全文 | chapter, scene_index, emotional_tone |
+| `style_examples` | 文风范例片段 | 范文文本 | tone_tag, source |
+| `outlines` | 大纲条目 | 关键事件描述 | chapter_range, arc_id |
+
+**Embedding 模型选择**：
+- 推荐：`text-embedding-3-small`（OpenAI）或 `text-embedding-v3`（DashScope）
+- 本地备选：`bge-m3`（支持中文，可离线运行）
+
+**检索参数**：默认 `n_results=5`，相似度阈值 `> 0.5`（低于此阈值的结果不注入）
+
+## 8.3 多项目隔离
+
+所有数据完全按 `project_id`（UUID）隔离，代码中不得出现项目间的数据交叉引用。ChromaDB 的 collection 命名加项目前缀：`{project_id[:8]}_bible_rules`。
+
+---
+
+# 9. 提示词工程规范
+
+## 9.1 Jinja2 模板管理规则
+
+- 所有提示词使用 Jinja2 模板，存放在 `writer/prompts/`
+- 模板文件命名：`{用途}.j2`
+- 模板变量通过 `InjectionContext` 对象传入，禁止在模板外拼接字符串
+- 每次修改模板后，在 `workspace/prompt_experiments/` 记录修改内容和评估结果
+
+## 9.2 各生成器的提示词原则
+
+**Bible Generator**：
+- 要求输出严格 JSON，包含所有 schema 字段
+- 明确要求战力体系的等级数量（建议 8-12 个大境界）
+- 要求世界规则有明确的"违反代价"描述
+
+**Character Generator**：
+- 要求每个人物有3个"核心矛盾"（两种对立特质之间的张力）
+- 声线关键词必须是具体可操作的写作指导（如"说话简短、爱用反问、愤怒时沉默"）
+- 要求生成人物的"弱点和恐惧"，这是角色成长的驱动力
+
+**Chapter Planner**：
+- 场景意图控制在 30 字以内，避免过度指定细节（给 Writer 留创作空间）
+- 每章必须有明确的情绪变化弧（不能全程单一情绪）
+- 场景数量：短章 2-3 个场景，正常章 3-5 个，战斗/高潮章 4-6 个
+
+**Writer（核心）**：
+- 系统角色定义要明确文体风格（区别于通用写作助手）
+- 人物卡中的"声线关键词"必须在 prompt 中明确要求使用
+- 伏笔处理要求"自然，不能生硬"——用一句话说明如何自然地处理
+- 明确禁止：不要使用破折号表示内心独白、不要开头就用"此时"、不要连续超过3句使用相同句式
+
+## 9.3 输出格式规范
+
+需要结构化输出的生成器（Bible/Character/Outline/Extract）：
+- prompt 末尾必须写明"只输出 JSON，不要输出任何其他内容，不要使用 markdown 代码块"
+- 在 `llm_client` 中对这类调用设置 `response_format="json"`（如 API 支持）
+- 解析前 strip 掉可能的 ` ```json ` 前缀和 ` ``` ` 后缀
+- 解析失败时 retry 最多 2 次，第 2 次 retry 在 prompt 中附上错误信息让模型自我修正
+
+---
+
+# 10. 组件分工与调用规则
+
+## 10.1 调用规则总表
+
+| 调用方 | 被调用方 | 调用方式 | 使用模型 | 说明 |
+|---|---|---|---|---|
+| FastAPI 路由 | generators/* | 同步 HTTP | 主力大模型 | 初始化阶段 |
+| FastAPI 路由 | writer.write_scene | 异步 | 主力大模型 | 触发写作 |
+| writer.py | injection_engine | await | 无 LLM | 写前组装 |
+| writer.py | llm_client.stream | await stream | 主力大模型 | 正文生成 |
+| writer.py | update_extractor | create_task（不等待） | 小模型 | 异步更新 |
+| injection_engine | vector_store.search | await | embedding 模型 | 语义检索 |
+| injection_engine | llm_client.call | await（条件） | 小模型 | 仅超预算时 |
+| update_extractor | llm_client.async_call | await | 小模型 | 提取变更 |
+| update_extractor | knowledge_bases/* | await（并发） | 无 LLM | 写入知识库 |
+| update_extractor | vector_store.upsert | await | embedding 模型 | 索引场景文本 |
+
+## 10.2 并发模型
+
+系统的并发设计遵循以下规则：
+
+```
+单个写作请求的时序：
+
+t=0ms    Injection Engine 开始（规则层）
+t=10ms   Injection Engine 向量检索（异步）
+t=210ms  Injection Engine 完成，Writer 开始
+t=210ms~ Writer 流式生成（通常 10-60 秒）
+t=X      Writer 生成完成
+t=X+1    create_task(update_extractor)  ← 不等待
+t=X+1    返回"场景完成"信号给前端
+t=X+1ms  Update Extractor 开始（后台）
+t=X+3s   Update Extractor 完成（后台）
+
+用户感知的等待时间：Injection Engine 准备时间（约 200-500ms）+ LLM 生成时间
+```
+
+## 10.3 模型分工建议
+
+| 用途 | 推荐模型 | 原因 |
+|---|---|---|
+| 正文生成（Writer） | claude-sonnet / qwen-max / deepseek-v3 | 最高质量，成本较高 |
+| 初始化生成（Bible/人物/大纲） | 同上 | 质量影响大，一次性成本可接受 |
+| 上下文裁剪（Trim） | qwen-turbo / gpt-4o-mini | 简单压缩任务，速度快成本低 |
+| 状态提取（Extract） | qwen-plus / gpt-4o-mini | 结构化抽取，不需要最强模型 |
+| 章节摘要 | qwen-plus | 摘要任务，中等质量即可 |
+| Embedding | text-embedding-3-small / bge-m3 | 低成本高频调用 |
+
+---
+
+# 11. 技术选型说明
+
+## 后端框架
+
+**FastAPI + Uvicorn**：异步原生支持，SSE 流式推送简单，Pydantic 深度集成（schema 直接复用）。
+
+## 知识库存储
+
+**JSON 文件**：结构简单，人类可读，便于调试。不使用数据库是因为：项目数据量小（单项目 < 10MB），不需要复杂查询，git 可追踪，搬迁简单。
+
+## 向量数据库
+
+**ChromaDB**：本地运行，无需服务器，Python 原生，支持持久化。备选：FAISS（更快，但无持久化接口）。
+
+## 提示词模板
+
+**Jinja2**：Python 生态标准，支持条件/循环/过滤器，便于动态组装不同情绪场景的提示词。
+
+## 异步框架
+
+**asyncio**：Python 原生，与 FastAPI 无缝集成。所有 LLM 调用使用异步接口，避免线程阻塞。
+
+---
+
+# 12. 环境配置与依赖
+
+## requirements.txt
+
+```
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+openai>=1.0.0          # 兼容 OpenAI 格式的所有 provider
+aiofiles>=23.2.1
+PyYAML>=6.0.1
+Jinja2>=3.1.2
+python-dotenv>=1.0.0
+chromadb>=0.4.0
+sentence-transformers>=2.2.0   # 本地 embedding（可选）
+tiktoken>=0.5.0                # token 计数
+httpx>=0.24.0                  # 异步 HTTP
+```
+
+## .env.example
+
+```bash
+# LLM 配置
+LLM_PROVIDER=dashscope          # dashscope / openai / doubao
+LLM_API_KEY=your_api_key_here
+LLM_BASE_URL=                   # 留空使用默认，或填自定义端点
+
+# 模型配置
+WRITER_MODEL=qwen-max
+GENERATOR_MODEL=qwen-max
+TRIM_MODEL=qwen-turbo
+EXTRACT_MODEL=qwen-plus
+EMBED_MODEL=text-embedding-v3   # 或 local:bge-m3
+
+# Token 预算
+INJECTION_TOKEN_BUDGET=3500     # Injection Engine 的 token 预算
+WRITER_MAX_TOKENS=3000          # Writer 单次最大生成 token
+
+# 存储路径
+WORKSPACE_PATH=workspace        # 运行时数据根目录
+VECTOR_STORE_TYPE=chromadb      # chromadb / faiss
+
+# 服务配置
+HOST=127.0.0.1
+PORT=666
+DEBUG=true
+```
+
+## 启动方式
+
+```bash
+# 开发环境
+cp .env.example .env
+# 编辑 .env 填入 API Key
+pip install -r requirements.txt
+python main.py
+
+# 生产环境
+uvicorn frontend.web_app:app --host 0.0.0.0 --port 666 --workers 2
+```
+
+---
+
+*文档版本：v1.0 | 最后更新：2026-04-14*
+*本文档描述的是系统的目标架构，具体实现细节可能随开发过程调整，以代码为准。*

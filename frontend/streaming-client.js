@@ -20,7 +20,8 @@ const StreamingState = {
     fullContent: '',
     logs: [],
     startTime: null,
-    currentTokenLog: null  // 当前token日志元素
+    currentTokenLog: null,  // 当前token日志元素
+    status: 'idle'  // 状态: idle, streaming, complete, error
 };
 
 // ============================================

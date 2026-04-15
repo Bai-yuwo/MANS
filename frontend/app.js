@@ -146,6 +146,11 @@ function formatWordCount(count) {
  * 加载项目列表
  */
 async function loadProjects() {
+    const container = document.getElementById('project-list');
+    if (container) {
+        container.innerHTML = '<div class="loading-overlay" style="position:relative;min-height:100px;display:flex;align-items:center;justify-content:center;"><div class="loading-spinner"></div><span class="loading-text">加载项目中...</span></div>';
+    }
+    
     try {
         const data = await apiRequest('/api/projects');
         const projects = data.projects || [];
@@ -166,6 +171,9 @@ async function loadProjects() {
         
     } catch (error) {
         console.error('加载项目列表失败:', error);
+        if (container) {
+            container.innerHTML = '<p class="error" style="text-align:center;padding:20px;">加载项目失败，请刷新重试</p>';
+        }
     }
 }
 
@@ -296,31 +304,69 @@ async function openProject(projectId) {
  * 检查初始化状态
  */
 async function checkInitializationStatus(projectId) {
+    const steps = ['bible-step', 'character-step', 'outline-step'];
+    
     try {
         const status = await apiRequest(`/api/projects/${projectId}/status`);
         
-        // 更新UI状态
+        // 更新UI状态 - 步骤完成标记
         updateInitStepStatus('bible-step', status.has_bible);
         updateInitStepStatus('character-step', status.has_characters);
         updateInitStepStatus('outline-step', status.has_outline);
         
-        // 显示/隐藏生成按钮
+        // 移除加载指示器
+        steps.forEach(stepId => {
+            const step = document.getElementById(stepId);
+            if (step) {
+                const spinners = step.querySelectorAll('.loading-spinner');
+                spinners.forEach(s => s.remove());
+            }
+        });
+        
+        // 获取按钮
         const bibleBtn = document.getElementById('generate-bible-btn');
         const charBtn = document.getElementById('generate-characters-btn');
         const outlineBtn = document.getElementById('generate-outline-btn');
+        const enterWritingBtn = document.getElementById('enter-writing-btn');
         
-        if (bibleBtn) bibleBtn.disabled = status.has_bible;
-        if (charBtn) charBtn.disabled = !status.has_bible || status.has_characters;
-        if (outlineBtn) outlineBtn.disabled = !status.has_characters || status.has_outline;
+        // 更新按钮状态
+        // Bible: 已完成则禁用，否则启用
+        if (bibleBtn) {
+            bibleBtn.disabled = status.has_bible;
+        }
+        
+        // 人物: 需要Bible完成，且人物未完成
+        if (charBtn) {
+            charBtn.disabled = !status.has_bible || status.has_characters;
+        }
+        
+        // 大纲: 需要人物完成，且大纲未完成
+        if (outlineBtn) {
+            outlineBtn.disabled = !status.has_characters || status.has_outline;
+        }
         
         // 如果全部完成，显示进入写作按钮
-        if (status.initialized) {
-            const enterWritingBtn = document.getElementById('enter-writing-btn');
-            if (enterWritingBtn) enterWritingBtn.style.display = 'block';
+        if (status.initialized && enterWritingBtn) {
+            enterWritingBtn.style.display = 'inline-flex';
         }
+        
+        console.log('初始化状态已更新:', {
+            has_bible: status.has_bible,
+            has_characters: status.has_characters,
+            has_outline: status.has_outline,
+            initialized: status.initialized
+        });
         
     } catch (error) {
         console.error('检查初始化状态失败:', error);
+        // 出错时也移除加载指示器
+        steps.forEach(stepId => {
+            const step = document.getElementById(stepId);
+            if (step) {
+                const spinners = step.querySelectorAll('.loading-spinner');
+                spinners.forEach(s => s.remove());
+            }
+        });
     }
 }
 
@@ -339,7 +385,10 @@ function updateInitStepStatus(stepId, completed) {
  * 生成 Bible（流式版本）
  */
 async function generateBible() {
-    if (!AppState.currentProject) return;
+    if (!AppState.currentProject) {
+        showMessage('请先选择一个项目', 'warning');
+        return;
+    }
     
     const btn = document.getElementById('generate-bible-btn');
     btn.disabled = true;
@@ -360,15 +409,33 @@ async function generateBible() {
             displayBible(result.data);
         }
         
-        // 刷新初始化状态
+        // 确保Bible显示出来
+        await loadAndDisplayBible();
+        
+        // 刷新初始化状态（会正确设置按钮的 disabled 状态）
         await checkInitializationStatus(AppState.currentProject);
+        // checkInitializationStatus 已根据 has_bible 设置按钮状态，不再手动重置
         
     } catch (error) {
         showMessage('生成 Bible 失败: ' + error.message, 'error');
+        // 只在出错时恢复按钮
         btn.disabled = false;
+        btn.textContent = '生成 Bible';
     }
-    
-    btn.textContent = '生成 Bible';
+}
+
+/**
+ * 加载并显示Bible
+ */
+async function loadAndDisplayBible() {
+    try {
+        const bible = await apiRequest(`/api/projects/${AppState.currentProject}/bible`);
+        if (bible && !bible.error) {
+            displayBible(bible);
+        }
+    } catch (error) {
+        console.error('加载Bible失败:', error);
+    }
 }
 
 /**
@@ -406,7 +473,10 @@ function displayBible(bibleData) {
  * 生成人物
  */
 async function generateCharacters() {
-    if (!AppState.currentProject) return;
+    if (!AppState.currentProject) {
+        showMessage('请先选择一个项目', 'warning');
+        return;
+    }
     
     const btn = document.getElementById('generate-characters-btn');
     btn.disabled = true;
@@ -426,21 +496,25 @@ async function generateCharacters() {
             showMessage('人物生成成功！');
         }
         
+        // 刷新初始化状态（会正确设置按钮的 disabled 状态）
         await checkInitializationStatus(AppState.currentProject);
         
     } catch (error) {
         showMessage('生成人物失败: ' + error.message, 'error');
+        // 只在出错时恢复按钮
         btn.disabled = false;
+        btn.textContent = '生成人物';
     }
-    
-    btn.textContent = '生成人物';
 }
 
 /**
  * 生成大纲（流式版本）
  */
 async function generateOutline() {
-    if (!AppState.currentProject) return;
+    if (!AppState.currentProject) {
+        showMessage('请先选择一个项目', 'warning');
+        return;
+    }
     
     const btn = document.getElementById('generate-outline-btn');
     btn.disabled = true;
@@ -460,14 +534,15 @@ async function generateOutline() {
             showMessage('大纲生成成功！');
         }
         
+        // 刷新初始化状态（会正确设置按钮的 disabled 状态）
         await checkInitializationStatus(AppState.currentProject);
         
     } catch (error) {
         showMessage('生成大纲失败: ' + error.message, 'error');
+        // 只在出错时恢复按钮
         btn.disabled = false;
+        btn.textContent = '生成大纲';
     }
-    
-    btn.textContent = '生成大纲';
 }
 
 // ============================================
@@ -646,9 +721,12 @@ function escapeHtml(text) {
 function editScene(sceneIndex) {
     const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
     const currentText = contentDiv.textContent || '';
-    
+
+    // 保存原始内容，用于取消时恢复
+    contentDiv.dataset.originalContent = currentText;
+
     contentDiv.innerHTML = `
-        <textarea id="edit-scene-${sceneIndex}" rows="10">${currentText}</textarea>
+        <textarea id="edit-scene-${sceneIndex}" rows="10">${escapeHtml(currentText)}</textarea>
         <div class="edit-actions">
             <button onclick="saveSceneEdit(${sceneIndex})">保存</button>
             <button onclick="cancelSceneEdit(${sceneIndex})">取消</button>
@@ -685,8 +763,12 @@ async function saveSceneEdit(sceneIndex) {
  * 取消场景编辑
  */
 function cancelSceneEdit(sceneIndex) {
-    // 重新加载场景内容
-    generateScene(sceneIndex); // 简化处理，实际应该重新加载已保存的内容
+    const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
+    // 恢复原始内容
+    const originalContent = contentDiv.dataset.originalContent || '';
+    contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(originalContent)}</div>`;
+    // 清除保存的原始内容
+    delete contentDiv.dataset.originalContent;
 }
 
 /**
@@ -835,6 +917,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // 加载项目列表
     loadProjects();
     
+    // 加载设置
+    loadSettings();
+    
+    // 温度滑块实时更新
+    const tempSlider = document.getElementById('setting-temperature');
+    const tempValue = document.getElementById('temperature-value');
+    if (tempSlider && tempValue) {
+        tempSlider.addEventListener('input', () => {
+            tempValue.textContent = tempSlider.value;
+        });
+    }
+    
     // 绑定顶部菜单按钮（侧边栏收起/展开）
     const topBarIcon = document.querySelector('.top-bar-icon');
     if (topBarIcon) {
@@ -954,3 +1048,271 @@ window.editScene = editScene;
 window.saveSceneEdit = saveSceneEdit;
 window.cancelSceneEdit = cancelSceneEdit;
 window.toggleSidebar = toggleSidebar;
+
+// ============================================
+// 弧线/章节规划 UI
+// ============================================
+
+/**
+ * 生成弧线规划
+ */
+async function generateArc(arcNumber) {
+    if (!AppState.currentProject) return;
+    
+    const btn = document.getElementById(`generate-arc-${arcNumber}-btn`);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loading-spinner small"></span> 生成中...';
+    }
+    
+    try {
+        const result = await apiRequest(
+            `/api/projects/${AppState.currentProject}/generate/arc?arc_number=${arcNumber}`,
+            { method: 'POST' }
+        );
+        showMessage(`弧线 ${arcNumber} 规划生成成功！`, 'success');
+        return result;
+    } catch (error) {
+        showMessage('生成弧线规划失败: ' + error.message, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = `生成弧线 ${arcNumber}`;
+        }
+    }
+}
+
+/**
+ * 生成章节规划
+ */
+async function generateChapterPlan(chapterNumber) {
+    if (!AppState.currentProject) return;
+    
+    const btn = document.getElementById(`generate-chapter-${chapterNumber}-btn`);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loading-spinner small"></span> 生成中...';
+    }
+    
+    try {
+        const result = await apiRequest(
+            `/api/projects/${AppState.currentProject}/generate/chapter?chapter_number=${chapterNumber}`,
+            { method: 'POST' }
+        );
+        showMessage(`第 ${chapterNumber} 章规划生成成功！`, 'success');
+        // 刷新章节规划显示
+        await loadChapterPlan(AppState.currentProject, chapterNumber);
+        return result;
+    } catch (error) {
+        showMessage('生成章节规划失败: ' + error.message, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = `生成第${chapterNumber}章规划`;
+        }
+    }
+}
+
+// ============================================
+// 系统设置
+// ============================================
+
+/**
+ * 保存设置
+ */
+function saveSettings() {
+    const settings = {
+        apiBase: document.getElementById('setting-api-base')?.value || '',
+        temperature: parseFloat(document.getElementById('setting-temperature')?.value || '0.7'),
+        retries: parseInt(document.getElementById('setting-retries')?.value || '3'),
+        logLevel: document.getElementById('setting-log-level')?.value || 'INFO'
+    };
+    localStorage.setItem('mans_settings', JSON.stringify(settings));
+    showMessage('设置已保存', 'success');
+}
+
+/**
+ * 重置设置
+ */
+function resetSettings() {
+    const defaults = { apiBase: '', temperature: 0.7, retries: 3, logLevel: 'INFO' };
+    localStorage.setItem('mans_settings', JSON.stringify(defaults));
+    loadSettings();
+    showMessage('设置已重置为默认值', 'success');
+}
+
+/**
+ * 加载设置
+ */
+function loadSettings() {
+    const stored = localStorage.getItem('mans_settings');
+    const settings = stored ? JSON.parse(stored) : { apiBase: '', temperature: 0.7, retries: 3, logLevel: 'INFO' };
+    
+    const apiBase = document.getElementById('setting-api-base');
+    const temperature = document.getElementById('setting-temperature');
+    const tempValue = document.getElementById('temperature-value');
+    const retries = document.getElementById('setting-retries');
+    const logLevel = document.getElementById('setting-log-level');
+    
+    if (apiBase) apiBase.value = settings.apiBase || '';
+    if (temperature) temperature.value = settings.temperature ?? 0.7;
+    if (tempValue) tempValue.textContent = settings.temperature ?? 0.7;
+    if (retries) retries.value = settings.retries ?? 3;
+    if (logLevel) logLevel.value = settings.logLevel || 'INFO';
+}
+
+// ============================================
+// 实时监控
+// ============================================
+
+/**
+ * 刷新监控面板
+ */
+async function refreshMonitor() {
+    if (!AppState.currentProject) {
+        showMessage('请先选择项目', 'warning');
+        return;
+    }
+    
+    try {
+        // 加载 Issues
+        const issuesData = await apiRequest(`/api/projects/${AppState.currentProject}/issues`);
+        displayIssues(issuesData.issues || []);
+        
+        // 加载伏笔
+        const fsData = await apiRequest(`/api/projects/${AppState.currentProject}/foreshadowing`);
+        displayForeshadowing(fsData.foreshadowing || []);
+        
+        // 加载项目状态
+        const status = await apiRequest(`/api/projects/${AppState.currentProject}/status`);
+        const statChapters = document.getElementById('stat-chapters');
+        const statWords = document.getElementById('stat-words');
+        const statIssues = document.getElementById('stat-issues');
+        
+        if (statChapters) statChapters.textContent = status.current_chapter || 0;
+        if (statWords) statWords.textContent = '-';
+        if (statIssues) statIssues.textContent = (issuesData.issues || []).length;
+        
+        showMessage('监控数据已刷新', 'success');
+    } catch (error) {
+        showMessage('刷新监控失败: ' + error.message, 'error');
+    }
+}
+
+/**
+ * 显示 Issues 列表
+ */
+function displayIssues(issues) {
+    const container = document.getElementById('issues-list');
+    if (!container) return;
+    
+    if (issues.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 12px;">暂无待处理 Issues</p>';
+        return;
+    }
+    
+    const urgencyColors = {
+        'critical': 'var(--error)',
+        'major': 'var(--warning)',
+        'medium': 'var(--info)',
+        'minor': 'var(--text-secondary)'
+    };
+    
+    container.innerHTML = issues.map(issue => `
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px; margin-bottom: 8px;
+                    background: var(--bg-dark); border-radius: 6px; border-left: 3px solid ${urgencyColors[issue.urgency] || 'var(--text-secondary)'};">
+            <span style="font-size: 11px; color: var(--text-secondary); min-width: 80px;">${issue.type}</span>
+            <span style="flex: 1; font-size: 13px;">${issue.description}</span>
+            <span style="font-size: 11px; padding: 2px 8px; border-radius: 4px;
+                         background: ${issue.status === 'resolved' ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)'};
+                         color: ${issue.status === 'resolved' ? 'var(--success)' : 'var(--warning)'};">${issue.status}</span>
+        </div>
+    `).join('');
+}
+
+/**
+ * 显示伏笔状态
+ */
+function displayForeshadowing(foreshadowing) {
+    const container = document.getElementById('foreshadowing-monitor');
+    if (!container) return;
+    
+    if (foreshadowing.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 12px;">暂无伏笔</p>';
+        return;
+    }
+    
+    const statusColors = {
+        'planted': 'var(--info)',
+        'hinted': 'var(--warning)',
+        'triggered': 'var(--primary-light)',
+        'resolved': 'var(--success)'
+    };
+    
+    container.innerHTML = foreshadowing.map(fs => `
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px; margin-bottom: 8px;
+                    background: var(--bg-dark); border-radius: 6px;">
+            <span style="font-size: 11px; padding: 2px 8px; border-radius: 4px; min-width: 60px; text-align: center;
+                         background: rgba(99,102,241,0.15); color: ${statusColors[fs.status] || 'var(--text-secondary)'};">${fs.status || 'active'}</span>
+            <span style="flex: 1; font-size: 13px;">${(fs.description || '').substring(0, 80)}${(fs.description || '').length > 80 ? '...' : ''}</span>
+            <span style="font-size: 11px; color: var(--text-secondary);">${fs.type || ''}</span>
+        </div>
+    `).join('');
+}
+
+window.generateArc = generateArc;
+window.generateChapterPlan = generateChapterPlan;
+window.saveSettings = saveSettings;
+window.resetSettings = resetSettings;
+window.refreshMonitor = refreshMonitor;
+
+/**
+ * 加载 Issues 到 Issue Pool 面板
+ */
+async function loadIssuesForPanel() {
+    if (!AppState.currentProject) {
+        showMessage('请先选择项目', 'warning');
+        return;
+    }
+    
+    const container = document.getElementById('issues-panel-list');
+    if (container) {
+        container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:20px;"><div class="loading-spinner small"></div><span style="color:var(--text-secondary);">加载中...</span></div>';
+    }
+    
+    try {
+        const data = await apiRequest(`/api/projects/${AppState.currentProject}/issues`);
+        const issues = data.issues || [];
+        
+        if (!container) return;
+        
+        if (issues.length === 0) {
+            container.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 12px;">暂无待处理 Issues，一切正常！</p>';
+            return;
+        }
+        
+        const urgencyColors = {
+            'critical': 'var(--error)',
+            'major': 'var(--warning)',
+            'medium': 'var(--info)',
+            'minor': 'var(--text-secondary)'
+        };
+        
+        container.innerHTML = issues.map(issue => `
+            <div style="display: flex; align-items: center; gap: 12px; padding: 12px; margin-bottom: 8px;
+                        background: var(--bg-dark); border-radius: 6px; border-left: 3px solid ${urgencyColors[issue.urgency] || 'var(--text-secondary)'};">
+                <span style="font-size: 11px; color: var(--text-secondary); min-width: 80px;">${issue.type}</span>
+                <span style="flex: 1; font-size: 13px;">${issue.description}</span>
+                <span style="font-size: 11px; padding: 2px 8px; border-radius: 4px;
+                             background: ${issue.status === 'resolved' ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)'};
+                             color: ${issue.status === 'resolved' ? 'var(--success)' : 'var(--warning)'};">${issue.status}</span>
+            </div>
+        `).join('');
+    } catch (error) {
+        if (container) {
+            container.innerHTML = '<p class="error" style="text-align:center;">加载 Issues 失败</p>';
+        }
+    }
+}
+
+window.loadIssuesForPanel = loadIssuesForPanel;

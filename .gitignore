@@ -49,7 +49,7 @@ logs/
 backups/
 !backups/.gitkeep
 
-# 工作记忆
+# 工作区
 workspace/
 # 临时文件
 *.tmp
@@ -61,4 +61,4 @@ workspace/
 # Windows 批处理脚本
 *.bat
 *.cmd
-
+CLAUDE.md

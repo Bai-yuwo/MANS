@@ -117,3 +117,60 @@ class CharacterDB(BaseDB):
             人物姓名列表
         """
         return self.list_keys()
+    
+    def list_all_characters(self) -> list[dict]:
+        """
+        获取所有人物信息（返回字典列表，供 API 使用）
+        
+        Returns:
+            人物字典列表
+        """
+        names = self.list_keys()
+        characters = []
+        for name in names:
+            data = self.load(name)
+            if data:
+                characters.append(data)
+        return characters
+    
+    def get_character_by_id(self, char_id: str) -> Optional[dict]:
+        """
+        根据 ID 获取人物信息
+        
+        Args:
+            char_id: 人物ID
+        
+        Returns:
+            人物数据字典，不存在则返回 None
+        """
+        all_chars = self.list_all_characters()
+        for char in all_chars:
+            if char.get("id") == char_id:
+                return char
+        return None
+    
+    def add_relationship(self, character_id: str, relationship) -> bool:
+        """
+        添加人物关系
+        
+        Args:
+            character_id: 人物ID
+            relationship: Relationship 对象或字典
+        
+        Returns:
+            是否添加成功
+        """
+        # 遍历所有人物找到匹配的
+        names = self.list_keys()
+        for name in names:
+            data = self.load(name)
+            if data and data.get("id") == character_id:
+                if "relationships" not in data:
+                    data["relationships"] = []
+                
+                rel_data = relationship.model_dump() if hasattr(relationship, 'model_dump') else relationship
+                data["relationships"].append(rel_data)
+                return self.save(name, data)
+        
+        logger.error(f"人物不存在: {character_id}")
+        return False

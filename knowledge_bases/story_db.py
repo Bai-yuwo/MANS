@@ -58,18 +58,23 @@ class StoryDB(BaseDB):
         
         return ""
     
-    def save_chapter_plan(self, plan: ChapterPlan) -> bool:
+    def save_chapter_plan(self, chapter_number_or_plan, plan_data=None) -> bool:
         """
         保存章节规划
         
         Args:
-            plan: 章节规划对象
+            chapter_number_or_plan: 章节号或 ChapterPlan 对象
+            plan_data: 章节规划数据字典（当第一个参数为章节号时使用）
         
         Returns:
             是否保存成功
         """
-        key = f"chapter_{plan.chapter_number}_plan"
-        return self.save(key, plan.model_dump())
+        if isinstance(chapter_number_or_plan, ChapterPlan):
+            key = f"chapter_{chapter_number_or_plan.chapter_number}_plan"
+            return self.save(key, chapter_number_or_plan.model_dump())
+        else:
+            key = f"chapter_{chapter_number_or_plan}_plan"
+            return self.save(key, plan_data)
     
     def get_chapter_plan(self, chapter_number: int) -> ChapterPlan | None:
         """
@@ -117,3 +122,144 @@ class StoryDB(BaseDB):
         except Exception as e:
             logger.error(f"保存章节完稿失败: {e}")
             return False
+    
+    def save_outline(self, outline_data: dict) -> bool:
+        """
+        保存全局大纲
+        
+        Args:
+            outline_data: 大纲数据字典
+        
+        Returns:
+            是否保存成功
+        """
+        return self.save("outline", outline_data)
+    
+    def get_outline(self) -> dict | None:
+        """
+        获取全局大纲
+        
+        Returns:
+            大纲数据字典，不存在则返回 None
+        """
+        return self.load("outline")
+    
+    def save_arc_plan(self, arc_id: str, arc_data: dict) -> bool:
+        """
+        保存弧线规划
+        
+        Args:
+            arc_id: 弧线ID
+            arc_data: 弧线规划数据
+        
+        Returns:
+            是否保存成功
+        """
+        key = f"arc_{arc_id}"
+        return self.save(key, arc_data)
+    
+    def get_arc_plan(self, arc_id: str) -> dict | None:
+        """
+        获取弧线规划
+        
+        Args:
+            arc_id: 弧线ID
+        
+        Returns:
+            弧线规划数据，不存在则返回 None
+        """
+        key = f"arc_{arc_id}"
+        return self.load(key)
+    
+    def get_arc_plan_for_chapter(self, chapter_number: int) -> dict | None:
+        """
+        根据章节号查找对应的弧线规划
+        
+        Args:
+            chapter_number: 章节编号
+        
+        Returns:
+            包含该章节的弧线规划数据，未找到则返回 None
+        """
+        import json
+        
+        arcs_dir = Path(self.base_path) / "arcs"
+        if not arcs_dir.exists():
+            # 尝试从 story 数据目录查找
+            story_dir = Path(self.base_path) / "story"
+            if story_dir.exists():
+                for f in story_dir.iterdir():
+                    if f.name.startswith("arc_") and f.suffix == ".json":
+                        try:
+                            with open(f, 'r', encoding='utf-8') as fp:
+                                arc_data = json.load(fp)
+                            chapter_range = arc_data.get("chapter_range", [0, 0])
+                            if chapter_range[0] <= chapter_number <= chapter_range[1]:
+                                return arc_data
+                        except Exception:
+                            continue
+            return None
+        
+        for arc_file in arcs_dir.glob("arc_*.json"):
+            try:
+                with open(arc_file, 'r', encoding='utf-8') as f:
+                    arc_data = json.load(f)
+                chapter_range = arc_data.get("chapter_range", [0, 0])
+                if chapter_range[0] <= chapter_number <= chapter_range[1]:
+                    return arc_data
+            except Exception:
+                continue
+        
+        return None
+    
+    def get_chapter_final(self, chapter_number: int) -> dict | None:
+        """
+        获取章节完稿
+        
+        Args:
+            chapter_number: 章节号
+        
+        Returns:
+            章节完稿数据，不存在则返回 None
+        """
+        final_path = (
+            Path(self.base_path) / "chapters" / 
+            f"chapter_{chapter_number}_final.json"
+        )
+        
+        if final_path.exists():
+            try:
+                import json
+                with open(final_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"读取章节完稿失败: {e}")
+        
+        return None
+    
+    def save_chapter_draft(self, chapter_number: int, draft_data: dict) -> bool:
+        """
+        保存章节草稿
+        
+        Args:
+            chapter_number: 章节号
+            draft_data: 草稿数据
+        
+        Returns:
+            是否保存成功
+        """
+        key = f"chapter_{chapter_number}_draft"
+        return self.save(key, draft_data)
+    
+    def get_chapter_draft(self, chapter_number: int) -> dict | None:
+        """
+        获取章节草稿
+        
+        Args:
+            chapter_number: 章节号
+        
+        Returns:
+            草稿数据，不存在则返回 None
+        """
+        key = f"chapter_{chapter_number}_draft"
+        return self.load(key)

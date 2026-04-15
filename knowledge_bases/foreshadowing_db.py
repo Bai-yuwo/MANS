@@ -138,3 +138,44 @@ class ForeshadowingDB(BaseDB):
             "items": [item.model_dump() for item in items]
         }
         return self.save("items", data)
+    
+    def list_all_foreshadowing(self) -> list[dict]:
+        """
+        获取所有伏笔（返回字典列表，供 API 使用）
+        
+        Returns:
+            伏笔字典列表
+        """
+        items = self.get_all_items()
+        return [item.model_dump() for item in items]
+    
+    def add_foreshadowing(
+        self,
+        fs_type: str,
+        description: str,
+        trigger_range: tuple = (1, 100),
+        urgency: str = "medium"
+    ) -> bool:
+        """
+        添加新伏笔（简化接口）
+        
+        Args:
+            fs_type: 伏笔类型 (plot/character/world/emotional)
+            description: 伏笔描述
+            trigger_range: 触发章节范围 (start, end)
+            urgency: 紧急程度 (critical/major/medium/minor)
+        
+        Returns:
+            是否添加成功
+        """
+        import uuid
+        item = ForeshadowingItem(
+            id=f"fs_{uuid.uuid4().hex[:8]}",
+            fs_type=fs_type,
+            description=description,
+            planted_chapter=trigger_range[0],
+            trigger_range=list(trigger_range),
+            urgency=urgency,
+            status=ForeshadowingStatus.PLANTED
+        )
+        return self.append("items", item.model_dump())

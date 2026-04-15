@@ -27,6 +27,30 @@
                     </svg>
                     <span class="sidebar-item-text">作品创作</span>
                 </li>
+                <li class="sidebar-item" data-panel="arc">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+                    </svg>
+                    <span class="sidebar-item-text">弧线规划</span>
+                </li>
+                <li class="sidebar-item" data-panel="chapter-plan">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                    </svg>
+                    <span class="sidebar-item-text">章节规划</span>
+                </li>
+                <li class="sidebar-item" data-panel="issues">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                    </svg>
+                    <span class="sidebar-item-text">Issue Pool</span>
+                </li>
+                <li class="sidebar-item" data-panel="knowledge">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/>
+                    </svg>
+                    <span class="sidebar-item-text">知识库</span>
+                </li>
                 <li class="sidebar-item" data-panel="settings">
                     <svg viewBox="0 0 24 24">
                         <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
@@ -46,29 +70,12 @@
         <div class="content-area">
             <!-- 作品创作面板 -->
             <div class="content-panel active" id="works-panel">
-                <!-- top栏 -->
-                <div id="works-select-container"
-                     style="height: 40px;
-                            display: grid;
-                            grid-template-columns: 1fr auto 1fr;
-                            align-items: center;
-                            margin-top:10px">
-                    <!-- 中央选择区 -->
-                    <div style="display: flex;grid-column: 2/3;justify-content: center; align-items: center;">
-                        <label>
-                            当前作品:
-                        </label>
-                        <select id="works-select" style="width: 200px;text-align: center;">
-                            <option value="">请选择作品</option>
-                        </select>
-                    </div>
-                    <!-- 右侧按钮区 -->
-                    <button class="mans-btn primary"
-                            id="works-add-btn"
-                            style="grid-column: 3/4;
-                                   width: 100px;
-                                   justify-self: end;
-                                   margin-right: 20px">
+                <!-- 工具栏：创建作品按钮居中 -->
+                <div class="works-toolbar">
+                    <button class="mans-btn primary" id="works-add-btn">
+                        <svg viewBox="0 0 24 24" style="width: 16px; height: 16px; fill: currentColor; margin-right: 6px;">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                        </svg>
                         创建作品
                     </button>
                 </div>
@@ -180,6 +187,50 @@
                 <button id="enter-writing-btn" class="mans-btn primary" style="display: none; margin-top: 20px;">进入写作</button>
             </div>
 
+            <!-- 弧线规划面板 -->
+            <div class="content-panel" id="arc-panel">
+                <h3 class="panel-title">弧线规划</h3>
+                <div class="panel-content">
+                    <div id="arc-list" style="display: flex; flex-direction: column; gap: 16px;">
+                        <!-- 弧线将动态生成 -->
+                    </div>
+                    <div style="margin-top: 20px; display: flex; gap: 10px;">
+                        <button class="mans-btn primary" id="generate-arc-1-btn" onclick="generateArc(1)">生成弧线 1</button>
+                        <button class="mans-btn" id="generate-arc-2-btn" onclick="generateArc(2)">生成弧线 2</button>
+                        <button class="mans-btn" id="generate-arc-3-btn" onclick="generateArc(3)">生成弧线 3</button>
+                        <button class="mans-btn" id="generate-arc-4-btn" onclick="generateArc(4)">生成弧线 4</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 章节规划面板 -->
+            <div class="content-panel" id="chapter-plan-panel">
+                <h3 class="panel-title">章节规划</h3>
+                <div class="panel-content">
+                    <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center;">
+                        <label>章节编号:</label>
+                        <input type="number" id="chapter-plan-number" min="1" value="1" style="width: 80px; text-align: center; padding: 6px; background: var(--bg-dark); border: 1px solid var(--bg-hover); border-radius: 4px; color: var(--text-primary);">
+                        <button class="mans-btn primary" onclick="generateChapterPlan(parseInt(document.getElementById('chapter-plan-number').value))">生成章节规划</button>
+                    </div>
+                    <div id="chapter-plan-result">
+                        <!-- 章节规划结果将动态显示 -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Issue Pool 面板 -->
+            <div class="content-panel" id="issues-panel">
+                <h3 class="panel-title">Issue Pool</h3>
+                <div class="panel-content">
+                    <div id="issues-panel-list" style="min-height: 60px;">
+                        <p style="color: var(--text-secondary); text-align: center;">请先打开一个项目</p>
+                    </div>
+                    <div style="margin-top: 16px; text-align: center;">
+                        <button class="mans-btn" onclick="loadIssuesForPanel()">刷新</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- 写作面板 -->
             <div class="content-panel" id="writing-panel">
                 <div class="writing-header">
@@ -204,12 +255,76 @@
 
             <!-- 系统设置面板 -->
             <div class="content-panel" id="settings-panel">
-
+                <h3 class="panel-title">系统设置</h3>
+                <div class="panel-content">
+                    <div class="form-group">
+                        <label>API 服务地址</label>
+                        <input type="text" id="setting-api-base" placeholder="http://127.0.0.1:666" value="">
+                    </div>
+                    <div class="form-group">
+                        <label>默认生成温度</label>
+                        <input type="range" id="setting-temperature" min="0" max="1" step="0.1" value="0.7"
+                               style="width: 100%; accent-color: var(--primary);">
+                        <span id="temperature-value" style="color: var(--text-secondary); font-size: 13px;">0.7</span>
+                    </div>
+                    <div class="form-group">
+                        <label>最大重试次数</label>
+                        <input type="number" id="setting-retries" min="1" max="10" value="3"
+                               style="width: 80px; text-align: center;">
+                    </div>
+                    <div class="form-group">
+                        <label>日志级别</label>
+                        <select id="setting-log-level" style="width: 200px;">
+                            <option value="DEBUG">DEBUG</option>
+                            <option value="INFO" selected>INFO</option>
+                            <option value="WARNING">WARNING</option>
+                            <option value="ERROR">ERROR</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button class="mans-btn primary" onclick="saveSettings()">保存设置</button>
+                        <button class="mans-btn" onclick="resetSettings()">重置默认</button>
+                    </div>
+                </div>
             </div>
 
             <!-- 实时监控面板 -->
             <div class="content-panel" id="monitor-panel">
-
+                <h3 class="panel-title">实时监控</h3>
+                <div class="panel-content">
+                    <div id="monitor-issues-section" style="margin-bottom: 24px;">
+                        <h4 style="margin-bottom: 12px; color: var(--primary-light);">Issue Pool</h4>
+                        <div id="issues-list" style="min-height: 60px;">
+                            <p style="color: var(--text-secondary);">请先打开一个项目以查看 Issues</p>
+                        </div>
+                    </div>
+                    <div id="monitor-foreshadowing-section" style="margin-bottom: 24px;">
+                        <h4 style="margin-bottom: 12px; color: var(--primary-light);">伏笔状态</h4>
+                        <div id="foreshadowing-monitor" style="min-height: 60px;">
+                            <p style="color: var(--text-secondary);">请先打开一个项目以查看伏笔</p>
+                        </div>
+                    </div>
+                    <div id="monitor-stats-section">
+                        <h4 style="margin-bottom: 12px; color: var(--primary-light);">项目统计</h4>
+                        <div id="project-stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+                            <div style="background: var(--bg-dark); padding: 16px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 24px; font-weight: 600; color: var(--primary-light);" id="stat-chapters">-</div>
+                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">当前章节</div>
+                            </div>
+                            <div style="background: var(--bg-dark); padding: 16px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 24px; font-weight: 600; color: var(--success);" id="stat-words">-</div>
+                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">总字数</div>
+                            </div>
+                            <div style="background: var(--bg-dark); padding: 16px; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 24px; font-weight: 600; color: var(--warning);" id="stat-issues">-</div>
+                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">待处理 Issues</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px; text-align: center;">
+                        <button class="mans-btn primary" onclick="refreshMonitor()">刷新监控</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

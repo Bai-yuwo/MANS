@@ -22,6 +22,9 @@ from core.schemas import (
     WorldRule, ForeshadowingItem, CharacterCard
 )
 from core.llm_client import LLMClient, quick_call
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('core.update_extractor')
 
 
 class UpdateExtractor:
@@ -291,14 +294,14 @@ class UpdateExtractor:
             return updates
             
         except json.JSONDecodeError as e:
-            print(f"提取结果解析失败: {e}")
+            logger.error(f"提取结果解析失败: {e}")
             # 返回空更新
             return ExtractedUpdates(
                 source_chapter=chapter_number,
                 source_scene_index=scene_index
             )
         except Exception as e:
-            print(f"提取更新失败: {e}")
+            logger.error(f"提取更新失败: {e}")
             return ExtractedUpdates(
                 source_chapter=chapter_number,
                 source_scene_index=scene_index
@@ -330,7 +333,7 @@ class UpdateExtractor:
             # 记录失败的更新
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    print(f"更新任务 {i} 失败: {result}")
+                    logger.error(f"更新任务 {i} 失败: {result}")
     
     async def _update_characters(self, updates: list[CharacterStateUpdate]) -> None:
         """更新人物库"""
@@ -338,7 +341,7 @@ class UpdateExtractor:
             for update in updates:
                 await self.character_db.apply_update(update)
         except Exception as e:
-            print(f"人物库更新失败: {e}")
+            logger.error(f"人物库更新失败: {e}")
             raise
     
     async def _update_bible(self, rules: list[WorldRule]) -> None:
@@ -347,7 +350,7 @@ class UpdateExtractor:
             for rule in rules:
                 await self.bible_db.append_rule(rule)
         except Exception as e:
-            print(f"世界观库更新失败: {e}")
+            logger.error(f"世界观库更新失败: {e}")
             raise
     
     async def _update_foreshadowing(
@@ -370,7 +373,7 @@ class UpdateExtractor:
                 await self.foreshadowing_db.add_item(item)
                 
         except Exception as e:
-            print(f"伏笔库更新失败: {e}")
+            logger.error(f"伏笔库更新失败: {e}")
             raise
     
     async def _vectorize_scene(
@@ -396,7 +399,7 @@ class UpdateExtractor:
                 }
             )
         except Exception as e:
-            print(f"场景向量化失败: {e}")
+            logger.error(f"场景向量化失败: {e}")
             # 向量化失败不影响主流程
     
     async def _save_update_record(self, updates: ExtractedUpdates) -> None:
@@ -422,7 +425,7 @@ class UpdateExtractor:
                 json.dump(records, f, ensure_ascii=False, indent=2)
                 
         except Exception as e:
-            print(f"保存更新记录失败: {e}")
+            logger.error(f"保存更新记录失败: {e}")
             # 记录失败不影响主流程
 
 

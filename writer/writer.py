@@ -29,6 +29,9 @@ from core.llm_client import LLMClient, LLMError
 from core.schemas import ScenePlan, ChapterPlan, InjectionContext
 from core.injection_engine import InjectionEngine
 from core.update_extractor import UpdateExtractor
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('writer.writer')
 from knowledge_bases.story_db import StoryDB
 
 
@@ -330,7 +333,7 @@ class Writer:
             )
         except Exception as e:
             # 更新失败不影响主流程，记录错误
-            print(f"[Writer] 异步更新失败: {str(e)}")
+            logger.error(f"[Writer] 异步更新失败: {str(e)}")
     
     async def _save_scene_draft(
         self,

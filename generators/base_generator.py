@@ -11,12 +11,15 @@ generators/base_generator.py
 
 import json
 from abc import ABC, abstractmethod
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, AsyncIterator
 from pathlib import Path
 
 from core.config import get_config
 from core.llm_client import LLMClient, LLMError, LLMResponse
 from core.schemas import ProjectMeta
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('generators.base_generator')
 
 
 class GenerationError(Exception):
@@ -260,6 +263,94 @@ class BaseGenerator(ABC):
         
         self._report_progress(f"[{generator_name}] 生成完成！")
         return result
+    
+    async def generate_stream(self, **kwargs) -> AsyncIterator[dict]:
+        """
+        流式生成方法，逐块yield进度和token事件
+        
+        使用示例：
+            async for event in generator.generate_stream(project_meta=meta):
+                if event['type'] == 'token':
+                    print(event['content'], end='')
+        
+        Yields:
+            dict: 事件数据
+                - type: "progress" | "token" | "complete" | "error"
+                - message/data/content: 事件内容
+        """
+        generator_name = self._get_generator_name()
+        
+        try:
+            # Step 1: 构建 prompt
+            self._report_progress(f"[{generator_name}] 构建 prompt...")
+            yield {"type": "progress", "message": f"[{generator_name}] 构建 prompt..."}
+            prompt = self._build_prompt(**kwargs)
+            
+            # Step 2: 流式调用 LLM
+            self._report_progress(f"[{generator_name}] 调用大模型...")
+            yield {"type": "progress", "message": f"[{generator_name}] 调用大模型..."}
+            
+            full_content = ""
+            token_count = 0
+            
+            # 使用分离的超时策略：
+            # - connect_timeout: 30s（快速判定连接是否成功）
+            # - sock_read_timeout: 60s（token之间的最大间隔）
+            # - total_timeout: 600s（支持长生成，10分钟）
+            async for token in self.llm_client.stream(
+                role="generator",
+                prompt=prompt,
+                max_tokens=4000,
+                temperature=0.7,
+                connect_timeout=30,
+                sock_read_timeout=60,
+                total_timeout=600
+            ):
+                full_content += token
+                token_count += 1
+                
+                # yield token事件
+                yield {
+                    "type": "token",
+                    "content": token
+                }
+            
+            self._report_progress(f"[{generator_name}] 收到 {token_count} 个token")
+            
+            # Step 3: 解析响应
+            yield {"type": "progress", "message": f"[{generator_name}] 解析响应..."}
+            result = self._parse_response(full_content)
+            
+            # Step 4: 验证结果
+            yield {"type": "progress", "message": f"[{generator_name}] 验证结果..."}
+            is_valid = self._validate_result(result)
+            if not is_valid:
+                raise ValidationError("结果验证未通过", stage="validation")
+            
+            # Step 5: 保存到知识库
+            yield {"type": "progress", "message": f"[{generator_name}] 保存到知识库..."}
+            await self._save_result(result)
+            
+            # Step 6: 向量化
+            try:
+                await self._vectorize_result(result)
+            except Exception as e:
+                self._report_progress(f"[{generator_name}] 警告: 向量化失败 - {str(e)}")
+            
+            # 完成事件
+            yield {
+                "type": "complete",
+                "message": f"[{generator_name}] 生成完成！",
+                "data": result
+            }
+            
+        except Exception as e:
+            # 错误事件
+            yield {
+                "type": "error",
+                "error": str(e)
+            }
+            raise
     
     def _clean_json_response(self, response: str) -> str:
         """

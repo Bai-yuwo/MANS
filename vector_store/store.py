@@ -12,6 +12,9 @@ from typing import Optional
 import asyncio
 
 from core.config import get_config
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('vector_store.store')
 
 
 class VectorStore:
@@ -59,7 +62,7 @@ class VectorStore:
         """
         # TODO: 实现实际的向量检索
         # 目前返回空列表，避免调用失败
-        print(f"向量检索（未实现）: {collection}, query={query[:50]}...")
+        logger.info(f"向量检索（未实现）: {collection}, query={query[:50]}...")
         return []
     
     async def upsert(
@@ -82,7 +85,7 @@ class VectorStore:
             是否操作成功
         """
         # TODO: 实现实际的向量存储
-        print(f"向量存储（未实现）: {collection}, id={id}")
+        logger.info(f"向量存储（未实现）: {collection}, id={id}")
         return True
     
     async def delete(
@@ -101,5 +104,5 @@ class VectorStore:
             是否删除成功
         """
         # TODO: 实现实际的向量删除
-        print(f"向量删除（未实现）: {collection}, id={id}")
+        logger.info(f"向量删除（未实现）: {collection}, id={id}")
         return True

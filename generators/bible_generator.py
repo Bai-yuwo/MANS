@@ -11,6 +11,9 @@ from typing import Any
 from generators.base_generator import BaseGenerator, GenerationError
 from core.schemas import ProjectMeta, CombatSystem, WorldRule
 from knowledge_bases.bible_db import BibleDB
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('generators.bible_generator')
 
 
 class BibleGenerator(BaseGenerator):
@@ -254,7 +257,9 @@ class BibleGenerator(BaseGenerator):
             "history_notes": result.get("history_notes", [])
         }
         
-        bible_db.save(bible_data)
+        # 修复：传入key参数 "bible"
+        bible_db.save("bible", bible_data)
+        logger.info(f"Bible 已保存到知识库 - 项目: {self.project_id}")
     
     async def _vectorize_result(self, result: dict) -> None:
         """

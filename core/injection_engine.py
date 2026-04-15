@@ -10,6 +10,7 @@ core/injection_engine.py
 """
 
 import json
+import time
 from typing import Optional
 from pathlib import Path
 
@@ -19,6 +20,9 @@ from core.schemas import (
     CharacterCard, WorldRule, ForeshadowingItem
 )
 from core.llm_client import LLMClient, quick_call
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('core.injection_engine')
 
 
 class InjectionEngine:
@@ -242,7 +246,7 @@ class InjectionEngine:
                 
             except Exception as e:
                 # 向量检索失败，记录日志但继续执行
-                print(f"向量检索失败: {e}")
+                logger.error(f"向量检索失败: {e}")
                 results["world_rules"] = []
                 results["similar_scenes"] = []
                 results["style_examples"] = []
@@ -306,7 +310,7 @@ Token 预算：{budget_tokens}
             
         except Exception as e:
             # 压缩失败，简单截断
-            print(f"裁剪失败: {e}，使用简单截断")
+            logger.error(f"上下文裁剪失败: {e}，使用简单截断")
             context["world_rules"] = context.get("world_rules", [])[:2]
             context["similar_scenes"] = context.get("similar_scenes", [])[:1]
             context["style_reference"] = ""

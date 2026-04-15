@@ -12,6 +12,7 @@ LLM 统一调用封装
 
 import asyncio
 import json
+import time
 from typing import AsyncIterator, Optional, Literal, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -19,6 +20,9 @@ import aiohttp
 import tiktoken
 
 from core.config import get_config, ProviderConfig
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('core.llm_client')
 
 
 # ============================================================
@@ -212,7 +216,9 @@ class LLMClient:
         max_tokens: int = 2000,
         temperature: float = 0.7,
         response_format: Optional[str] = None,
-        timeout: int = 120
+        connect_timeout: int = 30,
+        sock_read_timeout: int = 60,
+        total_timeout: int = 600
     ) -> LLMResponse:
         """
         非流式调用 LLM
@@ -224,7 +230,9 @@ class LLMClient:
             max_tokens: 最大生成 token 数
             temperature: 温度参数
             response_format: 响应格式（None/json）
-            timeout: 超时时间（秒）
+            connect_timeout: 连接超时（秒）
+            sock_read_timeout: 读取超时（秒）
+            total_timeout: 总超时（秒）
         
         Returns:
             LLMResponse 对象
@@ -252,14 +260,27 @@ class LLMClient:
         # 发送请求
         async with aiohttp.ClientSession() as session:
             try:
+                logger.info(f"调用模型: {model} (Provider: {provider.name}, Role: {role})")
+                logger.debug(f"Prompt长度: {len(prompt)} 字符, max_tokens: {max_tokens}")
+                
+                start_time = time.time()
+                
+                # 使用分离的超时策略
+                timeout_config = aiohttp.ClientTimeout(
+                    total=total_timeout,
+                    connect=connect_timeout,
+                    sock_read=sock_read_timeout
+                )
+                
                 async with session.post(
                     f"{provider.base_url}/chat/completions",
                     headers=headers,
                     json=payload,
-                    timeout=aiohttp.ClientTimeout(total=timeout)
+                    timeout=timeout_config
                 ) as response:
                     if response.status == 429:
                         retry_after = int(response.headers.get("Retry-After", 60))
+                        logger.warning(f"模型 {model} 触发限流，等待 {retry_after}s 后重试")
                         raise LLMRateLimitError(
                             "Rate limit exceeded",
                             retry_after=retry_after,
@@ -269,6 +290,8 @@ class LLMClient:
                     
                     if response.status != 200:
                         error_text = await response.text()
+                        logger.error(f"API调用失败 - 状态码: {response.status}, 模型: {model}")
+                        logger.error(f"错误信息: {error_text}")
                         raise LLMAPIError(
                             f"API error: {error_text}",
                             status_code=response.status,
@@ -277,31 +300,47 @@ class LLMClient:
                         )
                     
                     result = await response.json()
+                    elapsed = time.time() - start_time
                     
                     # 解析响应
                     choice = result["choices"][0]
                     content = choice["message"]["content"]
+                    usage = result.get("usage", {})
+                    
+                    logger.info(
+                        f"模型调用成功 - 模型: {model}, "
+                        f"耗时: {elapsed:.2f}s, "
+                        f"输入Tokens: {usage.get('prompt_tokens', 'N/A')}, "
+                        f"输出Tokens: {usage.get('completion_tokens', 'N/A')}, "
+                        f"总Tokens: {usage.get('total_tokens', 'N/A')}"
+                    )
                     
                     return LLMResponse(
                         content=content,
                         model=model,
                         provider=provider.name,
-                        usage=result.get("usage", {}),
+                        usage=usage,
                         finish_reason=choice.get("finish_reason", "")
                     )
                     
             except asyncio.TimeoutError:
+                elapsed = time.time() - start_time
+                logger.error(f"模型调用超时 - 模型: {model}, 已等待: {elapsed:.2f}s, 超时设置: {timeout}s")
                 raise LLMTimeoutError(
                     f"Request timeout after {timeout}s",
                     provider=provider.name,
                     model=model
                 )
             except aiohttp.ClientError as e:
+                logger.error(f"模型调用网络错误 - 模型: {model}, 错误: {str(e)}")
                 raise LLMAPIError(
                     f"Network error: {str(e)}",
                     provider=provider.name,
                     model=model
                 )
+            except Exception as e:
+                log_exception(logger, e, context=f"模型调用异常 - 模型: {model}, Role: {role}")
+                raise
     
     async def stream(
         self,
@@ -310,7 +349,9 @@ class LLMClient:
         system_prompt: str = "",
         max_tokens: int = 2000,
         temperature: float = 0.7,
-        timeout: int = 120
+        connect_timeout: int = 30,
+        sock_read_timeout: int = 60,
+        total_timeout: int = 600
     ) -> AsyncIterator[str]:
         """
         流式调用 LLM
@@ -321,7 +362,9 @@ class LLMClient:
             system_prompt: 系统提示词
             max_tokens: 最大生成 token 数
             temperature: 温度参数
-            timeout: 超时时间（秒）
+            connect_timeout: 连接超时（秒）- 建立TCP连接+收到HTTP状态码
+            sock_read_timeout: 读取超时（秒）- 两个token之间的最大间隔
+            total_timeout: 总超时（秒）- 整个请求的最大时长
         
         Yields:
             生成的文本片段
@@ -348,14 +391,34 @@ class LLMClient:
         # 发送请求
         async with aiohttp.ClientSession() as session:
             try:
+                logger.info(f"开始流式调用 - 模型: {model} (Provider: {provider.name}, Role: {role})")
+                logger.debug(f"Prompt长度: {len(prompt)} 字符")
+                
+                start_time = time.time()
+                token_count = 0
+                first_token_received = False
+                
+                # 使用分离的超时策略：
+                # - connect: 30s（建立TCP连接+TLS握手+收到HTTP状态码）
+                # - sock_read: 60s（两个token之间的最大间隔，防止卡死）
+                # - total: 600s（整个请求的最大时长，支持长生成）
+                timeout_config = aiohttp.ClientTimeout(
+                    total=total_timeout,
+                    connect=connect_timeout,
+                    sock_read=sock_read_timeout
+                )
+                
                 async with session.post(
                     f"{provider.base_url}/chat/completions",
                     headers=headers,
                     json=payload,
-                    timeout=aiohttp.ClientTimeout(total=timeout)
+                    timeout=timeout_config
                 ) as response:
+                    # 收到HTTP状态码即判定连接成功
                     if response.status != 200:
                         error_text = await response.text()
+                        logger.error(f"流式API调用失败 - 状态码: {response.status}, 模型: {model}")
+                        logger.error(f"错误信息: {error_text}")
                         raise LLMAPIError(
                             f"API error: {error_text}",
                             status_code=response.status,
@@ -363,28 +426,58 @@ class LLMClient:
                             model=model
                         )
                     
+                    logger.info(f"流式连接成功 - 状态码: {response.status}")
+                    
                     # 读取流式响应
                     async for line in response.content:
                         line = line.decode("utf-8").strip()
                         if not line:
                             continue
                         
+                        # 收到第一个字节/行时记录
+                        if not first_token_received:
+                            first_token_received = True
+                            elapsed = time.time() - start_time
+                            logger.info(f"收到首个token - 耗时: {elapsed:.2f}s")
+                        
                         content = self._parse_stream_line(line, provider.name)
                         if content:
+                            token_count += 1
                             yield content
+                    
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"流式生成完成 - 模型: {model}, "
+                        f"耗时: {elapsed:.2f}s, "
+                        f"生成Tokens: {token_count}"
+                    )
                             
             except asyncio.TimeoutError:
-                raise LLMTimeoutError(
-                    f"Stream timeout after {timeout}s",
-                    provider=provider.name,
-                    model=model
-                )
+                elapsed = time.time() - start_time
+                if not first_token_received:
+                    logger.error(f"流式调用连接超时 - 模型: {model}, 已等待: {elapsed:.2f}s")
+                    raise LLMTimeoutError(
+                        f"Connection timeout after {connect_timeout}s",
+                        provider=provider.name,
+                        model=model
+                    )
+                else:
+                    logger.error(f"流式调用读取超时 - 模型: {model}, 已生成{token_count}个token, 已等待: {elapsed:.2f}s")
+                    raise LLMTimeoutError(
+                        f"Read timeout after {sock_read_timeout}s (no data received)",
+                        provider=provider.name,
+                        model=model
+                    )
             except aiohttp.ClientError as e:
+                logger.error(f"流式调用网络错误 - 模型: {model}, 错误: {str(e)}")
                 raise LLMAPIError(
                     f"Network error: {str(e)}",
                     provider=provider.name,
                     model=model
                 )
+            except Exception as e:
+                log_exception(logger, e, context=f"流式调用异常 - 模型: {model}, Role: {role}")
+                raise
     
     async def call_with_retry(
         self,
@@ -411,19 +504,31 @@ class LLMClient:
         
         for attempt in range(max_retries):
             try:
+                if attempt > 0:
+                    logger.info(f"第 {attempt + 1}/{max_retries} 次重试调用")
                 return await self.call(role, prompt, **kwargs)
             except LLMRateLimitError as e:
                 # 限流错误，等待指定时间后重试
                 wait_time = e.retry_after
+                logger.warning(
+                    f"限流错误，等待 {wait_time}s 后重试 "
+                    f"(尝试 {attempt + 1}/{max_retries})"
+                )
                 await asyncio.sleep(wait_time)
                 last_error = e
             except (LLMTimeoutError, LLMAPIError) as e:
                 # 网络/超时错误，指数退避重试
                 wait_time = retry_delay * (2 ** attempt)
+                logger.warning(
+                    f"调用失败 ({type(e).__name__}), "
+                    f"等待 {wait_time:.1f}s 后重试 "
+                    f"(尝试 {attempt + 1}/{max_retries})"
+                )
                 await asyncio.sleep(wait_time)
                 last_error = e
         
         # 重试耗尽，抛出最后一个错误
+        logger.error(f"重试耗尽 ({max_retries} 次尝试后仍失败)")
         raise last_error
     
     def count_tokens(self, text: str, provider_name: Optional[str] = None) -> int:

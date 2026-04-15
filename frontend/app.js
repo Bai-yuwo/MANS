@@ -48,12 +48,64 @@ async function apiRequest(url, options = {}) {
 }
 
 /**
- * 显示消息
+ * 显示消息（Toast通知）
  */
 function showMessage(message, type = 'info') {
     console.log(`[${type}] ${message}`);
-    // TODO: 可以改为toast通知
-    // alert(message);
+    
+    // 创建Toast通知
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 16px 24px;
+        border-radius: 8px;
+        color: white;
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 10000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        animation: slideIn 0.3s ease;
+        max-width: 400px;
+        word-wrap: break-word;
+    `;
+    
+    // 根据类型设置背景色
+    const colors = {
+        'success': '#10b981',
+        'error': '#ef4444',
+        'warning': '#f59e0b',
+        'info': '#3b82f6'
+    };
+    toast.style.backgroundColor = colors[type] || colors['info'];
+    
+    document.body.appendChild(toast);
+    
+    // 3秒后自动消失
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// 添加CSS动画
+if (!document.getElementById('toast-styles')) {
+    const style = document.createElement('style');
+    style.id = 'toast-styles';
+    style.textContent = `
+        @keyframes slideIn {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(400px); opacity: 0; }
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 /**
@@ -161,18 +213,32 @@ function getStatusText(status) {
  */
 async function createProject(projectData) {
     try {
+        // 防止重复提交：禁用创建按钮
+        const submitBtn = document.querySelector('#create-project-form button[type="submit"]');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = '创建中...';
+        }
+        
         const result = await apiRequest('/api/projects', {
             method: 'POST',
             body: JSON.stringify(projectData)
         });
         
-        showMessage('项目创建成功！');
+        showMessage('项目创建成功！', 'success');
         await loadProjects();
         return result.project_id;
         
     } catch (error) {
         showMessage('创建项目失败: ' + error.message, 'error');
         throw error;
+    } finally {
+        // 恢复按钮状态
+        const submitBtn = document.querySelector('#create-project-form button[type="submit"]');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '创建';
+        }
     }
 }
 
@@ -270,7 +336,7 @@ function updateInitStepStatus(stepId, completed) {
 }
 
 /**
- * 生成 Bible
+ * 生成 Bible（流式版本）
  */
 async function generateBible() {
     if (!AppState.currentProject) return;
@@ -280,13 +346,21 @@ async function generateBible() {
     btn.textContent = '生成中...';
     
     try {
-        const result = await apiRequest(
-            `/api/projects/${AppState.currentProject}/generate/bible`,
-            { method: 'POST' }
-        );
+        // 使用流式生成
+        if (typeof startStreamingGeneration === 'function') {
+            await startStreamingGeneration('bible');
+            showMessage('Bible 生成成功！', 'success');
+        } else {
+            // 后备方案：使用非流式API
+            const result = await apiRequest(
+                `/api/projects/${AppState.currentProject}/generate/bible`,
+                { method: 'POST' }
+            );
+            showMessage('Bible 生成成功！');
+            displayBible(result.data);
+        }
         
-        showMessage('Bible 生成成功！');
-        displayBible(result.data);
+        // 刷新初始化状态
         await checkInitializationStatus(AppState.currentProject);
         
     } catch (error) {
@@ -339,12 +413,19 @@ async function generateCharacters() {
     btn.textContent = '生成中...';
     
     try {
-        const result = await apiRequest(
-            `/api/projects/${AppState.currentProject}/generate/characters`,
-            { method: 'POST' }
-        );
+        // 使用流式生成
+        if (typeof startStreamingGeneration === 'function') {
+            await startStreamingGeneration('characters');
+            showMessage('人物生成成功！', 'success');
+        } else {
+            // 后备方案
+            const result = await apiRequest(
+                `/api/projects/${AppState.currentProject}/generate/characters`,
+                { method: 'POST' }
+            );
+            showMessage('人物生成成功！');
+        }
         
-        showMessage('人物生成成功！');
         await checkInitializationStatus(AppState.currentProject);
         
     } catch (error) {
@@ -356,7 +437,7 @@ async function generateCharacters() {
 }
 
 /**
- * 生成大纲
+ * 生成大纲（流式版本）
  */
 async function generateOutline() {
     if (!AppState.currentProject) return;
@@ -366,12 +447,19 @@ async function generateOutline() {
     btn.textContent = '生成中...';
     
     try {
-        const result = await apiRequest(
-            `/api/projects/${AppState.currentProject}/generate/outline`,
-            { method: 'POST' }
-        );
+        // 使用流式生成
+        if (typeof startStreamingGeneration === 'function') {
+            await startStreamingGeneration('outline');
+            showMessage('大纲生成成功！', 'success');
+        } else {
+            // 后备方案
+            const result = await apiRequest(
+                `/api/projects/${AppState.currentProject}/generate/outline`,
+                { method: 'POST' }
+            );
+            showMessage('大纲生成成功！');
+        }
         
-        showMessage('大纲生成成功！');
         await checkInitializationStatus(AppState.currentProject);
         
     } catch (error) {

@@ -12,6 +12,9 @@ from pathlib import Path
 
 from knowledge_bases.base_db import BaseDB
 from core.schemas import ChapterPlan, ChapterFinal
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('knowledge_bases.story_db')
 
 
 class StoryDB(BaseDB):
@@ -51,7 +54,7 @@ class StoryDB(BaseDB):
                     data = json.load(f)
                     return data.get("summary", "")
             except Exception as e:
-                print(f"读取章节摘要失败: {e}")
+                logger.error(f"读取章节摘要失败: {e}")
         
         return ""
     
@@ -87,7 +90,7 @@ class StoryDB(BaseDB):
         try:
             return ChapterPlan(**data)
         except Exception as e:
-            print(f"解析章节规划失败: {e}")
+            logger.error(f"解析章节规划失败: {e}")
             return None
     
     def save_chapter_final(self, final: ChapterFinal) -> bool:
@@ -112,5 +115,5 @@ class StoryDB(BaseDB):
                 json.dump(final.model_dump(), f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
-            print(f"保存章节完稿失败: {e}")
+            logger.error(f"保存章节完稿失败: {e}")
             return False

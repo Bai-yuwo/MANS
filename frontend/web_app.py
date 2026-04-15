@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
 # 导入核心模块
 from core.schemas import (
@@ -29,6 +30,9 @@ from core.schemas import (
     CharacterCard, WorldRule, ForeshadowingItem
 )
 from core.config import get_config
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('frontend.web_app')
 
 # 导入生成器
 from generators import (
@@ -242,7 +246,7 @@ async def get_project_status(project_id: str):
 
 @app.post("/api/projects/{project_id}/generate/bible")
 async def generate_bible(project_id: str):
-    """触发 Bible 生成"""
+    """触发 Bible 生成（非流式，保留兼容）"""
     workspace_path = Path("workspace") / project_id
     
     if not workspace_path.exists():
@@ -262,7 +266,7 @@ async def generate_bible(project_id: str):
         progress_messages = []
         def progress_callback(msg: str):
             progress_messages.append(msg)
-            print(f"[BibleGenerator] {msg}")
+            logger.info(f"[BibleGenerator] {msg}")
         
         generator.set_progress_callback(progress_callback)
         result = await generator.generate(project_meta=project_meta)
@@ -278,6 +282,80 @@ async def generate_bible(project_id: str):
         raise HTTPException(status_code=500, detail=f"生成 Bible 失败: {str(e)}")
 
 
+@app.post("/api/projects/{project_id}/stream/bible")
+async def stream_generate_bible(project_id: str, request: Request):
+    """
+    流式生成 Bible（SSE）
+    
+    实时推送生成进度和LLM输出
+    """
+    workspace_path = Path("workspace") / project_id
+    
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+    
+    async def event_generator():
+        """SSE事件生成器"""
+        try:
+            # 读取项目元信息
+            with open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            
+            project_meta = ProjectMeta(**meta)
+            
+            # 创建生成器
+            generator = BibleGenerator(project_id)
+            
+            # 推送开始事件
+            yield {
+                "event": "start",
+                "data": json.dumps({"message": "开始生成 Bible..."}, ensure_ascii=False)
+            }
+            
+            # 使用流式生成，实时推送token
+            async for event in generator.generate_stream(project_meta=project_meta):
+                event_type = event.get("type", "message")
+                
+                if event_type == "progress":
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps({"message": event.get("message", "")}, ensure_ascii=False)
+                    }
+                elif event_type == "token":
+                    yield {
+                        "event": "token",
+                        "data": json.dumps({"content": event.get("content", "")}, ensure_ascii=False)
+                    }
+                elif event_type == "complete":
+                    yield {
+                        "event": "complete",
+                        "data": json.dumps({
+                            "message": event.get("message", "生成完成"),
+                            "data": event.get("data", {})
+                        }, ensure_ascii=False)
+                    }
+                elif event_type == "error":
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"error": event.get("error", "未知错误")}, ensure_ascii=False)
+                    }
+            
+            # 推送done事件
+            yield {
+                "event": "done",
+                "data": json.dumps({"message": "流式传输完成"})
+            }
+            
+        except Exception as e:
+            logger.error(f"流式生成 Bible 失败: {e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}, ensure_ascii=False)
+            }
+    
+    return EventSourceResponse(event_generator())
+
+
 @app.post("/api/projects/{project_id}/confirm/bible")
 async def confirm_bible(project_id: str):
     """用户确认 Bible"""
@@ -290,7 +368,8 @@ async def update_bible(project_id: str, bible_data: dict):
     """用户修改 Bible 内容"""
     try:
         bible_db = BibleDB(project_id)
-        bible_db.save(bible_data)
+        # 修复：传入key参数 "bible"
+        bible_db.save("bible", bible_data)
         return {"success": True, "message": "Bible 已更新"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"更新 Bible 失败: {str(e)}")
@@ -308,7 +387,9 @@ async def generate_characters(project_id: str):
         
         # 读取 Bible
         bible_db = BibleDB(project_id)
-        bible_data = bible_db.load()
+        bible_data = bible_db.load("bible")
+        if not bible_data:
+            raise HTTPException(status_code=400, detail="请先生成 Bible")
         
         # 生成人物
         generator = CharacterGenerator(project_id)
@@ -345,7 +426,9 @@ async def generate_outline(project_id: str):
         
         # 读取 Bible
         bible_db = BibleDB(project_id)
-        bible_data = bible_db.load()
+        bible_data = bible_db.load("bible")
+        if not bible_data:
+            raise HTTPException(status_code=400, detail="请先生成 Bible")
         
         # 读取人物
         character_db = CharacterDB(project_id)
@@ -613,7 +696,10 @@ async def get_bible(project_id: str):
     """获取 Bible"""
     try:
         bible_db = BibleDB(project_id)
-        bible = bible_db.load()
+        # 修复：传入key参数 "bible"
+        bible = bible_db.load("bible")
+        if not bible:
+            return {"error": "Bible 不存在", "message": "请先生成 Bible"}
         return bible
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取 Bible 失败: {str(e)}")

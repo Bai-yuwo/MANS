@@ -214,6 +214,23 @@
         </div>
     </div>
 
+    <!-- 流式输出面板容器 -->
+    <div id="streaming-container"></div>
+
+    <script>
+    // 加载流式面板组件
+    fetch('/frontend/streaming-panel.html')
+        .then(res => res.text())
+        .then(html => {
+            document.getElementById('streaming-container').innerHTML = html;
+            console.log('流式面板已加载');
+        })
+        .catch(err => console.error('加载流式面板失败:', err));
+    </script>
+
+    <!-- SSE客户端 -->
+    <script src="/frontend/streaming-client.js"></script>
+
     <script src="/frontend/app.js"></script>
 </body>
 </html>

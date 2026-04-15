@@ -12,6 +12,9 @@ from typing import Optional
 
 from knowledge_bases.base_db import BaseDB
 from core.schemas import CharacterCard, CharacterStateUpdate
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('knowledge_bases.character_db')
 
 
 class CharacterDB(BaseDB):
@@ -46,7 +49,7 @@ class CharacterDB(BaseDB):
         try:
             return CharacterCard(**data)
         except Exception as e:
-            print(f"解析人物卡失败 {name}: {e}")
+            logger.error(f"解析人物卡失败 {name}: {e}")
             return None
     
     def save_character(self, character: CharacterCard) -> bool:
@@ -73,7 +76,7 @@ class CharacterDB(BaseDB):
         """
         char = self.get_character(update.character_name)
         if not char:
-            print(f"人物不存在: {update.character_name}")
+            logger.error(f"人物不存在: {update.character_name}")
             return False
         
         # 应用更新

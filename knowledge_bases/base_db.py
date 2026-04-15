@@ -16,6 +16,9 @@ from typing import Any, Optional
 from datetime import datetime
 
 from core.config import get_config
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('knowledge_bases.base_db')
 
 
 class BaseDB:
@@ -70,7 +73,7 @@ class BaseDB:
             with open(file_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (json.JSONDecodeError, IOError) as e:
-            print(f"加载数据失败 {key}: {e}")
+            logger.error(f"加载数据失败 {key}: {e}")
             return None
     
     def save(self, key: str, data: dict) -> bool:
@@ -100,7 +103,7 @@ class BaseDB:
             return True
             
         except IOError as e:
-            print(f"保存数据失败 {key}: {e}")
+            logger.error(f"保存数据失败 {key}: {e}")
             # 清理临时文件
             if temp_path.exists():
                 temp_path.unlink()
@@ -176,5 +179,5 @@ class BaseDB:
                 file_path.unlink()
             return True
         except IOError as e:
-            print(f"删除数据失败 {key}: {e}")
+            logger.error(f"删除数据失败 {key}: {e}")
             return False

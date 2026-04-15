@@ -10,6 +10,9 @@ knowledge_bases/bible_db.py
 
 from knowledge_bases.base_db import BaseDB
 from core.schemas import WorldRule
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('knowledge_bases.bible_db')
 
 
 class BibleDB(BaseDB):
@@ -58,7 +61,7 @@ class BibleDB(BaseDB):
                 if category is None or rule.category == category:
                     rules.append(rule)
             except Exception as e:
-                print(f"解析世界规则失败: {e}")
+                logger.error(f"解析世界规则失败: {e}")
                 continue
         
         return rules

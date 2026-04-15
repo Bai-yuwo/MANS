@@ -12,6 +12,9 @@ from typing import Optional
 
 from knowledge_bases.base_db import BaseDB
 from core.schemas import ForeshadowingItem, ForeshadowingStatus
+from core.logging_config import get_logger, log_exception
+
+logger = get_logger('knowledge_bases.foreshadowing_db')
 
 
 class ForeshadowingDB(BaseDB):
@@ -44,7 +47,7 @@ class ForeshadowingDB(BaseDB):
             try:
                 items.append(ForeshadowingItem(**item_data))
             except Exception as e:
-                print(f"解析伏笔失败: {e}")
+                logger.error(f"解析伏笔失败: {e}")
                 continue
         
         return items
@@ -114,7 +117,7 @@ class ForeshadowingDB(BaseDB):
                 # 保存所有伏笔
                 return self._save_all_items(items)
         
-        print(f"伏笔不存在: {fs_id}")
+        logger.error(f"伏笔不存在: {fs_id}")
         return False
     
     async def add_item(self, item: ForeshadowingItem) -> bool:

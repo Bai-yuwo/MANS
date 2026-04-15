@@ -1,0 +1,81 @@
+{# writer/prompts/style_injection.j2 #}
+{# 文风注入格式化模板 #}
+{# 用于将风格参考信息渲染为写作指导 #}
+
+{# 输入：style_config (风格配置对象) #}
+{# 输出：格式化的文风指导 #}
+
+{% if style_config.emotional_base_tone %}
+【整体情感基调】
+{{ style_config.emotional_base_tone }}
+
+{% endif %}
+
+{% if style_config.style_keywords %}
+【文风关键词】
+{{ style_config.style_keywords | join('、') }}
+
+{% endif %}
+
+{% if style_config.reference_authors %}
+【参考作家风格】
+{% for author in style_config.reference_authors %}
+- {{ author }}
+{% endfor %}
+
+{% endif %}
+
+{% if style_config.writing_principles %}
+【写作原则】
+{% for principle in style_config.writing_principles %}
+• {{ principle }}
+{% endfor %}
+
+{% endif %}
+
+{% if style_config.forbidden_patterns %}
+【避免使用的表达方式】
+{% for pattern in style_config.forbidden_patterns %}
+✗ {{ pattern }}
+{% endfor %}
+
+{% endif %}
+
+{% if style_config.preferred_patterns %}
+【推荐的表达方式】
+{% for pattern in style_config.preferred_patterns %}
+✓ {{ pattern }}
+{% endfor %}
+
+{% endif %}
+
+{% if style_config.scene_type_examples %}
+【场景类型范文参考】
+
+{% for scene_type, example in style_config.scene_type_examples.items() %}
+--- {{ scene_type }}场景示例 ---
+{{ example }}
+
+{% endfor %}
+{% endif %}
+
+{% if style_config.dialogue_style %}
+【对话风格指导】
+{{ style_config.dialogue_style }}
+
+{% endif %}
+
+{% if style_config.description_style %}
+【描写风格指导】
+{{ style_config.description_style }}
+
+{% endif %}
+
+---
+【文风一致性检查清单】
+
+写作完成后，请自检：
+- [ ] 整体语调是否符合情感基调？
+- [ ] 对话是否符合人物声线设定？
+- [ ] 是否有使用禁止的表达方式？
+- [ ] 描写是否遵循推荐的风格原则？

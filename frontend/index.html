@@ -58,10 +58,9 @@
                         <label>
                             当前作品:
                         </label>
-                        <label id="works-selected-label" style="width: 200px;text-align: center">
-                            请选择作品
-                        </label>
-
+                        <select id="works-select" style="width: 200px;text-align: center;">
+                            <option value="">请选择作品</option>
+                        </select>
                     </div>
                     <!-- 右侧按钮区 -->
                     <button class="mans-btn primary"
@@ -74,8 +73,132 @@
                     </button>
                 </div>
                 <!-- 作品内容 -->
-                <div id="works-content" style="padding: 10px; display: flex">
-                    <hr style="width: 100%; border-color: var(--bg-hover); border-width: 2px;">
+                <div id="works-content" style="padding: 10px;">
+                    <div id="project-list" class="project-grid">
+                        <!-- 项目列表将动态加载 -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 创建项目模态框 -->
+            <div id="create-project-modal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>创建新作品</h3>
+                        <button class="close-btn" onclick="closeCreateModal()">&times;</button>
+                    </div>
+                    <form id="create-project-form">
+                        <div class="form-group">
+                            <label>作品名称 *</label>
+                            <input type="text" name="name" required placeholder="请输入作品名称">
+                        </div>
+                        <div class="form-group">
+                            <label>类型</label>
+                            <select name="genre">
+                                <option value="玄幻">玄幻</option>
+                                <option value="仙侠">仙侠</option>
+                                <option value="都市">都市</option>
+                                <option value="科幻">科幻</option>
+                                <option value="武侠">武侠</option>
+                                <option value="历史">历史</option>
+                                <option value="其他">其他</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>核心Idea *</label>
+                            <textarea name="core_idea" required rows="3" placeholder="用1-3句话描述故事核心"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>主角起点 *</label>
+                            <input type="text" name="protagonist_seed" required placeholder="如：山村少年，天生灵根">
+                        </div>
+                        <div class="form-group">
+                            <label>目标篇幅</label>
+                            <select name="target_length">
+                                <option value="中篇(10-50万)">中篇(10-50万)</option>
+                                <option value="长篇(50-200万)">长篇(50-200万)</option>
+                                <option value="短篇(<10万)">短篇(<10万)</option>
+                                <option value="超长篇(200万+)">超长篇(200万+)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>基调</label>
+                            <input type="text" name="tone" placeholder="如：热血励志、轻松搞笑">
+                        </div>
+                        <div class="form-group">
+                            <label>文风参考</label>
+                            <textarea name="style_reference" rows="2" placeholder="参考作家或作品风格"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>禁忌元素</label>
+                            <input type="text" name="forbidden_elements" placeholder="用逗号分隔，如：穿越,系统">
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="mans-btn primary">创建</button>
+                            <button type="button" class="mans-btn" onclick="closeCreateModal()">取消</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- 初始化流程面板 -->
+            <div class="content-panel" id="initialization-panel">
+                <h3>初始化流程</h3>
+                <div class="init-steps">
+                    <div class="init-step pending" id="bible-step">
+                        <div class="step-header">
+                            <span class="step-number">1</span>
+                            <span class="step-title">生成世界观Bible</span>
+                        </div>
+                        <div class="step-content">
+                            <p>基于您的创作信息生成完整的世界观设定</p>
+                            <button id="generate-bible-btn" class="mans-btn primary">生成 Bible</button>
+                        </div>
+                    </div>
+                    <div class="init-step pending" id="character-step">
+                        <div class="step-header">
+                            <span class="step-number">2</span>
+                            <span class="step-title">生成人物设定</span>
+                        </div>
+                        <div class="step-content">
+                            <p>生成主角和主要配角的人物卡</p>
+                            <button id="generate-characters-btn" class="mans-btn" disabled>生成人物</button>
+                        </div>
+                    </div>
+                    <div class="init-step pending" id="outline-step">
+                        <div class="step-header">
+                            <span class="step-number">3</span>
+                            <span class="step-title">生成全局大纲</span>
+                        </div>
+                        <div class="step-content">
+                            <p>生成三幕式结构和关键转折点</p>
+                            <button id="generate-outline-btn" class="mans-btn" disabled>生成大纲</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="bible-display" class="init-result"></div>
+                <button id="enter-writing-btn" class="mans-btn primary" style="display: none; margin-top: 20px;">进入写作</button>
+            </div>
+
+            <!-- 写作面板 -->
+            <div class="content-panel" id="writing-panel">
+                <div class="writing-header">
+                    <h3>写作界面</h3>
+                    <div class="writing-actions">
+                        <button id="view-kb-btn" class="mans-btn">查看知识库</button>
+                        <button id="confirm-chapter-btn" class="mans-btn primary">确认本章</button>
+                    </div>
+                </div>
+                <div id="chapter-plan-display" class="chapter-content">
+                    <!-- 章节规划将动态加载 -->
+                </div>
+            </div>
+
+            <!-- 知识库面板 -->
+            <div class="content-panel" id="knowledge-panel">
+                <h3>知识库</h3>
+                <div id="knowledge-display">
+                    <!-- 知识库内容将动态加载 -->
                 </div>
             </div>
 

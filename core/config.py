@@ -79,8 +79,10 @@ class Config:
     # --------------------------------------------------------
     # Token 预算配置
     # --------------------------------------------------------
-    INJECTION_TOKEN_BUDGET: int = 3500
-    WRITER_MAX_TOKENS: int = 3000
+    INJECTION_TOKEN_BUDGET: int = 3500      # Injection Engine 总预算
+    INJECTION_MAX_CHARACTERS: int = 3       # 最大出场人物数
+    INJECTION_MAX_FORESHADOWING: int = 2    # 最大激活伏笔数
+    WRITER_MAX_TOKENS: int = 3000           # Writer 单次最大生成 token
     
     # --------------------------------------------------------
     # 当前激活的 Provider
@@ -121,6 +123,8 @@ class Config:
         self.VECTOR_STORE_TYPE = os.getenv("VECTOR_STORE_TYPE", self.VECTOR_STORE_TYPE)
         
         self.INJECTION_TOKEN_BUDGET = int(os.getenv("INJECTION_TOKEN_BUDGET", self.INJECTION_TOKEN_BUDGET))
+        self.INJECTION_MAX_CHARACTERS = int(os.getenv("INJECTION_MAX_CHARACTERS", self.INJECTION_MAX_CHARACTERS))
+        self.INJECTION_MAX_FORESHADOWING = int(os.getenv("INJECTION_MAX_FORESHADOWING", self.INJECTION_MAX_FORESHADOWING))
         self.WRITER_MAX_TOKENS = int(os.getenv("WRITER_MAX_TOKENS", self.WRITER_MAX_TOKENS))
         
         self.ACTIVE_PROVIDER = os.getenv("ACTIVE_PROVIDER", self.ACTIVE_PROVIDER)

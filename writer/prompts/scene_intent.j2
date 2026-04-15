@@ -1,0 +1,54 @@
+{# writer/prompts/scene_intent.j2 #}
+{# 场景意图格式化模板 #}
+{# 用于将 ScenePlan.intent 渲染为更详细的写作指导 #}
+
+{# 输入：scene_plan (ScenePlan 对象) #}
+{# 输出：格式化的场景意图描述 #}
+
+【场景意图解析】
+
+本场景核心任务：{{ scene_plan.intent }}
+
+{% if scene_plan.pov_character %}
+视角设定：以 {{ scene_plan.pov_character }} 的视角展开
+{% endif %}
+
+{% if scene_plan.emotional_tone %}
+情绪基调：{{ scene_plan.emotional_tone }}
+{% endif %}
+
+{% if scene_plan.present_characters %}
+出场人物：{{ scene_plan.present_characters | join('、') }}
+{% endif %}
+
+{% if scene_plan.target_word_count %}
+字数目标：约 {{ scene_plan.target_word_count }} 字
+{% endif %}
+
+{% if scene_plan.foreshadowing_to_plant %}
+埋设伏笔：
+{% for fs_id in scene_plan.foreshadowing_to_plant %}
+  - {{ fs_id }}
+{% endfor %}
+{% endif %}
+
+{% if scene_plan.foreshadowing_to_trigger %}
+触发伏笔：
+{% for fs_id in scene_plan.foreshadowing_to_trigger %}
+  - {{ fs_id }}
+{% endfor %}
+{% endif %}
+
+{% if scene_plan.special_instructions %}
+特殊指示：
+{{ scene_plan.special_instructions }}
+{% endif %}
+
+---
+【场景写作要点】
+
+1. 开场：快速建立场景时空，让读者立即进入情境
+2. 发展：围绕核心任务推进，每段都有明确目的
+3. 人物：利用声线差异让对话自然区分角色
+4. 节奏：根据情绪基调控制叙事节奏
+5. 结尾：完成场景意图，为下一场景留衔接点

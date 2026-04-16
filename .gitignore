@@ -35,6 +35,7 @@ wheels/
 *.swo
 *~
 *.png
+*.md
 
 # OS
 .DS_Store

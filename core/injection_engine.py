@@ -6,7 +6,6 @@ core/injection_engine.py
 1. 三层处理：规则层（同步）→ 检索层（异步）→ 裁剪层（条件）
 2. Token 预算控制：严格控制在 INJECTION_TOKEN_BUDGET 内
 3. 优先级排序：强制注入 > 向量检索 > 动态裁剪
-4. 零 LLM 原则：预算内不调用模型，超预算才调用 Trim 模型
 """
 
 import json

@@ -163,19 +163,31 @@ class ForeshadowingDB(BaseDB):
             fs_type: 伏笔类型 (plot/character/world/emotional)
             description: 伏笔描述
             trigger_range: 触发章节范围 (start, end)
-            urgency: 紧急程度 (critical/major/medium/minor)
+            urgency: 紧急程度 (low/medium/high)
         
         Returns:
             是否添加成功
         """
         import uuid
+        
+        # 映射urgency值到合法枚举
+        urgency_map = {
+            "critical": "high",
+            "major": "high",
+            "medium": "medium",
+            "minor": "low",
+            "low": "low",
+            "high": "high"
+        }
+        normalized_urgency = urgency_map.get(urgency, "medium")
+        
         item = ForeshadowingItem(
             id=f"fs_{uuid.uuid4().hex[:8]}",
-            fs_type=fs_type,
+            type=fs_type,  # 修复：使用type而不是fs_type
             description=description,
             planted_chapter=trigger_range[0],
             trigger_range=list(trigger_range),
-            urgency=urgency,
+            urgency=normalized_urgency,  # 修复：使用标准化后的值
             status=ForeshadowingStatus.PLANTED
         )
         return self.append("items", item.model_dump())

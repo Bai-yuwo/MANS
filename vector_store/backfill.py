@@ -25,6 +25,7 @@ from vector_store.store import VectorStore
 from knowledge_bases.bible_db import BibleDB
 from knowledge_bases.character_db import CharacterDB
 from knowledge_bases.foreshadowing_db import ForeshadowingDB
+from knowledge_bases.story_db import StoryDB
 
 
 async def backfill_bible(project_id: str, store: VectorStore) -> int:
@@ -248,6 +249,97 @@ async def backfill_foreshadowing(project_id: str, store: VectorStore) -> int:
     return 0
 
 
+async def backfill_outline(project_id: str, store: VectorStore) -> int:
+    """回填大纲数据"""
+    print(f"\n--- 回填大纲 ---")
+    
+    story_db = StoryDB(project_id)
+    outline_data = story_db.load("outline")
+    
+    if not outline_data:
+        print("  [跳过] 未找到大纲数据")
+        return 0
+    
+    items = []
+    
+    # 1. 向量化三幕结构
+    three_act = outline_data.get("three_act_structure", {})
+    for act_name, act_data in three_act.items():
+        chapter_range = act_data.get("chapter_range", [0, 0])
+        act_text = f"""幕次：{act_data.get('name', act_name)}
+章节范围：第{chapter_range[0]}章 - 第{chapter_range[1]}章
+描述：{act_data.get('description', '')}
+发展方向：{'；'.join(act_data.get('key_directions', []))}
+"""
+        items.append({
+            "id": f"act_{act_name}",
+            "text": act_text,
+            "metadata": {
+                "type": "act",
+                "act_name": act_name,
+                "chapter_range": chapter_range,
+                "source": "outline_backfill"
+            }
+        })
+    
+    # 2. 向量化转折点
+    turning_points = outline_data.get("turning_points", [])
+    for i, tp in enumerate(turning_points):
+        tp_text = f"""转折点：{tp.get('name', '')}
+章节：{tp.get('chapter', 0)}
+描述：{tp.get('description', '')}
+影响：{tp.get('impact', '')}
+"""
+        items.append({
+            "id": f"turning_point_{i}",
+            "text": tp_text,
+            "metadata": {
+                "type": "turning_point",
+                "chapter": tp.get("chapter", 0),
+                "source": "outline_backfill"
+            }
+        })
+    
+    # 3. 向量化核心冲突
+    main_conflict = outline_data.get("main_conflict", {})
+    if main_conflict:
+        conflict_text = f"""核心冲突：{main_conflict.get('central_conflict', '')}
+主角目标：{main_conflict.get('protagonist_goal', '')}
+对抗力量：{main_conflict.get('antagonist_force', '')}
+风险：{main_conflict.get('stakes', '')}
+"""
+        items.append({
+            "id": "main_conflict",
+            "text": conflict_text,
+            "metadata": {
+                "type": "conflict",
+                "source": "outline_backfill"
+            }
+        })
+    
+    # 4. 向量化主题
+    theme = outline_data.get("theme", {})
+    if theme:
+        theme_text = f"""主题：{theme.get('theme_statement', '')}
+副主题：{', '.join(theme.get('sub_themes', []))}
+"""
+        items.append({
+            "id": "theme",
+            "text": theme_text,
+            "metadata": {
+                "type": "theme",
+                "source": "outline_backfill"
+            }
+        })
+    
+    if items:
+        success = await store.upsert_batch(collection="outlines", items=items)
+        print(f"  [OK] 大纲回填完成: {len(items)} 条")
+        return len(items) if success else 0
+    
+    return 0
+
+
 async def backfill_project(project_id: str, types: list[str]) -> dict:
     """回填单个项目"""
     print(f"\n{'='*50}")
@@ -256,7 +348,7 @@ async def backfill_project(project_id: str, types: list[str]) -> dict:
     
     store = VectorStore(project_id=project_id)
     
-    results = {"bible": 0, "characters": 0, "foreshadowing": 0}
+    results = {"bible": 0, "characters": 0, "foreshadowing": 0, "outline": 0}
     
     if "bible" in types:
         results["bible"] = await backfill_bible(project_id, store)
@@ -267,14 +359,17 @@ async def backfill_project(project_id: str, types: list[str]) -> dict:
     if "foreshadowing" in types:
         results["foreshadowing"] = await backfill_foreshadowing(project_id, store)
     
+    if "outline" in types:
+        results["outline"] = await backfill_outline(project_id, store)
+    
     return results
 
 
 async def main():
     parser = argparse.ArgumentParser(description="向量化回填脚本")
     parser.add_argument("--project-id", help="指定项目 ID（不指定则回填所有项目）")
-    parser.add_argument("--type", default="bible,characters,foreshadowing",
-                        help="回填类型，逗号分隔（bible/characters/foreshadowing）")
+    parser.add_argument("--type", default="bible,characters,foreshadowing,outline",
+                        help="回填类型，逗号分隔（bible/characters/foreshadowing/outline）")
     args = parser.parse_args()
     
     types = [t.strip() for t in args.type.split(",")]
@@ -293,7 +388,7 @@ async def main():
         project_ids = [d.name for d in workspace.iterdir() if d.is_dir()]
         print(f"发现 {len(project_ids)} 个项目")
     
-    total_results = {"bible": 0, "characters": 0, "foreshadowing": 0}
+    total_results = {"bible": 0, "characters": 0, "foreshadowing": 0, "outline": 0}
     
     for project_id in project_ids:
         results = await backfill_project(project_id, types)
@@ -307,6 +402,7 @@ async def main():
     print(f"  Bible: {total_results['bible']} 条")
     print(f"  人物: {total_results['characters']} 条")
     print(f"  伏笔: {total_results['foreshadowing']} 条")
+    print(f"  大纲: {total_results['outline']} 条")
     print(f"  总计: {sum(total_results.values())} 条")
 
 

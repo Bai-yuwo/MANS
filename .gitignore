@@ -59,6 +59,7 @@ workspace/
 *.swp
 *.swo
 *~
+*APItest.py
 
 # Windows 批处理脚本
 *.bat

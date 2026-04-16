@@ -329,19 +329,289 @@
         </div>
     </div>
 
-    <!-- 流式输出面板容器 -->
-    <div id="streaming-container"></div>
+<!-- 流式输出面板组件 -->
+<style>
+/* 流式输出面板样式 - 独立配色，玻璃拟态风格 */
+.streaming-panel {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 580px;
+    max-height: 520px;
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 12px;
+    box-shadow:
+        0 0 0 1px rgba(99, 102, 241, 0.1),
+        0 8px 32px rgba(0, 0, 0, 0.4),
+        0 2px 8px rgba(0, 0, 0, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    z-index: 9999;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+}
 
-    <script>
-    // 加载流式面板组件
-    fetch('/frontend/streaming-panel.html')
-        .then(res => res.text())
-        .then(html => {
-            document.getElementById('streaming-container').innerHTML = html;
-            console.log('流式面板已加载');
-        })
-        .catch(err => console.error('加载流式面板失败:', err));
-    </script>
+.streaming-panel.active {
+    display: flex;
+    animation: panelSlideIn 0.3s ease;
+}
+
+@keyframes panelSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.streaming-panel-header {
+    padding: 14px 16px;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(79, 70, 229, 0.2) 100%);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.streaming-panel-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: #e2e8f0;
+    letter-spacing: 0.3px;
+}
+
+.streaming-panel-close {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+    cursor: pointer;
+    font-size: 18px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: all 0.2s;
+    line-height: 1;
+}
+
+.streaming-panel-close:hover {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #fecaca;
+}
+
+.streaming-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    background: rgba(15, 23, 42, 0.6);
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.4) transparent;
+}
+
+.streaming-panel-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.streaming-panel-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.streaming-panel-body::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.4);
+    border-radius: 3px;
+}
+
+.streaming-panel-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.6);
+}
+
+.streaming-panel-footer {
+    padding: 12px 16px;
+    border-top: 1px solid rgba(99, 102, 241, 0.15);
+    background: rgba(15, 23, 42, 0.8);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.streaming-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+.streaming-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+    animation: statusPulse 2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(0.9); }
+}
+
+.streaming-status-dot.error {
+    background: #ef4444;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+    animation: none;
+}
+
+.streaming-status-dot.complete {
+    background: #3b82f6;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+    animation: none;
+}
+
+.streaming-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-streaming {
+    padding: 8px 16px;
+    border: 1px solid rgba(99, 102, 241, 0.4);
+    border-radius: 6px;
+    background: rgba(99, 102, 241, 0.15);
+    color: #c7d2fe;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s;
+    min-width: 80px;
+}
+
+.btn-streaming:hover {
+    background: rgba(99, 102, 241, 0.25);
+    border-color: rgba(99, 102, 241, 0.6);
+    color: #e0e7ff;
+}
+
+.btn-streaming:active {
+    transform: scale(0.97);
+}
+
+.btn-streaming:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-streaming.close-btn {
+    background: rgba(100, 116, 139, 0.15);
+    border-color: rgba(100, 116, 139, 0.4);
+    color: #94a3b8;
+}
+
+.btn-streaming.close-btn:hover {
+    background: rgba(100, 116, 139, 0.25);
+    border-color: rgba(100, 116, 139, 0.6);
+    color: #cbd5e1;
+}
+
+.streaming-log {
+    margin-bottom: 10px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: rgba(30, 41, 59, 0.6);
+    border-left: 3px solid #6366f1;
+    transition: background 0.2s;
+}
+
+.streaming-log:hover {
+    background: rgba(30, 41, 59, 0.8);
+}
+
+.streaming-log.progress {
+    border-left-color: #eab308;
+}
+
+.streaming-log.token {
+    border-left-color: #22c55e;
+    background: rgba(30, 41, 59, 0.8);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.streaming-log.error {
+    border-left-color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.streaming-log.complete {
+    border-left-color: #3b82f6;
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.streaming-log-time {
+    font-size: 11px;
+    color: #64748b;
+    margin-bottom: 4px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.streaming-log-content {
+    color: #e2e8f0;
+    line-height: 1.6;
+}
+
+/* 进度条动画 */
+.streaming-log.progress .streaming-log-content {
+    color: #fcd34d;
+}
+
+/* Token 输出 - 更亮的文字 */
+.streaming-log.token .streaming-log-content {
+    color: #f1f5f9;
+}
+
+/* 错误状态 - 红色文字 */
+.streaming-log.error .streaming-log-content {
+    color: #fca5a5;
+}
+
+/* 完成状态 - 蓝色文字 */
+.streaming-log.complete .streaming-log-content {
+    color: #93c5fd;
+}
+</style>
+
+<div id="streaming-panel" class="streaming-panel">
+    <div class="streaming-panel-header">
+        <span class="streaming-panel-title" id="streaming-panel-title">生成中...</span>
+        <button class="streaming-panel-close" onclick="closeStreamingPanel()" title="关闭面板">&times;</button>
+    </div>
+    <div class="streaming-panel-body" id="streaming-panel-body">
+        <!-- 流式日志将在这里显示 -->
+    </div>
+    <div class="streaming-panel-footer">
+        <div class="streaming-status">
+            <div class="streaming-status-dot" id="streaming-status-dot"></div>
+            <span id="streaming-status-text">准备中...</span>
+        </div>
+        <div class="streaming-actions">
+            <button class="btn-streaming" id="btn-copy-output" onclick="copyStreamingOutput()" disabled>复制内容</button>
+            <button class="btn-streaming close-btn" id="btn-close-panel" onclick="closeStreamingPanel()">关闭</button>
+        </div>
+    </div>
+</div>
 
     <!-- SSE客户端 -->
     <script src="/frontend/streaming-client.js"></script>

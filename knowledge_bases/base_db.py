@@ -1,19 +1,23 @@
 """
 knowledge_bases/base_db.py
-知识库基类
+知识库基类（异步版本）
 
 设计原则：
 1. 通用接口：定义所有知识库的通用操作
 2. 文件存储：JSON 文件作为主数据源
 3. 原子写入：先写临时文件再 rename，防止数据损坏
-4. 向量索引：自动同步到向量存储
+4. 异步安全：使用 asyncio.Lock 保证并发安全
+5. 向量索引：自动同步到向量存储
 """
 
+import asyncio
 import json
 import shutil
 from pathlib import Path
 from typing import Any, Optional
 from datetime import datetime
+
+import aiofiles
 
 from core.config import get_config
 from core.logging_config import get_logger, log_exception
@@ -23,7 +27,7 @@ logger = get_logger('knowledge_bases.base_db')
 
 class BaseDB:
     """
-    知识库基类
+    知识库基类（异步版本）
     
     所有具体知识库继承此类，获得通用读写能力
     
@@ -50,14 +54,17 @@ class BaseDB:
         
         # 确保目录存在
         self.db_path.mkdir(parents=True, exist_ok=True)
+        
+        # 并发控制锁（每个实例独立，不同key的操作可以并行）
+        self._lock = asyncio.Lock()
     
     def _get_file_path(self, key: str) -> Path:
         """获取数据文件路径"""
         return self.db_path / f"{key}.json"
     
-    def load(self, key: str) -> Optional[dict]:
+    async def load(self, key: str) -> Optional[dict]:
         """
-        加载指定 key 的数据
+        加载指定 key 的数据（异步）
         
         Args:
             key: 数据标识
@@ -69,16 +76,18 @@ class BaseDB:
         if not file_path.exists():
             return None
         
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"加载数据失败 {key}: {e}")
-            return None
+        async with self._lock:
+            try:
+                async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+                    content = await f.read()
+                    return json.loads(content)
+            except (json.JSONDecodeError, IOError) as e:
+                logger.error(f"加载数据失败 {key}: {e}")
+                return None
     
-    def save(self, key: str, data: dict) -> bool:
+    async def save(self, key: str, data: dict) -> bool:
         """
-        保存数据到指定 key（原子写入）
+        保存数据到指定 key（异步原子写入）
         
         Args:
             key: 数据标识
@@ -90,28 +99,29 @@ class BaseDB:
         file_path = self._get_file_path(key)
         temp_path = file_path.with_suffix('.tmp')
         
-        try:
-            # 添加更新时间
-            data['_updated_at'] = datetime.now().isoformat()
-            
-            # 写入临时文件
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            
-            # 原子替换
-            shutil.move(str(temp_path), str(file_path))
-            return True
-            
-        except IOError as e:
-            logger.error(f"保存数据失败 {key}: {e}")
-            # 清理临时文件
-            if temp_path.exists():
-                temp_path.unlink()
-            return False
+        async with self._lock:
+            try:
+                # 添加更新时间
+                data['_updated_at'] = datetime.now().isoformat()
+                
+                # 写入临时文件
+                async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
+                    await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+                
+                # 原子替换
+                shutil.move(str(temp_path), str(file_path))
+                return True
+                
+            except IOError as e:
+                logger.error(f"保存数据失败 {key}: {e}")
+                # 清理临时文件
+                if temp_path.exists():
+                    temp_path.unlink()
+                return False
     
-    def append(self, key: str, item: Any) -> bool:
+    async def append(self, key: str, item: Any) -> bool:
         """
-        向数组字段追加条目（知识库只增不覆盖原则）
+        向数组字段追加条目（异步，知识库只增不覆盖原则）
         
         Args:
             key: 数据标识
@@ -120,7 +130,7 @@ class BaseDB:
         Returns:
             是否追加成功
         """
-        data = self.load(key) or {}
+        data = await self.load(key) or {}
         
         if 'items' not in data:
             data['items'] = []
@@ -130,11 +140,11 @@ class BaseDB:
             item['_added_at'] = datetime.now().isoformat()
         
         data['items'].append(item)
-        return self.save(key, data)
+        return await self.save(key, data)
     
-    def update_field(self, key: str, field: str, value: Any) -> bool:
+    async def update_field(self, key: str, field: str, value: Any) -> bool:
         """
-        更新指定字段
+        更新指定字段（异步）
         
         Args:
             key: 数据标识
@@ -144,13 +154,13 @@ class BaseDB:
         Returns:
             是否更新成功
         """
-        data = self.load(key) or {}
+        data = await self.load(key) or {}
         data[field] = value
-        return self.save(key, data)
+        return await self.save(key, data)
     
-    def list_keys(self) -> list[str]:
+    async def list_keys(self) -> list[str]:
         """
-        列出所有数据 key
+        列出所有数据 key（异步）
         
         Returns:
             key 列表（不含 .json 后缀）
@@ -158,14 +168,15 @@ class BaseDB:
         if not self.db_path.exists():
             return []
         
+        # 目录遍历不需要锁
         keys = []
         for file_path in self.db_path.glob('*.json'):
             keys.append(file_path.stem)
         return sorted(keys)
     
-    def delete(self, key: str) -> bool:
+    async def delete(self, key: str) -> bool:
         """
-        删除指定 key 的数据
+        删除指定 key 的数据（异步）
         
         Args:
             key: 数据标识
@@ -174,10 +185,11 @@ class BaseDB:
             是否删除成功
         """
         file_path = self._get_file_path(key)
-        try:
-            if file_path.exists():
-                file_path.unlink()
-            return True
-        except IOError as e:
-            logger.error(f"删除数据失败 {key}: {e}")
-            return False
+        async with self._lock:
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+                return True
+            except IOError as e:
+                logger.error(f"删除数据失败 {key}: {e}")
+                return False

@@ -55,9 +55,12 @@ async function startStreamingGeneration(type = 'bible') {
     addStreamingLog('progress', `开始${getTypeName(type)}生成...`);
     
     try {
-        // 创建SSE连接
-        const url = `/api/projects/${AppState.currentProject}/stream/${type}`;
-        
+        // 读取温度设置
+        const temperature = typeof getSetting === 'function' ? getSetting('temperature', 0.7) : 0.7;
+
+        // 创建SSE连接（附加温度参数）
+        const url = `/api/projects/${AppState.currentProject}/stream/${type}?temperature=${encodeURIComponent(temperature)}`;
+
         // 使用fetch + ReadableStream处理POST SSE
         const response = await fetch(url, {
             method: 'POST',

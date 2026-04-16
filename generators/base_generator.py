@@ -94,6 +94,23 @@ class BaseGenerator(ABC):
         """返回生成器名称（用于日志和错误信息）"""
         pass
     
+    def get_output_schema(self) -> Optional[dict]:
+        """
+        返回输出 JSON Schema（用于 json_schema 模式）
+        
+        子类可以重写此方法来定义严格的结构校验。
+        返回 None 则不使用 json_schema 模式。
+        
+        Returns:
+            JSON Schema 字典，格式：
+            {
+                "name": "output_schema",
+                "schema": { ... }
+            }
+            或 None
+        """
+        return None
+    
     @abstractmethod
     def _build_prompt(self, **kwargs) -> str:
         """
@@ -162,7 +179,7 @@ class BaseGenerator(ABC):
     async def generate(self, **kwargs) -> Any:
         """
         执行生成流程
-        
+
         标准流程：
         1. 构建 prompt
         2. 调用 LLM（带重试）
@@ -170,19 +187,23 @@ class BaseGenerator(ABC):
         4. 验证结果
         5. 保存到知识库
         6. 触发向量化
-        
+
         Args:
             **kwargs: 生成所需的输入数据
-            
+
         Returns:
             生成的结果数据
-            
+
         Raises:
             GenerationError: 生成过程中任何环节失败
         """
         generator_name = self._get_generator_name()
         self._report_progress(f"[{generator_name}] 开始生成...")
-        
+
+        # 提取生成参数
+        temperature = kwargs.pop('temperature', 0.7)
+        max_retries = kwargs.pop('max_retries', 3)
+
         # Step 1: 构建 prompt
         try:
             self._report_progress(f"[{generator_name}] 构建 prompt...")
@@ -193,17 +214,26 @@ class BaseGenerator(ABC):
                 stage="prompt_build",
                 details={"error": str(e)}
             )
-        
+
         # Step 2: 调用 LLM
         try:
             self._report_progress(f"[{generator_name}] 调用大模型...")
+
+            # 获取 JSON Schema（如果子类定义了）
+            json_schema = self.get_output_schema()
+
+            # 使用 json_schema 模式（豆包官方推荐）
+            response_format = "json_schema" if json_schema else None
+
             response: LLMResponse = await self.llm_client.call_with_retry(
                 role="generator",
                 prompt=prompt,
-                response_format="json",
+                system_prompt="",
+                response_format=response_format,
+                json_schema=json_schema,
                 max_tokens=4000,
-                temperature=0.7,
-                max_retries=3
+                temperature=temperature,
+                max_retries=max_retries
             )
         except LLMError as e:
             raise LLMCallError(
@@ -279,20 +309,23 @@ class BaseGenerator(ABC):
                 - message/data/content: 事件内容
         """
         generator_name = self._get_generator_name()
-        
+
+        # 提取生成参数
+        temperature = kwargs.pop('temperature', 0.7)
+
         try:
             # Step 1: 构建 prompt
             self._report_progress(f"[{generator_name}] 构建 prompt...")
             yield {"type": "progress", "message": f"[{generator_name}] 构建 prompt..."}
             prompt = self._build_prompt(**kwargs)
-            
+
             # Step 2: 流式调用 LLM
             self._report_progress(f"[{generator_name}] 调用大模型...")
             yield {"type": "progress", "message": f"[{generator_name}] 调用大模型..."}
-            
+
             full_content = ""
             token_count = 0
-            
+
             # 使用分离的超时策略：
             # - connect_timeout: 30s（快速判定连接是否成功）
             # - sock_read_timeout: 60s（token之间的最大间隔）
@@ -301,7 +334,7 @@ class BaseGenerator(ABC):
                 role="generator",
                 prompt=prompt,
                 max_tokens=4000,
-                temperature=0.7,
+                temperature=temperature,
                 connect_timeout=30,
                 sock_read_timeout=60,
                 total_timeout=600

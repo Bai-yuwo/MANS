@@ -32,7 +32,6 @@ from core.update_extractor import UpdateExtractor
 from core.logging_config import get_logger, log_exception
 
 logger = get_logger('writer.writer')
-from knowledge_bases.story_db import StoryDB
 
 
 class WriterError(Exception):
@@ -50,6 +49,11 @@ class PromptRenderError(WriterError):
 
 class GenerationError(WriterError):
     """文本生成失败"""
+    pass
+
+
+class InvalidOutputError(WriterError):
+    """输出校验失败（字数不足、格式错误等）"""
     pass
 
 
@@ -95,7 +99,9 @@ class Writer:
         self.llm_client = LLMClient()
         self.injection_engine: Optional[InjectionEngine] = None
         self.update_extractor: Optional[UpdateExtractor] = None
-        self.story_db: Optional[StoryDB] = None
+        
+        # 知识库引用（延迟初始化）
+        self._story_db = None
         
         # 初始化 Jinja2 模板环境
         self.template_env = Environment(
@@ -112,15 +118,23 @@ class Writer:
         if not self._initialized:
             self.injection_engine = InjectionEngine(self.project_id)
             self.update_extractor = UpdateExtractor(self.project_id)
-            self.story_db = StoryDB(self.project_id)
             self._initialized = True
+    
+    @property
+    def story_db(self):
+        """延迟初始化故事库"""
+        if self._story_db is None:
+            from knowledge_bases.story_db import StoryDB
+            self._story_db = StoryDB(self.project_id)
+        return self._story_db
     
     async def write_scene(
         self,
         scene_plan: ScenePlan,
         chapter_plan: ChapterPlan,
         stream_callback: Optional[Callable[[str], None]] = None,
-        sync_update: bool = False
+        sync_update: bool = False,
+        temperature: float = 0.75
     ) -> str:
         """
         生成单个场景文本
@@ -166,7 +180,7 @@ class Writer:
                 role="writer",
                 prompt=prompt,
                 max_tokens=max_tokens,
-                temperature=0.75  # 稍微增加创造性
+                temperature=temperature
             ):
                 full_text += token
                 
@@ -174,7 +188,19 @@ class Writer:
                 if stream_callback:
                     await stream_callback(token)
             
-            # Step 4: 触发异步更新
+            # Step 4: 校验生成结果
+            if not self._validate_generated_text(full_text, scene_plan):
+                raise InvalidOutputError(
+                    f"生成文本校验失败：字数不足（{len(full_text)} < {scene_plan.target_word_count * 0.5}）",
+                    stage="validation",
+                    details={
+                        "actual_length": len(full_text),
+                        "expected_min_length": int(scene_plan.target_word_count * 0.5),
+                        "target_word_count": scene_plan.target_word_count
+                    }
+                )
+            
+            # Step 5: 触发异步更新
             update_task = asyncio.create_task(
                 self._trigger_update(
                     generated_text=full_text,
@@ -188,7 +214,7 @@ class Writer:
             if sync_update:
                 await update_task
             
-            # Step 5: 保存场景草稿
+            # Step 6: 保存场景草稿
             await self._save_scene_draft(
                 chapter_number=chapter_plan.chapter_number,
                 scene_index=scene_plan.scene_index,
@@ -216,7 +242,8 @@ class Writer:
         self,
         scene_plan: ScenePlan,
         chapter_plan: ChapterPlan,
-        sync_update: bool = False
+        sync_update: bool = False,
+        temperature: float = 0.75
     ) -> AsyncIterator[str]:
         """
         生成单个场景文本（异步迭代器版本）
@@ -251,12 +278,20 @@ class Writer:
             role="writer",
             prompt=prompt,
             max_tokens=max_tokens,
-            temperature=0.75
+            temperature=temperature
         ):
             full_text += token
             yield token
         
-        # Step 4: 触发异步更新（在生成完成后）
+        # Step 4: 校验生成结果
+        if not self._validate_generated_text(full_text, scene_plan):
+            logger.warning(
+                f"[Writer] 生成文本校验失败：字数不足（{len(full_text)} < {scene_plan.target_word_count * 0.5}），"
+                f"跳过更新和保存"
+            )
+            return  # 提前退出，不触发更新和保存
+        
+        # Step 5: 触发异步更新（在生成完成后）
         update_task = asyncio.create_task(
             self._trigger_update(
                 generated_text=full_text,
@@ -269,7 +304,7 @@ class Writer:
         if sync_update:
             await update_task
         
-        # Step 5: 保存场景草稿
+        # Step 6: 保存场景草稿
         await self._save_scene_draft(
             chapter_number=chapter_plan.chapter_number,
             scene_index=scene_plan.scene_index,
@@ -306,6 +341,44 @@ class Writer:
                 stage="prompt_render",
                 details={"error": str(e)}
             )
+    
+    def _validate_generated_text(self, text: str, scene_plan: ScenePlan) -> bool:
+        """
+        校验生成的文本是否有效
+        
+        防御性编程：防止半截文本、空文本污染知识库
+        
+        Args:
+            text: 生成的文本
+            scene_plan: 场景规划（包含目标字数）
+        
+        Returns:
+            True 如果文本有效，False 如果应该丢弃
+        """
+        # 检查1：空文本
+        if not text or not text.strip():
+            logger.warning("[Writer] 生成文本为空")
+            return False
+        
+        # 检查2：字数不足（至少达到目标字数的 50%）
+        min_length = int(scene_plan.target_word_count * 0.5)
+        if len(text) < min_length:
+            logger.warning(
+                f"[Writer] 生成文本字数不足：{len(text)} < {min_length} "
+                f"(目标: {scene_plan.target_word_count})"
+            )
+            return False
+        
+        # 检查3：文本是否被截断（以标点符号结尾更可能是完整句子）
+        # 注意：这只是启发式检查，不强制要求
+        last_char = text.strip()[-1] if text.strip() else ""
+        if last_char not in ['。', '！', '？', '”', '』', '）', '>', '\n']:
+            logger.info(
+                f"[Writer] 生成文本可能未完整结束（结尾字符: '{last_char}'），"
+                f"但字数足够，允许通过"
+            )
+        
+        return True
     
     async def _trigger_update(
         self,
@@ -374,7 +447,7 @@ class Writer:
             }
             
             # 保存到 story_db
-            self.story_db.append_scene_draft(chapter_number, draft_data)
+            await self.story_db.save_chapter_draft(chapter_number, draft_data)
             
         except Exception as e:
             raise SaveError(
@@ -393,7 +466,8 @@ class Writer:
         chapter_plan: ChapterPlan,
         previous_attempt: str,
         feedback: str,
-        stream_callback: Optional[Callable[[str], None]] = None
+        stream_callback: Optional[Callable[[str], None]] = None,
+        temperature: float = 0.75
     ) -> str:
         """
         根据反馈重新生成场景
@@ -439,11 +513,23 @@ class Writer:
             role="writer",
             prompt=feedback_prompt,
             max_tokens=max_tokens,
-            temperature=0.75
+            temperature=temperature
         ):
             full_text += token
             if stream_callback:
                 await stream_callback(token)
+        
+        # 校验生成结果
+        if not self._validate_generated_text(full_text, scene_plan):
+            raise InvalidOutputError(
+                f"重新生成文本校验失败：字数不足（{len(full_text)} < {scene_plan.target_word_count * 0.5}）",
+                stage="validation",
+                details={
+                    "actual_length": len(full_text),
+                    "expected_min_length": int(scene_plan.target_word_count * 0.5),
+                    "target_word_count": scene_plan.target_word_count
+                }
+            )
         
         # 保存（覆盖原草稿）
         await self._save_scene_draft(

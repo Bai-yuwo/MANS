@@ -20,31 +20,58 @@ const AppState = {
     eventSource: null
 };
 
-// API 基础URL
-const API_BASE = '';
+// ============================================
+// 设置读取
+// ============================================
+
+function getSetting(key, defaultValue) {
+    const stored = localStorage.getItem('mans_settings');
+    const settings = stored ? JSON.parse(stored) : {};
+    return settings[key] !== undefined ? settings[key] : defaultValue;
+}
+
+function getApiBase() {
+    return getSetting('apiBase', '');
+}
 
 // ============================================
 // 工具函数
 // ============================================
 
 /**
- * 发送API请求
+ * 发送API请求（支持动态 API_BASE 和重试）
  */
 async function apiRequest(url, options = {}) {
-    const response = await fetch(url, {
-        headers: {
-            'Content-Type': 'application/json',
-            ...options.headers
-        },
-        ...options
-    });
-    
-    if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: '请求失败' }));
-        throw new Error(error.detail || `HTTP ${response.status}`);
+    const base = getApiBase();
+    const fullUrl = base ? base.replace(/\/$/, '') + (url.startsWith('/') ? url : '/' + url) : url;
+    const maxRetries = getSetting('retries', 3);
+
+    let lastError;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            const response = await fetch(fullUrl, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                },
+                ...options
+            });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({ detail: '请求失败' }));
+                throw new Error(error.detail || `HTTP ${response.status}`);
+            }
+
+            return response.json();
+        } catch (error) {
+            lastError = error;
+            if (attempt < maxRetries) {
+                await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            }
+        }
     }
-    
-    return response.json();
+
+    throw lastError;
 }
 
 /**
@@ -154,18 +181,7 @@ async function loadProjects() {
     try {
         const data = await apiRequest('/api/projects');
         const projects = data.projects || [];
-        
-        const select = document.getElementById('works-select');
-        if (select) {
-            select.innerHTML = '<option value="">选择作品...</option>';
-            projects.forEach(project => {
-                const option = document.createElement('option');
-                option.value = project.id;
-                option.textContent = project.name;
-                select.appendChild(option);
-            });
-        }
-        
+
         // 更新项目列表显示
         updateProjectList(projects);
         
@@ -190,14 +206,14 @@ function updateProjectList(projects) {
     }
     
     container.innerHTML = projects.map(project => `
-        <div class="project-card" data-id="${project.id}">
-            <h3>${project.name}</h3>
-            <p class="genre">${project.genre}</p>
-            <p class="status">状态: ${getStatusText(project.status)}</p>
-            <p class="chapter">当前章节: ${project.current_chapter}</p>
+        <div class="project-card" data-id="${escapeHtml(project.id)}">
+            <h3>${escapeHtml(project.name)}</h3>
+            <p class="genre">${escapeHtml(project.genre)}</p>
+            <p class="status">状态: ${escapeHtml(getStatusText(project.status))}</p>
+            <p class="chapter">当前章节: ${escapeHtml(String(project.current_chapter))}</p>
             <div class="actions">
-                <button onclick="openProject('${project.id}')">打开</button>
-                <button onclick="deleteProject('${project.id}')" class="danger">删除</button>
+                <button onclick="openProject('${escapeHtml(project.id)}')">打开</button>
+                <button onclick="deleteProject('${escapeHtml(project.id)}')" class="danger">删除</button>
             </div>
         </div>
     `).join('');
@@ -391,8 +407,10 @@ async function generateBible() {
     }
     
     const btn = document.getElementById('generate-bible-btn');
-    btn.disabled = true;
-    btn.textContent = '生成中...';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '生成中...';
+    }
     
     try {
         // 使用流式生成
@@ -419,8 +437,10 @@ async function generateBible() {
     } catch (error) {
         showMessage('生成 Bible 失败: ' + error.message, 'error');
         // 只在出错时恢复按钮
-        btn.disabled = false;
-        btn.textContent = '生成 Bible';
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '生成 Bible';
+        }
     }
 }
 
@@ -446,23 +466,23 @@ function displayBible(bibleData) {
     if (!container) return;
     
     container.innerHTML = `
-        <h3>${bibleData.world_name || '世界观设定'}</h3>
-        <p>${bibleData.world_description || ''}</p>
+        <h3>${escapeHtml(bibleData.world_name || '世界观设定')}</h3>
+        <p>${escapeHtml(bibleData.world_description || '')}</p>
         <div class="bible-sections">
             <details>
                 <summary>战力体系</summary>
-                <pre>${JSON.stringify(bibleData.combat_system, null, 2)}</pre>
+                <pre>${escapeHtml(JSON.stringify(bibleData.combat_system, null, 2))}</pre>
             </details>
             <details>
                 <summary>世界规则 (${bibleData.world_rules?.length || 0}条)</summary>
                 <ul>
-                    ${(bibleData.world_rules || []).map(r => `<li>${r.content}</li>`).join('')}
+                    ${(bibleData.world_rules || []).map(r => `<li>${escapeHtml(r.content)}</li>`).join('')}
                 </ul>
             </details>
             <details>
                 <summary>势力分布</summary>
                 <ul>
-                    ${(bibleData.factions || []).map(f => `<li>${f.name}: ${f.description}</li>`).join('')}
+                    ${(bibleData.factions || []).map(f => `<li>${escapeHtml(f.name)}: ${escapeHtml(f.description)}</li>`).join('')}
                 </ul>
             </details>
         </div>
@@ -479,9 +499,11 @@ async function generateCharacters() {
     }
     
     const btn = document.getElementById('generate-characters-btn');
-    btn.disabled = true;
-    btn.textContent = '生成中...';
-    
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '生成中...';
+    }
+
     try {
         // 使用流式生成
         if (typeof startStreamingGeneration === 'function') {
@@ -495,15 +517,17 @@ async function generateCharacters() {
             );
             showMessage('人物生成成功！');
         }
-        
+
         // 刷新初始化状态（会正确设置按钮的 disabled 状态）
         await checkInitializationStatus(AppState.currentProject);
-        
+
     } catch (error) {
         showMessage('生成人物失败: ' + error.message, 'error');
         // 只在出错时恢复按钮
-        btn.disabled = false;
-        btn.textContent = '生成人物';
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '生成人物';
+        }
     }
 }
 
@@ -517,9 +541,11 @@ async function generateOutline() {
     }
     
     const btn = document.getElementById('generate-outline-btn');
-    btn.disabled = true;
-    btn.textContent = '生成中...';
-    
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '生成中...';
+    }
+
     try {
         // 使用流式生成
         if (typeof startStreamingGeneration === 'function') {
@@ -533,15 +559,17 @@ async function generateOutline() {
             );
             showMessage('大纲生成成功！');
         }
-        
+
         // 刷新初始化状态（会正确设置按钮的 disabled 状态）
         await checkInitializationStatus(AppState.currentProject);
-        
+
     } catch (error) {
         showMessage('生成大纲失败: ' + error.message, 'error');
         // 只在出错时恢复按钮
-        btn.disabled = false;
-        btn.textContent = '生成大纲';
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '生成大纲';
+        }
     }
 }
 
@@ -581,7 +609,7 @@ async function loadChapterPlan(projectId, chapterNum) {
         // 章节规划不存在，可能需要生成
         console.log('章节规划不存在:', error);
         document.getElementById('chapter-plan-display').innerHTML = `
-            <p class="empty">第${chapterNum}章规划不存在，请先生成弧线规划</p>
+            <p class="empty">第${escapeHtml(String(chapterNum))}章规划不存在，请先生成弧线规划</p>
         `;
     }
 }
@@ -595,31 +623,31 @@ function displayChapterPlan(plan) {
     
     container.innerHTML = `
         <div class="chapter-header">
-            <h3>${plan.title || `第${plan.chapter_number}章`}</h3>
-            <p class="goal">本章目标: ${plan.chapter_goal || ''}</p>
-            <p class="emotion">情绪走向: ${plan.emotional_arc || ''}</p>
+            <h3>${escapeHtml(plan.title || `第${plan.chapter_number}章`)}</h3>
+            <p class="goal">本章目标: ${escapeHtml(plan.chapter_goal || '')}</p>
+            <p class="emotion">情绪走向: ${escapeHtml(plan.emotional_arc || '')}</p>
         </div>
         <div class="scenes-list">
             ${(plan.scenes || []).map((scene, index) => `
-                <div class="scene-card" data-index="${scene.scene_index}">
+                <div class="scene-card" data-index="${escapeHtml(String(scene.scene_index))}">
                     <div class="scene-header">
                         <span class="scene-number">场景 ${scene.scene_index + 1}</span>
-                        <span class="scene-tone">${scene.emotional_tone || ''}</span>
+                        <span class="scene-tone">${escapeHtml(scene.emotional_tone || '')}</span>
                     </div>
-                    <p class="scene-intent">${scene.intent || ''}</p>
+                    <p class="scene-intent">${escapeHtml(scene.intent || '')}</p>
                     <div class="scene-meta">
-                        <span>视角: ${scene.pov_character || ''}</span>
-                        <span>出场: ${(scene.present_characters || []).join(', ')}</span>
-                        <span>字数: ~${scene.target_word_count || 1200}</span>
+                        <span>视角: ${escapeHtml(scene.pov_character || '')}</span>
+                        <span>出场: ${(scene.present_characters || []).map(c => escapeHtml(c)).join(', ')}</span>
+                        <span>字数: ~${escapeHtml(String(scene.target_word_count || 1200))}</span>
                     </div>
                     <div class="scene-actions">
-                        <button onclick="generateScene(${scene.scene_index})" 
+                        <button onclick="generateScene(${escapeHtml(String(scene.scene_index))})"
                                 ${AppState.isGenerating ? 'disabled' : ''}>
                             ${AppState.isGenerating ? '生成中...' : '生成'}
                         </button>
-                        <button onclick="editScene(${scene.scene_index})">编辑</button>
+                        <button onclick="editScene(${escapeHtml(String(scene.scene_index))})">编辑</button>
                     </div>
-                    <div class="scene-content" id="scene-content-${scene.scene_index}"></div>
+                    <div class="scene-content" id="scene-content-${escapeHtml(String(scene.scene_index))}"></div>
                 </div>
             `).join('')}
         </div>
@@ -649,7 +677,7 @@ async function generateScene(sceneIndex) {
         await connectStream(sceneIndex, contentDiv);
         
     } catch (error) {
-        contentDiv.innerHTML = `<div class="error">生成失败: ${error.message}</div>`;
+        contentDiv.innerHTML = `<div class="error">生成失败: ${escapeHtml(error.message)}</div>`;
         AppState.isGenerating = false;
     }
 }
@@ -661,8 +689,9 @@ async function connectStream(sceneIndex, contentDiv) {
     const projectId = AppState.currentProject;
     const chapterNum = AppState.currentChapter;
     
+    const temperature = getSetting('temperature', 0.75);
     const eventSource = new EventSource(
-        `/api/projects/${projectId}/stream/${chapterNum}/${sceneIndex}`
+        `/api/projects/${projectId}/stream/${chapterNum}/${sceneIndex}?temperature=${encodeURIComponent(temperature)}`
     );
     
     AppState.eventSource = eventSource;
@@ -835,41 +864,41 @@ function displayKnowledgeBase(data) {
                 <summary>世界观 Bible ${data.bible ? '✓' : '✗'}</summary>
                 <div class="kb-content">
                     ${data.bible ? `
-                        <h4>${data.bible.world_name || ''}</h4>
-                        <p>${data.bible.world_description || ''}</p>
+                        <h4>${escapeHtml(data.bible.world_name || '')}</h4>
+                        <p>${escapeHtml(data.bible.world_description || '')}</p>
                     ` : '<p>未生成</p>'}
                 </div>
             </details>
-            
+
             <details ${data.characters ? 'open' : ''}>
                 <summary>人物设定 ${data.characters ? `(${data.characters.characters?.length || 0})` : '✗'}</summary>
                 <div class="kb-content">
                     ${data.characters ? `
                         <ul>
                             ${(data.characters.characters || []).map(c => `
-                                <li>${c.name} - ${c.personality_core || ''}</li>
+                                <li>${escapeHtml(c.name || '')} - ${escapeHtml(c.personality_core || '')}</li>
                             `).join('')}
                         </ul>
                     ` : '<p>未生成</p>'}
                 </div>
             </details>
-            
+
             <details ${data.outline ? 'open' : ''}>
                 <summary>大纲 ${data.outline ? '✓' : '✗'}</summary>
                 <div class="kb-content">
                     ${data.outline ? `
-                        <pre>${JSON.stringify(data.outline, null, 2)}</pre>
+                        <pre>${escapeHtml(JSON.stringify(data.outline, null, 2))}</pre>
                     ` : '<p>未生成</p>'}
                 </div>
             </details>
-            
+
             <details ${data.foreshadowing ? 'open' : ''}>
                 <summary>伏笔 ${data.foreshadowing ? `(${data.foreshadowing.foreshadowing?.length || 0})` : '✗'}</summary>
                 <div class="kb-content">
                     ${data.foreshadowing ? `
                         <ul>
                             ${(data.foreshadowing.foreshadowing || []).map(f => `
-                                <li>[${f.status}] ${f.description?.substring(0, 50)}...</li>
+                                <li>[${escapeHtml(f.status || '')}] ${escapeHtml((f.description || '').substring(0, 50))}...</li>
                             `).join('')}
                         </ul>
                     ` : '<p>未生成</p>'}
@@ -1066,8 +1095,9 @@ async function generateArc(arcNumber) {
     }
     
     try {
+        const temperature = getSetting('temperature', 0.7);
         const result = await apiRequest(
-            `/api/projects/${AppState.currentProject}/generate/arc?arc_number=${arcNumber}`,
+            `/api/projects/${AppState.currentProject}/generate/arc?arc_number=${arcNumber}&temperature=${encodeURIComponent(temperature)}`,
             { method: 'POST' }
         );
         showMessage(`弧线 ${arcNumber} 规划生成成功！`, 'success');
@@ -1087,16 +1117,17 @@ async function generateArc(arcNumber) {
  */
 async function generateChapterPlan(chapterNumber) {
     if (!AppState.currentProject) return;
-    
+
     const btn = document.getElementById(`generate-chapter-${chapterNumber}-btn`);
     if (btn) {
         btn.disabled = true;
         btn.innerHTML = '<span class="loading-spinner small"></span> 生成中...';
     }
-    
+
     try {
+        const temperature = getSetting('temperature', 0.7);
         const result = await apiRequest(
-            `/api/projects/${AppState.currentProject}/generate/chapter?chapter_number=${chapterNumber}`,
+            `/api/projects/${AppState.currentProject}/generate/chapter?chapter_number=${chapterNumber}&temperature=${encodeURIComponent(temperature)}`,
             { method: 'POST' }
         );
         showMessage(`第 ${chapterNumber} 章规划生成成功！`, 'success');
@@ -1217,15 +1248,15 @@ function displayIssues(issues) {
         'medium': 'var(--info)',
         'minor': 'var(--text-secondary)'
     };
-    
+
     container.innerHTML = issues.map(issue => `
         <div style="display: flex; align-items: center; gap: 12px; padding: 10px; margin-bottom: 8px;
                     background: var(--bg-dark); border-radius: 6px; border-left: 3px solid ${urgencyColors[issue.urgency] || 'var(--text-secondary)'};">
-            <span style="font-size: 11px; color: var(--text-secondary); min-width: 80px;">${issue.type}</span>
-            <span style="flex: 1; font-size: 13px;">${issue.description}</span>
+            <span style="font-size: 11px; color: var(--text-secondary); min-width: 80px;">${escapeHtml(issue.type || '')}</span>
+            <span style="flex: 1; font-size: 13px;">${escapeHtml(issue.description || '')}</span>
             <span style="font-size: 11px; padding: 2px 8px; border-radius: 4px;
                          background: ${issue.status === 'resolved' ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)'};
-                         color: ${issue.status === 'resolved' ? 'var(--success)' : 'var(--warning)'};">${issue.status}</span>
+                         color: ${issue.status === 'resolved' ? 'var(--success)' : 'var(--warning)'};">${escapeHtml(issue.status || '')}</span>
         </div>
     `).join('');
 }
@@ -1253,9 +1284,9 @@ function displayForeshadowing(foreshadowing) {
         <div style="display: flex; align-items: center; gap: 12px; padding: 10px; margin-bottom: 8px;
                     background: var(--bg-dark); border-radius: 6px;">
             <span style="font-size: 11px; padding: 2px 8px; border-radius: 4px; min-width: 60px; text-align: center;
-                         background: rgba(99,102,241,0.15); color: ${statusColors[fs.status] || 'var(--text-secondary)'};">${fs.status || 'active'}</span>
-            <span style="flex: 1; font-size: 13px;">${(fs.description || '').substring(0, 80)}${(fs.description || '').length > 80 ? '...' : ''}</span>
-            <span style="font-size: 11px; color: var(--text-secondary);">${fs.type || ''}</span>
+                         background: rgba(99,102,241,0.15); color: ${statusColors[fs.status] || 'var(--text-secondary)'};">${escapeHtml(fs.status || 'active')}</span>
+            <span style="flex: 1; font-size: 13px;">${escapeHtml((fs.description || '').substring(0, 80))}${(fs.description || '').length > 80 ? '...' : ''}</span>
+            <span style="font-size: 11px; color: var(--text-secondary);">${escapeHtml(fs.type || '')}</span>
         </div>
     `).join('');
 }
@@ -1301,11 +1332,11 @@ async function loadIssuesForPanel() {
         container.innerHTML = issues.map(issue => `
             <div style="display: flex; align-items: center; gap: 12px; padding: 12px; margin-bottom: 8px;
                         background: var(--bg-dark); border-radius: 6px; border-left: 3px solid ${urgencyColors[issue.urgency] || 'var(--text-secondary)'};">
-                <span style="font-size: 11px; color: var(--text-secondary); min-width: 80px;">${issue.type}</span>
-                <span style="flex: 1; font-size: 13px;">${issue.description}</span>
+                <span style="font-size: 11px; color: var(--text-secondary); min-width: 80px;">${escapeHtml(issue.type || '')}</span>
+                <span style="flex: 1; font-size: 13px;">${escapeHtml(issue.description || '')}</span>
                 <span style="font-size: 11px; padding: 2px 8px; border-radius: 4px;
                              background: ${issue.status === 'resolved' ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)'};
-                             color: ${issue.status === 'resolved' ? 'var(--success)' : 'var(--warning)'};">${issue.status}</span>
+                             color: ${issue.status === 'resolved' ? 'var(--success)' : 'var(--warning)'};">${escapeHtml(issue.status || '')}</span>
             </div>
         `).join('');
     } catch (error) {

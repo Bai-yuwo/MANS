@@ -1,14 +1,18 @@
 """
 knowledge_bases/story_db.py
-故事知识库
+故事知识库（异步版本）
 
 设计原则：
 1. 大纲管理：全局大纲、弧线规划、章节规划
 2. 摘要追踪：已完成章节的摘要，用于后续注入
 3. 版本控制：保留规划变更历史
+4. 异步安全：所有文件操作使用 aiofiles
 """
 
+import json
 from pathlib import Path
+
+import aiofiles
 
 from knowledge_bases.base_db import BaseDB
 from core.schemas import ChapterPlan, ChapterFinal
@@ -31,9 +35,9 @@ class StoryDB(BaseDB):
     def __init__(self, project_id: str):
         super().__init__(project_id, "story")
     
-    def get_chapter_summary(self, chapter_number: int) -> str:
+    async def get_chapter_summary(self, chapter_number: int) -> str:
         """
-        获取章节摘要
+        获取章节摘要（异步）
         
         Args:
             chapter_number: 章节号
@@ -49,18 +53,18 @@ class StoryDB(BaseDB):
         
         if final_path.exists():
             try:
-                import json
-                with open(final_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                async with aiofiles.open(final_path, 'r', encoding='utf-8') as f:
+                    content = await f.read()
+                    data = json.loads(content)
                     return data.get("summary", "")
             except Exception as e:
                 logger.error(f"读取章节摘要失败: {e}")
         
         return ""
     
-    def save_chapter_plan(self, chapter_number_or_plan, plan_data=None) -> bool:
+    async def save_chapter_plan(self, chapter_number_or_plan, plan_data=None) -> bool:
         """
-        保存章节规划
+        保存章节规划（异步）
         
         Args:
             chapter_number_or_plan: 章节号或 ChapterPlan 对象
@@ -71,14 +75,14 @@ class StoryDB(BaseDB):
         """
         if isinstance(chapter_number_or_plan, ChapterPlan):
             key = f"chapter_{chapter_number_or_plan.chapter_number}_plan"
-            return self.save(key, chapter_number_or_plan.model_dump())
+            return await self.save(key, chapter_number_or_plan.model_dump())
         else:
             key = f"chapter_{chapter_number_or_plan}_plan"
-            return self.save(key, plan_data)
+            return await self.save(key, plan_data)
     
-    def get_chapter_plan(self, chapter_number: int) -> ChapterPlan | None:
+    async def get_chapter_plan(self, chapter_number: int) -> ChapterPlan | None:
         """
-        获取章节规划
+        获取章节规划（异步）
         
         Args:
             chapter_number: 章节号
@@ -87,7 +91,7 @@ class StoryDB(BaseDB):
             ChapterPlan 对象，不存在则返回 None
         """
         key = f"chapter_{chapter_number}_plan"
-        data = self.load(key)
+        data = await self.load(key)
         
         if not data:
             return None
@@ -98,9 +102,9 @@ class StoryDB(BaseDB):
             logger.error(f"解析章节规划失败: {e}")
             return None
     
-    def save_chapter_final(self, final: ChapterFinal) -> bool:
+    async def save_chapter_final(self, final: ChapterFinal) -> bool:
         """
-        保存章节完稿
+        保存章节完稿（异步）
         
         Args:
             final: 章节完稿对象
@@ -115,17 +119,16 @@ class StoryDB(BaseDB):
         final_path = chapters_dir / f"chapter_{final.chapter_number}_final.json"
         
         try:
-            import json
-            with open(final_path, 'w', encoding='utf-8') as f:
-                json.dump(final.model_dump(), f, ensure_ascii=False, indent=2)
+            async with aiofiles.open(final_path, 'w', encoding='utf-8') as f:
+                await f.write(json.dumps(final.model_dump(), ensure_ascii=False, indent=2))
             return True
         except Exception as e:
             logger.error(f"保存章节完稿失败: {e}")
             return False
     
-    def save_outline(self, outline_data: dict) -> bool:
+    async def save_outline(self, outline_data: dict) -> bool:
         """
-        保存全局大纲
+        保存全局大纲（异步）
         
         Args:
             outline_data: 大纲数据字典
@@ -133,20 +136,20 @@ class StoryDB(BaseDB):
         Returns:
             是否保存成功
         """
-        return self.save("outline", outline_data)
+        return await self.save("outline", outline_data)
     
-    def get_outline(self) -> dict | None:
+    async def get_outline(self) -> dict | None:
         """
-        获取全局大纲
+        获取全局大纲（异步）
         
         Returns:
             大纲数据字典，不存在则返回 None
         """
-        return self.load("outline")
+        return await self.load("outline")
     
-    def save_arc_plan(self, arc_id: str, arc_data: dict) -> bool:
+    async def save_arc_plan(self, arc_id: str, arc_data: dict) -> bool:
         """
-        保存弧线规划
+        保存弧线规划（异步）
         
         Args:
             arc_id: 弧线ID
@@ -156,11 +159,11 @@ class StoryDB(BaseDB):
             是否保存成功
         """
         key = f"arc_{arc_id}"
-        return self.save(key, arc_data)
+        return await self.save(key, arc_data)
     
-    def get_arc_plan(self, arc_id: str) -> dict | None:
+    async def get_arc_plan(self, arc_id: str) -> dict | None:
         """
-        获取弧线规划
+        获取弧线规划（异步）
         
         Args:
             arc_id: 弧线ID
@@ -169,11 +172,11 @@ class StoryDB(BaseDB):
             弧线规划数据，不存在则返回 None
         """
         key = f"arc_{arc_id}"
-        return self.load(key)
+        return await self.load(key)
     
-    def get_arc_plan_for_chapter(self, chapter_number: int) -> dict | None:
+    async def get_arc_plan_for_chapter(self, chapter_number: int) -> dict | None:
         """
-        根据章节号查找对应的弧线规划
+        根据章节号查找对应的弧线规划（异步）
         
         Args:
             chapter_number: 章节编号
@@ -181,8 +184,6 @@ class StoryDB(BaseDB):
         Returns:
             包含该章节的弧线规划数据，未找到则返回 None
         """
-        import json
-        
         arcs_dir = Path(self.base_path) / "arcs"
         if not arcs_dir.exists():
             # 尝试从 story 数据目录查找
@@ -191,8 +192,9 @@ class StoryDB(BaseDB):
                 for f in story_dir.iterdir():
                     if f.name.startswith("arc_") and f.suffix == ".json":
                         try:
-                            with open(f, 'r', encoding='utf-8') as fp:
-                                arc_data = json.load(fp)
+                            async with aiofiles.open(f, 'r', encoding='utf-8') as fp:
+                                content = await fp.read()
+                                arc_data = json.loads(content)
                             chapter_range = arc_data.get("chapter_range", [0, 0])
                             if chapter_range[0] <= chapter_number <= chapter_range[1]:
                                 return arc_data
@@ -202,8 +204,9 @@ class StoryDB(BaseDB):
         
         for arc_file in arcs_dir.glob("arc_*.json"):
             try:
-                with open(arc_file, 'r', encoding='utf-8') as f:
-                    arc_data = json.load(f)
+                async with aiofiles.open(arc_file, 'r', encoding='utf-8') as f:
+                    content = await f.read()
+                    arc_data = json.loads(content)
                 chapter_range = arc_data.get("chapter_range", [0, 0])
                 if chapter_range[0] <= chapter_number <= chapter_range[1]:
                     return arc_data
@@ -212,9 +215,9 @@ class StoryDB(BaseDB):
         
         return None
     
-    def get_chapter_final(self, chapter_number: int) -> dict | None:
+    async def get_chapter_final(self, chapter_number: int) -> dict | None:
         """
-        获取章节完稿
+        获取章节完稿（异步）
         
         Args:
             chapter_number: 章节号
@@ -229,17 +232,17 @@ class StoryDB(BaseDB):
         
         if final_path.exists():
             try:
-                import json
-                with open(final_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                async with aiofiles.open(final_path, 'r', encoding='utf-8') as f:
+                    content = await f.read()
+                    return json.loads(content)
             except Exception as e:
                 logger.error(f"读取章节完稿失败: {e}")
         
         return None
     
-    def save_chapter_draft(self, chapter_number: int, draft_data: dict) -> bool:
+    async def save_chapter_draft(self, chapter_number: int, draft_data: dict) -> bool:
         """
-        保存章节草稿
+        保存章节草稿（异步）
         
         Args:
             chapter_number: 章节号
@@ -249,11 +252,11 @@ class StoryDB(BaseDB):
             是否保存成功
         """
         key = f"chapter_{chapter_number}_draft"
-        return self.save(key, draft_data)
+        return await self.save(key, draft_data)
     
-    def get_chapter_draft(self, chapter_number: int) -> dict | None:
+    async def get_chapter_draft(self, chapter_number: int) -> dict | None:
         """
-        获取章节草稿
+        获取章节草稿（异步）
         
         Args:
             chapter_number: 章节号
@@ -262,4 +265,4 @@ class StoryDB(BaseDB):
             草稿数据，不存在则返回 None
         """
         key = f"chapter_{chapter_number}_draft"
-        return self.load(key)
+        return await self.load(key)

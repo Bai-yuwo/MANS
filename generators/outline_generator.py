@@ -37,6 +37,150 @@ class OutlineGenerator(BaseGenerator):
     def _get_generator_name(self) -> str:
         return "OutlineGenerator"
     
+    def get_output_schema(self) -> dict:
+        """返回大纲生成的 JSON Schema"""
+        return {
+            "name": "outline_output",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "three_act_structure": {
+                        "type": "object",
+                        "properties": {
+                            "act1": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "chapter_range": {
+                                        "type": "array",
+                                        "items": {"type": "integer"},
+                                        "minItems": 2,
+                                        "maxItems": 2
+                                    },
+                                    "description": {"type": "string"},
+                                    "key_directions": {
+                                        "type": "array",
+                                        "items": {"type": "string"}
+                                    }
+                                },
+                                "required": ["name", "chapter_range", "description", "key_directions"]
+                            },
+                            "act2a": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "chapter_range": {
+                                        "type": "array",
+                                        "items": {"type": "integer"},
+                                        "minItems": 2,
+                                        "maxItems": 2
+                                    },
+                                    "description": {"type": "string"},
+                                    "key_directions": {
+                                        "type": "array",
+                                        "items": {"type": "string"}
+                                    }
+                                },
+                                "required": ["name", "chapter_range", "description", "key_directions"]
+                            },
+                            "act2b": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "chapter_range": {
+                                        "type": "array",
+                                        "items": {"type": "integer"},
+                                        "minItems": 2,
+                                        "maxItems": 2
+                                    },
+                                    "description": {"type": "string"},
+                                    "key_directions": {
+                                        "type": "array",
+                                        "items": {"type": "string"}
+                                    }
+                                },
+                                "required": ["name", "chapter_range", "description", "key_directions"]
+                            },
+                            "act3": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "chapter_range": {
+                                        "type": "array",
+                                        "items": {"type": "integer"},
+                                        "minItems": 2,
+                                        "maxItems": 2
+                                    },
+                                    "description": {"type": "string"},
+                                    "key_directions": {
+                                        "type": "array",
+                                        "items": {"type": "string"}
+                                    }
+                                },
+                                "required": ["name", "chapter_range", "description", "key_directions"]
+                            }
+                        },
+                        "required": ["act1", "act2a", "act2b", "act3"]
+                    },
+                    "main_conflict": {
+                        "type": "object",
+                        "properties": {
+                            "central_conflict": {"type": "string"},
+                            "protagonist_goal": {"type": "string"},
+                            "antagonist_force": {"type": "string"},
+                            "stakes": {"type": "string"}
+                        },
+                        "required": ["central_conflict", "protagonist_goal", "antagonist_force", "stakes"]
+                    },
+                    "story_pattern": {
+                        "type": "object",
+                        "properties": {
+                            "growth_curve": {"type": "string"},
+                            "rhythm_mode": {"type": "string"},
+                            "highlight_density": {"type": "string"},
+                            "description": {"type": "string"}
+                        },
+                        "required": ["growth_curve", "rhythm_mode", "highlight_density", "description"]
+                    },
+                    "turning_points": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "chapter": {"type": "integer"},
+                                "description": {"type": "string"}
+                            },
+                            "required": ["name", "chapter", "description"]
+                        }
+                    },
+                    "ending": {
+                        "type": "object",
+                        "properties": {
+                            "direction": {"type": "string"},
+                            "resolution_type": {"type": "string"}
+                        },
+                        "required": ["direction", "resolution_type"]
+                    },
+                    "foreshadowing_list": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "description": {"type": "string"},
+                                "planted_act": {"type": "string"},
+                                "resolution_act": {"type": "string"},
+                                "importance": {"type": "string"}
+                            },
+                            "required": ["type", "description", "planted_act", "resolution_act", "importance"]
+                        }
+                    }
+                },
+                "required": ["three_act_structure", "main_conflict", "story_pattern", "turning_points", "ending", "foreshadowing_list"]
+            }
+        }
+    
     def _build_prompt(self, 
                       project_meta: ProjectMeta, 
                       bible_data: dict, 
@@ -402,7 +546,7 @@ class OutlineGenerator(BaseGenerator):
     
     async def _save_result(self, result: dict) -> None:
         """
-        保存大纲到知识库
+        保存大纲到知识库（异步）
         
         Args:
             result: 验证通过的大纲数据
@@ -410,7 +554,7 @@ class OutlineGenerator(BaseGenerator):
         story_db = StoryDB(self.project_id)
         
         # 保存大纲
-        story_db.save_outline(result)
+        await story_db.save_outline(result)
         
         # 保存伏笔到伏笔库
         foreshadowing_db = ForeshadowingDB(self.project_id)
@@ -432,7 +576,7 @@ class OutlineGenerator(BaseGenerator):
             trigger_start = act_chapter_map.get(planted_act, (1, 25))[0]
             trigger_end = act_chapter_map.get(resolution_act, (76, 100))[1]
             
-            foreshadowing_db.add_foreshadowing(
+            await foreshadowing_db.add_foreshadowing(
                 fs_type=fs_data.get("type", "plot"),
                 description=fs_data.get("description", ""),
                 trigger_range=(trigger_start, trigger_end),

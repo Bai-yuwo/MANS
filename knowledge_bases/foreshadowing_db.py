@@ -32,14 +32,14 @@ class ForeshadowingDB(BaseDB):
     def __init__(self, project_id: str):
         super().__init__(project_id, "foreshadowing")
     
-    def get_all_items(self) -> list[ForeshadowingItem]:
+    async def get_all_items(self) -> list[ForeshadowingItem]:
         """
-        获取所有伏笔
+        获取所有伏笔（异步）
         
         Returns:
             ForeshadowingItem 列表
         """
-        data = self.load("items") or {}
+        data = await self.load("items") or {}
         items_data = data.get("items", [])
         
         items = []
@@ -52,13 +52,13 @@ class ForeshadowingDB(BaseDB):
         
         return items
     
-    def get_active_for_chapter(
+    async def get_active_for_chapter(
         self,
         current_chapter: int,
         trigger_ids: list[str] = None
     ) -> list[ForeshadowingItem]:
         """
-        获取当前章节需要处理的伏笔
+        获取当前章节需要处理的伏笔（异步）
         
         Args:
             current_chapter: 当前章节号
@@ -67,7 +67,7 @@ class ForeshadowingDB(BaseDB):
         Returns:
             需要处理的伏笔列表
         """
-        items = self.get_all_items()
+        items = await self.get_all_items()
         active = []
         
         for item in items:
@@ -93,7 +93,7 @@ class ForeshadowingDB(BaseDB):
         notes: str = ""
     ) -> bool:
         """
-        更新伏笔状态
+        更新伏笔状态（异步）
         
         Args:
             fs_id: 伏笔 ID
@@ -103,7 +103,7 @@ class ForeshadowingDB(BaseDB):
         Returns:
             是否更新成功
         """
-        items = self.get_all_items()
+        items = await self.get_all_items()
         
         for item in items:
             if item.id == fs_id:
@@ -115,14 +115,14 @@ class ForeshadowingDB(BaseDB):
                     pass
                 
                 # 保存所有伏笔
-                return self._save_all_items(items)
+                return await self._save_all_items(items)
         
         logger.error(f"伏笔不存在: {fs_id}")
         return False
     
     async def add_item(self, item: ForeshadowingItem) -> bool:
         """
-        添加新伏笔
+        添加新伏笔（异步）
         
         Args:
             item: 伏笔对象
@@ -130,26 +130,26 @@ class ForeshadowingDB(BaseDB):
         Returns:
             是否添加成功
         """
-        return self.append("items", item.model_dump())
+        return await self.append("items", item.model_dump())
     
-    def _save_all_items(self, items: list[ForeshadowingItem]) -> bool:
-        """保存所有伏笔（内部方法）"""
+    async def _save_all_items(self, items: list[ForeshadowingItem]) -> bool:
+        """保存所有伏笔（异步内部方法）"""
         data = {
             "items": [item.model_dump() for item in items]
         }
-        return self.save("items", data)
+        return await self.save("items", data)
     
-    def list_all_foreshadowing(self) -> list[dict]:
+    async def list_all_foreshadowing(self) -> list[dict]:
         """
-        获取所有伏笔（返回字典列表，供 API 使用）
+        获取所有伏笔（异步，返回字典列表，供 API 使用）
         
         Returns:
             伏笔字典列表
         """
-        items = self.get_all_items()
+        items = await self.get_all_items()
         return [item.model_dump() for item in items]
     
-    def add_foreshadowing(
+    async def add_foreshadowing(
         self,
         fs_type: str,
         description: str,
@@ -157,7 +157,7 @@ class ForeshadowingDB(BaseDB):
         urgency: str = "medium"
     ) -> bool:
         """
-        添加新伏笔（简化接口）
+        添加新伏笔（异步简化接口）
         
         Args:
             fs_type: 伏笔类型 (plot/character/world/emotional)
@@ -190,4 +190,4 @@ class ForeshadowingDB(BaseDB):
             urgency=normalized_urgency,  # 修复：使用标准化后的值
             status=ForeshadowingStatus.PLANTED
         )
-        return self.append("items", item.model_dump())
+        return await self.append("items", item.model_dump())

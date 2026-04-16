@@ -307,7 +307,7 @@ class ArcPlanner(BaseGenerator):
     
     async def _save_result(self, result: dict) -> None:
         """
-        保存弧线规划到知识库
+        保存弧线规划到知识库（异步）
         
         Args:
             result: 验证通过的弧线规划数据
@@ -317,7 +317,7 @@ class ArcPlanner(BaseGenerator):
         
         # 保存弧线规划
         arc_id = result.get("arc_id", f"arc_{result.get('arc_number', 1)}")
-        story_db.save_arc_plan(arc_id, result)
+        await story_db.save_arc_plan(arc_id, result)
         
         # 为每章创建简版 ChapterPlan
         chapter_plans = result.get("chapter_plans", [])
@@ -336,12 +336,12 @@ class ArcPlanner(BaseGenerator):
                 "previous_chapter_summary": ""
             }
             
-            story_db.save_chapter_plan(chapter_number, simple_plan)
+            await story_db.save_chapter_plan(chapter_number, simple_plan)
         
         # 保存新伏笔
         new_foreshadowing = result.get("new_foreshadowing", [])
         for fs in new_foreshadowing:
-            foreshadowing_db.add_foreshadowing(
+            await foreshadowing_db.add_foreshadowing(
                 fs_type=fs.get("type", "plot"),
                 description=fs.get("description", ""),
                 trigger_range=(

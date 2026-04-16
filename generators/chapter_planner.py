@@ -303,7 +303,7 @@ class ChapterPlanner(BaseGenerator):
     
     async def _save_result(self, result: dict) -> None:
         """
-        保存章节规划到知识库
+        保存章节规划到知识库（异步）
         
         Args:
             result: 验证通过的章节规划数据
@@ -339,7 +339,7 @@ class ChapterPlanner(BaseGenerator):
         )
         
         # 保存到 story_db
-        story_db.save_chapter_plan(
+        await story_db.save_chapter_plan(
             result.get("chapter_number", 0),
             chapter_plan.model_dump()
         )

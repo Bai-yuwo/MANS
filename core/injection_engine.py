@@ -20,6 +20,7 @@ from core.schemas import (
 )
 from core.llm_client import LLMClient, quick_call
 from core.logging_config import get_logger, log_exception
+from core.update_extractor import clean_json_response
 
 logger = get_logger('core.injection_engine')
 
@@ -292,15 +293,39 @@ Token 预算：{budget_tokens}
         
         try:
             # 调用 Trim 模型进行压缩
-            response = await quick_call(
+            from core.llm_client import LLMClient
+            client = LLMClient()
+            
+            # 定义 JSON Schema
+            trim_schema = {
+                "name": "trim_output",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "world_rules": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "similar_scenes": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "style_reference": {"type": "string"}
+                    },
+                    "required": ["world_rules", "similar_scenes", "style_reference"]
+                }
+            }
+            
+            response_obj = await client.call_with_retry(
                 role="trim",
                 prompt=trim_prompt,
                 max_tokens=budget_tokens // 2,  # 压缩结果占用一半预算
-                response_format="json"
+                response_format="json_schema",
+                json_schema=trim_schema
             )
             
             # 解析压缩结果
-            trimmed = json.loads(response)
+            trimmed = json.loads(response_obj.content)
             
             # 更新上下文
             context["world_rules"] = trimmed.get("world_rules", [])

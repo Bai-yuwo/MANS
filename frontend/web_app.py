@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
+import aiofiles
+import aiofiles.os
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
@@ -125,8 +127,8 @@ async def create_project(request: CreateProjectRequest):
         
         # 保存项目元信息
         meta_path = workspace_path / "project_meta.json"
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(project_meta.model_dump(), f, ensure_ascii=False, indent=2)
+        async with aiofiles.open(meta_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(project_meta.model_dump(), ensure_ascii=False, indent=2))
         
         return {
             "success": True,
@@ -150,8 +152,9 @@ async def get_projects():
                 meta_path = project_dir / "project_meta.json"
                 if meta_path.exists():
                     try:
-                        with open(meta_path, "r", encoding="utf-8") as f:
-                            meta = json.load(f)
+                        async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
+                            content = await f.read()
+                            meta = json.loads(content)
                         projects.append({
                             "id": meta.get("id", project_dir.name),
                             "name": meta.get("name", "未命名"),
@@ -175,8 +178,9 @@ async def get_project(project_id: str):
         raise HTTPException(status_code=404, detail="项目不存在")
     
     try:
-        with open(meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
+            content = await f.read()
+            meta = json.loads(content)
         return meta
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"读取项目失败: {str(e)}")
@@ -223,8 +227,9 @@ async def get_project_status(project_id: str):
         }
         
         if meta_path.exists():
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
+            async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
+                content = await f.read()
+                meta = json.loads(content)
             status["current_chapter"] = meta.get("current_chapter", 0)
             status["status"] = meta.get("status", "unknown")
         
@@ -245,75 +250,77 @@ async def get_project_status(project_id: str):
 # ============================================================
 
 @app.post("/api/projects/{project_id}/generate/bible")
-async def generate_bible(project_id: str):
+async def generate_bible(project_id: str, temperature: float = 0.7):
     """触发 Bible 生成（非流式，保留兼容）"""
     workspace_path = Path("workspace") / project_id
-    
+
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
-    
+
     try:
         # 读取项目元信息
-        with open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
-            meta = json.load(f)
-        
+        async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
+            content = await f.read()
+            meta = json.loads(content)
+
         project_meta = ProjectMeta(**meta)
-        
+
         # 创建生成器并生成
         generator = BibleGenerator(project_id)
-        
+
         # 使用进度回调
         progress_messages = []
         def progress_callback(msg: str):
             progress_messages.append(msg)
             logger.info(f"[BibleGenerator] {msg}")
-        
+
         generator.set_progress_callback(progress_callback)
-        result = await generator.generate(project_meta=project_meta)
-        
+        result = await generator.generate(project_meta=project_meta, temperature=temperature)
+
         return {
             "success": True,
             "message": "Bible 生成成功",
             "data": result,
             "progress": progress_messages
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成 Bible 失败: {str(e)}")
 
 
 @app.post("/api/projects/{project_id}/stream/bible")
-async def stream_generate_bible(project_id: str, request: Request):
+async def stream_generate_bible(project_id: str, request: Request, temperature: float = 0.7):
     """
     流式生成 Bible（SSE）
-    
+
     实时推送生成进度和LLM输出
     """
     workspace_path = Path("workspace") / project_id
-    
+
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
-    
+
     async def event_generator():
         """SSE事件生成器"""
         try:
             # 读取项目元信息
-            with open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
-                meta = json.load(f)
-            
+            async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
+                content = await f.read()
+                meta = json.loads(content)
+
             project_meta = ProjectMeta(**meta)
-            
+
             # 创建生成器
             generator = BibleGenerator(project_id)
-            
+
             # 推送开始事件
             yield {
                 "event": "start",
                 "data": json.dumps({"message": "开始生成 Bible..."}, ensure_ascii=False)
             }
-            
+
             # 使用流式生成，实时推送token
-            async for event in generator.generate_stream(project_meta=project_meta):
+            async for event in generator.generate_stream(project_meta=project_meta, temperature=temperature):
                 event_type = event.get("type", "message")
                 
                 if event_type == "progress":
@@ -369,41 +376,43 @@ async def update_bible(project_id: str, bible_data: dict):
     try:
         bible_db = BibleDB(project_id)
         # 修复：传入key参数 "bible"
-        bible_db.save("bible", bible_data)
+        await bible_db.save("bible", bible_data)
         return {"success": True, "message": "Bible 已更新"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"更新 Bible 失败: {str(e)}")
 
 
 @app.post("/api/projects/{project_id}/generate/characters")
-async def generate_characters(project_id: str):
+async def generate_characters(project_id: str, temperature: float = 0.7):
     """触发人物生成"""
     try:
         # 读取项目元信息
         workspace_path = Path("workspace") / project_id
-        with open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
+            content = await f.read()
+            meta = json.loads(content)
         project_meta = ProjectMeta(**meta)
-        
+
         # 读取 Bible
         bible_db = BibleDB(project_id)
-        bible_data = bible_db.load("bible")
+        bible_data = await bible_db.load("bible")
         if not bible_data:
             raise HTTPException(status_code=400, detail="请先生成 Bible")
-        
+
         # 生成人物
         generator = CharacterGenerator(project_id)
         result = await generator.generate(
             project_meta=project_meta,
-            bible_data=bible_data
+            bible_data=bible_data,
+            temperature=temperature
         )
-        
+
         return {
             "success": True,
             "message": "人物生成成功",
             "data": result
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成人物失败: {str(e)}")
 
@@ -415,53 +424,56 @@ async def confirm_characters(project_id: str):
 
 
 @app.post("/api/projects/{project_id}/generate/outline")
-async def generate_outline(project_id: str):
+async def generate_outline(project_id: str, temperature: float = 0.7):
     """触发大纲生成"""
     try:
         # 读取项目元信息
         workspace_path = Path("workspace") / project_id
-        with open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
+            content = await f.read()
+            meta = json.loads(content)
         project_meta = ProjectMeta(**meta)
-        
+
         # 读取 Bible
         bible_db = BibleDB(project_id)
-        bible_data = bible_db.load("bible")
+        bible_data = await bible_db.load("bible")
         if not bible_data:
             raise HTTPException(status_code=400, detail="请先生成 Bible")
-        
+
         # 读取人物
         character_db = CharacterDB(project_id)
         characters_data = {
             "protagonist": {},
             "supporting_characters": []
         }
-        
+
         # 构建人物数据（简化处理）
         char_files = list((workspace_path / "characters").glob("*.json"))
         for char_file in char_files:
             if char_file.name != "relationships.json":
-                with open(char_file, "r", encoding="utf-8") as f:
-                    char_data = json.load(f)
+                async with aiofiles.open(char_file, "r", encoding="utf-8") as f:
+                    content = await f.read()
+                    char_data = json.loads(content)
                 if not characters_data["protagonist"]:
                     characters_data["protagonist"] = char_data
                 else:
                     characters_data["supporting_characters"].append(char_data)
-        
+
         # 生成大纲
         generator = OutlineGenerator(project_id)
         result = await generator.generate(
             project_meta=project_meta,
             bible_data=bible_data,
-            characters_data=characters_data
+            characters_data=characters_data,
+            temperature=temperature
         )
-        
+
         return {
             "success": True,
             "message": "大纲生成成功",
             "data": result
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成大纲失败: {str(e)}")
 
@@ -474,13 +486,14 @@ async def confirm_outline(project_id: str):
         workspace_path = Path("workspace") / project_id
         meta_path = workspace_path / "project_meta.json"
         
-        with open(meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
+            content = await f.read()
+            meta = json.loads(content)
         
         meta["status"] = "writing"
         
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
+        async with aiofiles.open(meta_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(meta, ensure_ascii=False, indent=2))
         
         return {"success": True, "message": "大纲已确认，进入写作阶段"}
         
@@ -489,52 +502,54 @@ async def confirm_outline(project_id: str):
 
 
 @app.post("/api/projects/{project_id}/generate/arc")
-async def generate_arc(project_id: str, arc_number: int = 1):
+async def generate_arc(project_id: str, arc_number: int = 1, temperature: float = 0.7):
     """触发弧线规划生成"""
     workspace_path = Path("workspace") / project_id
-    
+
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
-    
+
     try:
-        with open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
+            content = await f.read()
+            meta = json.loads(content)
         project_meta = ProjectMeta(**meta)
-        
+
         # 读取 Bible
         bible_db = BibleDB(project_id)
-        bible_data = bible_db.load("bible")
+        bible_data = await bible_db.load("bible")
         if not bible_data:
             raise HTTPException(status_code=400, detail="请先生成 Bible")
-        
+
         # 读取人物
         character_db = CharacterDB(project_id)
         characters_data = {"protagonist": {}, "supporting_characters": []}
         char_files = list((workspace_path / "characters").glob("*.json"))
         for char_file in char_files:
             if char_file.name != "relationships.json":
-                with open(char_file, "r", encoding="utf-8") as f:
-                    char_data = json.load(f)
+                async with aiofiles.open(char_file, "r", encoding="utf-8") as f:
+                    content = await f.read()
+                    char_data = json.loads(content)
                 if not characters_data["protagonist"]:
                     characters_data["protagonist"] = char_data
                 else:
                     characters_data["supporting_characters"].append(char_data)
-        
+
         # 读取大纲
         story_db = StoryDB(project_id)
-        outline = story_db.get_outline()
+        outline = await story_db.get_outline()
         if not outline:
             raise HTTPException(status_code=400, detail="请先生成大纲")
-        
+
         # 获取对应幕的数据
         three_act = outline.get("three_act_structure", {})
         act_keys = ["act1", "act2a", "act2b", "act3"]
         act_data = three_act.get(act_keys[min(arc_number - 1, len(act_keys) - 1)], {})
-        
+
         # 读取已有伏笔
         foreshadowing_db = ForeshadowingDB(project_id)
-        existing_foreshadowing = foreshadowing_db.list_all_foreshadowing()
-        
+        existing_foreshadowing = await foreshadowing_db.list_all_foreshadowing()
+
         # 生成弧线规划
         planner = ArcPlanner(project_id)
         result = await planner.generate(
@@ -542,15 +557,16 @@ async def generate_arc(project_id: str, arc_number: int = 1):
             act_data=act_data,
             bible_data=bible_data,
             characters_data=characters_data,
-            existing_foreshadowing=existing_foreshadowing
+            existing_foreshadowing=existing_foreshadowing,
+            temperature=temperature
         )
-        
+
         return {
             "success": True,
             "message": f"弧线 {arc_number} 规划生成成功",
             "data": result
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -558,42 +574,43 @@ async def generate_arc(project_id: str, arc_number: int = 1):
 
 
 @app.post("/api/projects/{project_id}/generate/chapter")
-async def generate_chapter_plan(project_id: str, chapter_number: int = 1):
+async def generate_chapter_plan(project_id: str, chapter_number: int = 1, temperature: float = 0.7):
     """触发章节规划生成"""
     workspace_path = Path("workspace") / project_id
-    
+
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
-    
+
     try:
         story_db = StoryDB(project_id)
-        
+
         # 读取弧线规划（找到包含该章节的弧线）
-        arc_plan = story_db.get_arc_plan_for_chapter(chapter_number)
+        arc_plan = await story_db.get_arc_plan_for_chapter(chapter_number)
         if not arc_plan:
             raise HTTPException(status_code=400, detail=f"未找到第 {chapter_number} 章的弧线规划，请先生成弧线规划")
-        
+
         # 读取上一章摘要
         previous_summary = ""
         if chapter_number > 1:
-            prev_final = story_db.get_chapter_final(chapter_number - 1)
+            prev_final = await story_db.get_chapter_final(chapter_number - 1)
             if prev_final:
                 previous_summary = prev_final.get("summary", "")
-        
+
         # 生成章节规划
         planner = ChapterPlanner(project_id)
         result = await planner.generate(
             chapter_number=chapter_number,
             arc_plan=arc_plan,
-            previous_chapter_summary=previous_summary
+            previous_chapter_summary=previous_summary,
+            temperature=temperature
         )
-        
+
         return {
             "success": True,
             "message": f"第 {chapter_number} 章规划生成成功",
             "data": result
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -609,7 +626,7 @@ async def get_issues(project_id: str):
             raise HTTPException(status_code=404, detail="项目不存在")
         
         foreshadowing_db = ForeshadowingDB(project_id)
-        foreshadowing_items = foreshadowing_db.list_all_foreshadowing()
+        foreshadowing_items = await foreshadowing_db.list_all_foreshadowing()
         
         story_db = StoryDB(project_id)
         
@@ -628,7 +645,7 @@ async def get_issues(project_id: str):
                 })
         
         # 连续性问题（简化：检查章节间状态一致性）
-        outline = story_db.get_outline()
+        outline = await story_db.get_outline()
         if outline:
             # 检查转折点是否有对应章节
             for tp in outline.get("turning_points", []):
@@ -653,32 +670,34 @@ async def get_issues(project_id: str):
 
 
 @app.post("/api/projects/{project_id}/stream/characters")
-async def stream_generate_characters(project_id: str, request: Request):
+async def stream_generate_characters(project_id: str, request: Request, temperature: float = 0.7):
     """流式生成人物设定（SSE）"""
     workspace_path = Path("workspace") / project_id
-    
+
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
-    
+
     async def event_generator():
         try:
-            with open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
-                meta = json.load(f)
+            async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
+                content = await f.read()
+                meta = json.loads(content)
             project_meta = ProjectMeta(**meta)
-            
+
             bible_db = BibleDB(project_id)
-            bible_data = bible_db.load("bible")
+            bible_data = await bible_db.load("bible")
             if not bible_data:
                 yield {"event": "error", "data": json.dumps({"error": "请先生成 Bible"}, ensure_ascii=False)}
                 return
-            
+
             generator = CharacterGenerator(project_id)
-            
+
             yield {"event": "start", "data": json.dumps({"message": "开始生成人物设定..."}, ensure_ascii=False)}
-            
+
             async for event in generator.generate_stream(
                 project_meta=project_meta,
-                bible_data=bible_data
+                bible_data=bible_data,
+                temperature=temperature
             ):
                 event_type = event.get("type", "message")
                 if event_type == "progress":
@@ -689,56 +708,59 @@ async def stream_generate_characters(project_id: str, request: Request):
                     yield {"event": "complete", "data": json.dumps({"message": event.get("message", ""), "data": event.get("data", {})}, ensure_ascii=False)}
                 elif event_type == "error":
                     yield {"event": "error", "data": json.dumps({"error": event.get("error", "未知错误")}, ensure_ascii=False)}
-            
+
             yield {"event": "done", "data": json.dumps({"message": "流式传输完成"})}
-            
+
         except Exception as e:
             logger.error(f"流式生成人物设定失败: {e}")
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
-    
+
     return EventSourceResponse(event_generator())
 
 
 @app.post("/api/projects/{project_id}/stream/outline")
-async def stream_generate_outline(project_id: str, request: Request):
+async def stream_generate_outline(project_id: str, request: Request, temperature: float = 0.7):
     """流式生成大纲（SSE）"""
     workspace_path = Path("workspace") / project_id
-    
+
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
-    
+
     async def event_generator():
         try:
-            with open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
-                meta = json.load(f)
+            async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
+                content = await f.read()
+                meta = json.loads(content)
             project_meta = ProjectMeta(**meta)
-            
+
             bible_db = BibleDB(project_id)
-            bible_data = bible_db.load("bible")
+            bible_data = await bible_db.load("bible")
             if not bible_data:
                 yield {"event": "error", "data": json.dumps({"error": "请先生成 Bible"}, ensure_ascii=False)}
                 return
-            
+
             character_db = CharacterDB(project_id)
             characters_data = {"protagonist": {}, "supporting_characters": []}
             char_files = list((workspace_path / "characters").glob("*.json"))
             for char_file in char_files:
                 if char_file.name != "relationships.json":
-                    with open(char_file, "r", encoding="utf-8") as f:
-                        char_data = json.load(f)
+                    async with aiofiles.open(char_file, "r", encoding="utf-8") as f:
+                        content = await f.read()
+                        char_data = json.loads(content)
                     if not characters_data["protagonist"]:
                         characters_data["protagonist"] = char_data
                     else:
                         characters_data["supporting_characters"].append(char_data)
-            
+
             generator = OutlineGenerator(project_id)
-            
+
             yield {"event": "start", "data": json.dumps({"message": "开始生成大纲..."}, ensure_ascii=False)}
-            
+
             async for event in generator.generate_stream(
                 project_meta=project_meta,
                 bible_data=bible_data,
-                characters_data=characters_data
+                characters_data=characters_data,
+                temperature=temperature
             ):
                 event_type = event.get("type", "message")
                 if event_type == "progress":
@@ -749,13 +771,13 @@ async def stream_generate_outline(project_id: str, request: Request):
                     yield {"event": "complete", "data": json.dumps({"message": event.get("message", ""), "data": event.get("data", {})}, ensure_ascii=False)}
                 elif event_type == "error":
                     yield {"event": "error", "data": json.dumps({"error": event.get("error", "未知错误")}, ensure_ascii=False)}
-            
+
             yield {"event": "done", "data": json.dumps({"message": "流式传输完成"})}
-            
+
         except Exception as e:
             logger.error(f"流式生成大纲失败: {e}")
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
-    
+
     return EventSourceResponse(event_generator())
 
 
@@ -768,7 +790,7 @@ async def get_chapter_plan(project_id: str, chapter_num: int):
     """获取章节规划"""
     try:
         story_db = StoryDB(project_id)
-        plan = story_db.get_chapter_plan(chapter_num)
+        plan = await story_db.get_chapter_plan(chapter_num)
         
         if not plan:
             raise HTTPException(status_code=404, detail="章节规划不存在")
@@ -809,25 +831,43 @@ async def write_scene(project_id: str, chapter_num: int, scene_index: int):
 
 
 @app.get("/api/projects/{project_id}/stream/{chapter_num}/{scene_index}")
-async def stream_scene(project_id: str, chapter_num: int, scene_index: int):
+async def stream_scene(project_id: str, chapter_num: int, scene_index: int, request: Request, temperature: float = 0.75):
     """
-    SSE 接口：流式接收生成内容
+    SSE 接口：流式写作场景
     
-    实际生成过程在此接口中执行，通过 SSE 实时推送 token
+    使用 EventSourceResponse 提供规范的 SSE 流式输出，
+    支持打字机效果和实时进度推送。
+    
+    事件类型：
+    - start: 开始生成
+    - token: 文本片段（打字机效果）
+    - progress: 进度信息
+    - scene_complete: 场景完成
+    - done: 流结束
+    - error: 错误信息
     """
+    workspace_path = Path("workspace") / project_id
+    
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+    
     async def event_generator():
         try:
             # 读取章节规划
             story_db = StoryDB(project_id)
-            chapter_plan_data = story_db.get_chapter_plan(chapter_num)
+            chapter_plan_data = await story_db.get_chapter_plan(chapter_num)
             
             if not chapter_plan_data:
-                yield f"data: {json.dumps({'type': 'error', 'data': {'message': '章节规划不存在'}})}\n\n"
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"message": "章节规划不存在，请先生成章节规划"}, ensure_ascii=False)
+                }
                 return
             
-            # 构建 ChapterPlan 和 ScenePlan
+            # 构建 ChapterPlan
             chapter_plan = ChapterPlan(**chapter_plan_data)
             
+            # 查找对应场景
             scene_plan_data = None
             for scene in chapter_plan_data.get("scenes", []):
                 if scene.get("scene_index") == scene_index:
@@ -835,41 +875,82 @@ async def stream_scene(project_id: str, chapter_num: int, scene_index: int):
                     break
             
             if not scene_plan_data:
-                yield f"data: {json.dumps({'type': 'error', 'data': {'message': '场景不存在'}})}\n\n"
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"message": f"场景 {scene_index} 不存在"}, ensure_ascii=False)
+                }
                 return
             
             scene_plan = ScenePlan(**scene_plan_data)
             
             # 发送开始事件
-            yield f"data: {json.dumps({'type': 'scene_start', 'data': {'scene_index': scene_index, 'intent': scene_plan.intent}})}\n\n"
+            yield {
+                "event": "start",
+                "data": json.dumps({
+                    "scene_index": scene_index,
+                    "intent": scene_plan.intent,
+                    "target_word_count": scene_plan.target_word_count,
+                    "pov_character": scene_plan.pov_character
+                }, ensure_ascii=False)
+            }
             
-            # 创建 Writer 并生成
+            # 创建 Writer 并流式生成
             writer = Writer(project_id)
             
             full_text = ""
+            token_count = 0
+            
             async for token in writer.write_scene_stream(
                 scene_plan=scene_plan,
-                chapter_plan=chapter_plan
+                chapter_plan=chapter_plan,
+                temperature=temperature
             ):
                 full_text += token
-                # SSE 格式：data: {...}\n\n
-                yield f"data: {json.dumps({'type': 'token', 'data': token})}\n\n"
+                token_count += 1
+                
+                # 每50个token发送一次进度（减少网络开销）
+                if token_count % 50 == 0:
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps({
+                            "token_count": token_count,
+                            "char_count": len(full_text)
+                        }, ensure_ascii=False)
+                    }
+                
+                # 发送文本片段（打字机效果）
+                yield {
+                    "event": "token",
+                    "data": json.dumps({"content": token}, ensure_ascii=False)
+                }
             
             # 发送完成事件
-            yield f"data: {json.dumps({'type': 'scene_complete', 'data': {'scene_index': scene_index, 'word_count': len(full_text)}})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            yield {
+                "event": "scene_complete",
+                "data": json.dumps({
+                    "scene_index": scene_index,
+                    "word_count": len(full_text),
+                    "token_count": token_count
+                }, ensure_ascii=False)
+            }
+            
+            # 发送结束事件
+            yield {
+                "event": "done",
+                "data": json.dumps({"message": "流式传输完成"}, ensure_ascii=False)
+            }
             
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'data': {'message': str(e)}})}\n\n"
+            logger.error(f"流式写作失败: {e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": str(e)}, ensure_ascii=False)
+            }
     
-    return StreamingResponse(
+    return EventSourceResponse(
         event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+        ping=15,  # 每15秒发送ping保持连接
+        ping_message_factory=lambda: {"event": "ping", "data": "keepalive"}
     )
 
 
@@ -880,7 +961,7 @@ async def confirm_chapter(project_id: str, chapter_num: int):
         story_db = StoryDB(project_id)
         
         # 合并所有场景为章节完稿
-        draft = story_db.get_chapter_draft(chapter_num)
+        draft = await story_db.get_chapter_draft(chapter_num)
         
         if not draft or "scenes" not in draft:
             raise HTTPException(status_code=404, detail="章节草稿不存在")
@@ -892,30 +973,31 @@ async def confirm_chapter(project_id: str, chapter_num: int):
         # 生成摘要（简化处理，实际应调用小模型）
         summary = f"第{chapter_num}章，共{len(scenes)}个场景，约{len(full_text)}字"
         
-        # 保存完稿
-        chapter_final = {
-            "chapter_number": chapter_num,
-            "title": draft.get("title", f"第{chapter_num}章"),
-            "full_text": full_text,
-            "word_count": len(full_text),
-            "scene_texts": [scene.get("text", "") for scene in scenes],
-            "summary": summary,
-            "confirmed_at": datetime.now().isoformat()
-        }
+        from core.schemas import ChapterFinal
+        chapter_final_obj = ChapterFinal(
+            chapter_number=chapter_num,
+            title=draft.get("title", f"第{chapter_num}章"),
+            full_text=full_text,
+            word_count=len(full_text),
+            scene_texts=[scene.get("text", "") for scene in scenes],
+            summary=summary,
+            confirmed_at=datetime.now().isoformat()
+        )
         
-        story_db.save_chapter_final(chapter_num, chapter_final)
+        await story_db.save_chapter_final(chapter_final_obj)
         
         # 更新项目当前章节
         workspace_path = Path("workspace") / project_id
         meta_path = workspace_path / "project_meta.json"
         
-        with open(meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
+            content = await f.read()
+            meta = json.loads(content)
         
         meta["current_chapter"] = max(meta.get("current_chapter", 0), chapter_num)
         
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
+        async with aiofiles.open(meta_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(meta, ensure_ascii=False, indent=2))
         
         return {
             "success": True,
@@ -936,7 +1018,7 @@ async def edit_scene(project_id: str, chapter_num: int, scene_index: int, conten
         story_db = StoryDB(project_id)
         
         # 获取现有草稿
-        draft = story_db.get_chapter_draft(chapter_num)
+        draft = await story_db.get_chapter_draft(chapter_num)
         
         if not draft:
             raise HTTPException(status_code=404, detail="章节草稿不存在")
@@ -951,7 +1033,7 @@ async def edit_scene(project_id: str, chapter_num: int, scene_index: int, conten
                 break
         
         # 保存
-        story_db.save_chapter_draft(chapter_num, draft)
+        await story_db.save_chapter_draft(chapter_num, draft)
         
         return {"success": True, "message": "场景已更新"}
         
@@ -971,7 +1053,7 @@ async def get_bible(project_id: str):
     try:
         bible_db = BibleDB(project_id)
         # 修复：传入key参数 "bible"
-        bible = bible_db.load("bible")
+        bible = await bible_db.load("bible")
         if not bible:
             return {"error": "Bible 不存在", "message": "请先生成 Bible"}
         return bible
@@ -984,7 +1066,7 @@ async def get_characters(project_id: str):
     """获取人物列表"""
     try:
         character_db = CharacterDB(project_id)
-        characters = character_db.list_all_characters()
+        characters = await character_db.list_all_characters()
         return {"characters": characters}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取人物列表失败: {str(e)}")
@@ -995,7 +1077,7 @@ async def get_character(project_id: str, char_id: str):
     """获取单个人物详情"""
     try:
         character_db = CharacterDB(project_id)
-        character = character_db.get_character_by_id(char_id)
+        character = await character_db.get_character_by_id(char_id)
         
         if not character:
             raise HTTPException(status_code=404, detail="人物不存在")
@@ -1013,7 +1095,7 @@ async def get_foreshadowing(project_id: str):
     """获取伏笔列表"""
     try:
         foreshadowing_db = ForeshadowingDB(project_id)
-        items = foreshadowing_db.list_all_foreshadowing()
+        items = await foreshadowing_db.list_all_foreshadowing()
         return {"foreshadowing": items}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取伏笔列表失败: {str(e)}")
@@ -1024,7 +1106,7 @@ async def get_outline(project_id: str):
     """获取大纲"""
     try:
         story_db = StoryDB(project_id)
-        outline = story_db.get_outline()
+        outline = await story_db.get_outline()
         return outline if outline else {}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取大纲失败: {str(e)}")

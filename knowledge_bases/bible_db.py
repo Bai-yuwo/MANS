@@ -41,9 +41,9 @@ class BibleDB(BaseDB):
         """
         return self.append("world_rules", rule.model_dump())
     
-    def get_rules(self, category: str = None) -> list[WorldRule]:
+    async def get_rules(self, category: str = None) -> list[WorldRule]:
         """
-        获取世界规则列表
+        获取世界规则列表（异步）
         
         Args:
             category: 分类筛选（可选）
@@ -51,7 +51,7 @@ class BibleDB(BaseDB):
         Returns:
             WorldRule 对象列表
         """
-        data = self.load("world_rules") or {}
+        data = await self.load("world_rules") or {}
         items = data.get("items", [])
         
         rules = []
@@ -66,9 +66,9 @@ class BibleDB(BaseDB):
         
         return rules
     
-    def get_rule_by_id(self, rule_id: str) -> WorldRule | None:
+    async def get_rule_by_id(self, rule_id: str) -> WorldRule | None:
         """
-        根据 ID 获取世界规则
+        根据 ID 获取世界规则（异步）
         
         Args:
             rule_id: 规则 ID
@@ -76,7 +76,7 @@ class BibleDB(BaseDB):
         Returns:
             WorldRule 对象，不存在则返回 None
         """
-        rules = self.get_rules()
+        rules = await self.get_rules()
         for rule in rules:
             if rule.id == rule_id:
                 return rule

@@ -35,6 +35,90 @@ class BibleGenerator(BaseGenerator):
     def _get_generator_name(self) -> str:
         return "BibleGenerator"
     
+    def get_output_schema(self) -> dict:
+        """返回 Bible 生成的 JSON Schema"""
+        return {
+            "name": "bible_output",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "world_name": {"type": "string"},
+                    "world_description": {"type": "string"},
+                    "combat_system": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "realms": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            },
+                            "breakthrough_conditions": {
+                                "type": "object",
+                                "additionalProperties": {"type": "string"}
+                            },
+                            "special_abilities": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            },
+                            "power_ceiling": {"type": "string"}
+                        },
+                        "required": ["name", "realms", "breakthrough_conditions", "special_abilities", "power_ceiling"]
+                    },
+                    "world_rules": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "category": {"type": "string"},
+                                "content": {"type": "string"},
+                                "importance": {"type": "string"}
+                            },
+                            "required": ["content"]
+                        }
+                    },
+                    "geography": {
+                        "type": "object",
+                        "properties": {
+                            "major_regions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "description": {"type": "string"},
+                                        "important_locations": {
+                                            "type": "array",
+                                            "items": {"type": "string"}
+                                        }
+                                    },
+                                    "required": ["name", "description"]
+                                }
+                            }
+                        },
+                        "required": ["major_regions"]
+                    },
+                    "factions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "type": {"type": "string"},
+                                "power_level": {"type": "string"},
+                                "description": {"type": "string"}
+                            },
+                            "required": ["name", "description"]
+                        }
+                    },
+                    "history_notes": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    }
+                },
+                "required": ["world_name", "world_description", "combat_system", "world_rules", "geography", "factions"]
+            }
+        }
+    
     def _build_prompt(self, project_meta: ProjectMeta, **kwargs) -> str:
         """
         构建 Bible 生成 prompt
@@ -262,7 +346,7 @@ class BibleGenerator(BaseGenerator):
         }
         
         # 修复：传入key参数 "bible"
-        bible_db.save("bible", bible_data)
+        await bible_db.save("bible", bible_data)
         logger.info(f"Bible 已保存到知识库 - 项目: {self.project_id}")
     
     async def _vectorize_result(self, result: dict) -> None:

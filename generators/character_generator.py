@@ -35,6 +35,108 @@ class CharacterGenerator(BaseGenerator):
     def _get_generator_name(self) -> str:
         return "CharacterGenerator"
     
+    def get_output_schema(self) -> dict:
+        """返回人物生成的 JSON Schema"""
+        return {
+            "name": "character_output",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "protagonist": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "aliases": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            },
+                            "appearance": {"type": "string"},
+                            "personality_core": {"type": "string"},
+                            "voice_keywords": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            },
+                            "background": {"type": "string"},
+                            "current_location": {"type": "string"},
+                            "cultivation": {
+                                "type": "object",
+                                "properties": {
+                                    "realm": {"type": "string"},
+                                    "stage": {"type": "string"},
+                                    "combat_power_estimate": {"type": "string"}
+                                },
+                                "required": ["realm", "stage", "combat_power_estimate"]
+                            },
+                            "current_emotion": {"type": "string"},
+                            "active_goals": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            },
+                            "core_contradictions": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            },
+                            "weaknesses_and_fears": {"type": "string"}
+                        },
+                        "required": ["name", "appearance", "personality_core", "background", "current_location", "cultivation"]
+                    },
+                    "supporting_characters": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "aliases": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                },
+                                "appearance": {"type": "string"},
+                                "personality_core": {"type": "string"},
+                                "voice_keywords": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                },
+                                "background": {"type": "string"},
+                                "current_location": {"type": "string"},
+                                "cultivation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "realm": {"type": "string"},
+                                        "stage": {"type": "string"},
+                                        "combat_power_estimate": {"type": "string"}
+                                    },
+                                    "required": ["realm", "stage", "combat_power_estimate"]
+                                },
+                                "current_emotion": {"type": "string"},
+                                "active_goals": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                },
+                                "relationship_to_protagonist": {"type": "string"},
+                                "role_in_story": {"type": "string"}
+                            },
+                            "required": ["name", "appearance", "personality_core", "background", "current_location", "cultivation"]
+                        }
+                    },
+                    "relationships": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source": {"type": "string"},
+                                "target": {"type": "string"},
+                                "relation_type": {"type": "string"},
+                                "current_sentiment": {"type": "string"},
+                                "description": {"type": "string"}
+                            },
+                            "required": ["source", "target", "relation_type", "description"]
+                        }
+                    }
+                },
+                "required": ["protagonist", "supporting_characters", "relationships"]
+            }
+        }
+    
     def _build_prompt(self, project_meta: ProjectMeta, bible_data: dict, **kwargs) -> str:
         """
         构建人物生成 prompt
@@ -279,7 +381,7 @@ class CharacterGenerator(BaseGenerator):
             last_updated_chapter=0
         )
         
-        character_db.save_character(protagonist_card)
+        await character_db.save_character(protagonist_card)
         
         # 保存配角
         supporting_chars = result.get("supporting_characters", [])
@@ -311,7 +413,7 @@ class CharacterGenerator(BaseGenerator):
                 last_updated_chapter=0
             )
             
-            character_db.save_character(char_card)
+            await character_db.save_character(char_card)
         
         # 保存关系网
         relationships = result.get("relationships", [])
@@ -328,7 +430,7 @@ class CharacterGenerator(BaseGenerator):
                     current_sentiment=rel_data.get("current_sentiment", "中立"),
                     history_notes=[rel_data.get("description", "")]
                 )
-                character_db.add_relationship(source_id, relationship)
+                await character_db.add_relationship(source_id, relationship)
     
     async def _vectorize_result(self, result: dict) -> None:
         """

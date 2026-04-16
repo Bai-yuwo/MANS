@@ -12,9 +12,12 @@ core/update_extractor.py
 
 import asyncio
 import json
+import re
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
+
+import aiofiles
 
 from core.config import get_config
 from core.schemas import (
@@ -25,6 +28,41 @@ from core.llm_client import LLMClient, quick_call
 from core.logging_config import get_logger, log_exception
 
 logger = get_logger('core.update_extractor')
+
+
+# ============================================================
+# JSON 清洗工具函数
+# ============================================================
+
+def clean_json_response(response: str) -> str:
+    """
+    清洗 LLM 返回的 JSON 字符串
+    
+    处理以下常见问题：
+    1. Markdown 代码块包裹：```json { ... } ```
+    2. 前后空白字符
+    3. BOM 字符
+    
+    Args:
+        response: LLM 原始响应
+    
+    Returns:
+        清洗后的纯 JSON 字符串
+    """
+    # 去除前后空白
+    text = response.strip()
+    
+    # 去除 BOM 字符
+    text = text.lstrip('\ufeff')
+    
+    # 去除 Markdown 代码块包裹
+    # 匹配 ```json 或 ``` 开头，到 ``` 结尾
+    pattern = r'^```(?:json)?\s*\n?(.*?)\n?```\s*$'
+    match = re.match(pattern, text, re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+    
+    return text
 
 
 class UpdateExtractor:
@@ -255,15 +293,103 @@ class UpdateExtractor:
         
         try:
             # 调用 Extract 模型
-            response = await quick_call(
+            from core.llm_client import LLMClient
+            client = LLMClient()
+            
+            # 定义 JSON Schema
+            extraction_schema = {
+                "name": "extraction_output",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "character_updates": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "character_id": {"type": "string"},
+                                    "character_name": {"type": "string"},
+                                    "location_change": {"type": "string"},
+                                    "cultivation_change": {"type": "string"},
+                                    "emotion_change": {"type": "string"},
+                                    "goal_updates": {
+                                        "type": "array",
+                                        "items": {"type": "string"}
+                                    },
+                                    "relationship_updates": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "target": {"type": "string"},
+                                                "change": {"type": "string"}
+                                            },
+                                            "required": ["target", "change"]
+                                        }
+                                    }
+                                },
+                                "required": ["character_id", "character_name"]
+                            }
+                        },
+                        "new_world_rules": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "category": {"type": "string"},
+                                    "content": {"type": "string"},
+                                    "importance": {"type": "string"}
+                                },
+                                "required": ["content"]
+                            }
+                        },
+                        "foreshadowing_status_changes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "new_status": {"type": "string"},
+                                    "notes": {"type": "string"}
+                                },
+                                "required": ["id", "new_status"]
+                            }
+                        },
+                        "new_foreshadowing": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "trigger_range": {
+                                        "type": "array",
+                                        "items": {"type": "integer"}
+                                    },
+                                    "urgency": {"type": "string"}
+                                },
+                                "required": ["type", "description"]
+                            }
+                        },
+                        "implicit_issues": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        }
+                    },
+                    "required": ["character_updates", "new_world_rules", "foreshadowing_status_changes", "new_foreshadowing", "implicit_issues"]
+                }
+            }
+            
+            response_obj = await client.call_with_retry(
                 role="extract",
                 prompt=extraction_prompt,
                 max_tokens=2000,
-                response_format="json"
+                response_format="json_schema",
+                json_schema=extraction_schema
             )
             
             # 解析 JSON 响应
-            data = json.loads(response)
+            data = json.loads(response_obj.content)
             
             # 构建 ExtractedUpdates
             updates = ExtractedUpdates(
@@ -414,15 +540,16 @@ class UpdateExtractor:
             # 读取现有记录
             records = []
             if record_path.exists():
-                with open(record_path, 'r', encoding='utf-8') as f:
-                    records = json.load(f)
+                async with aiofiles.open(record_path, 'r', encoding='utf-8') as f:
+                    content = await f.read()
+                    records = json.loads(content)
             
             # 添加新记录
             records.append(updates.model_dump())
             
             # 保存
-            with open(record_path, 'w', encoding='utf-8') as f:
-                json.dump(records, f, ensure_ascii=False, indent=2)
+            async with aiofiles.open(record_path, 'w', encoding='utf-8') as f:
+                await f.write(json.dumps(records, ensure_ascii=False, indent=2))
                 
         except Exception as e:
             logger.error(f"保存更新记录失败: {e}")

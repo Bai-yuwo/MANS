@@ -30,6 +30,7 @@ wheels/
 .vscode/
 .idea/
 .qoder/
+.cache/
 *.swp
 *.swo
 *~

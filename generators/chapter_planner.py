@@ -195,7 +195,8 @@ class ChapterPlanner(BaseGenerator):
 
 - 只输出 JSON，不要输出任何其他内容
 - 不要使用 markdown 代码块包裹
-- 确保 JSON 格式正确，所有字符串使用双引号
+- 确保 JSON 格式正确，所有字符串最外层使用双引号
+- **JSON 字符串值内部如需引号，必须使用英文单引号（'），严禁使用双引号或中文引号**
 - scene_index 从 0 开始连续编号
 - present_characters 必须包含 pov_character
 - target_word_count 建议 800-2000 之间

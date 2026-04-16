@@ -196,7 +196,8 @@ class ArcPlanner(BaseGenerator):
 
 - 只输出 JSON，不要输出任何其他内容
 - 不要使用 markdown 代码块包裹
-- 确保 JSON 格式正确，所有字符串使用双引号
+- 确保 JSON 格式正确，所有字符串最外层使用双引号
+- **JSON 字符串值内部如需引号，必须使用英文单引号（'），严禁使用双引号或中文引号**
 - emotional_curve 和 chapter_plans 数组长度应与章节数匹配
 - 伏笔的 chapter 必须在弧线范围内
 - 因果链应连接弧线内的连续章节

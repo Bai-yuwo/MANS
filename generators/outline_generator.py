@@ -8,10 +8,10 @@ generators/outline_generator.py
 
 from typing import Any
 
-from generators.base_generator import BaseGenerator, ValidationError
 from core.schemas import ProjectMeta
-from knowledge_bases.story_db import StoryDB
+from generators.base_generator import BaseGenerator, ValidationError
 from knowledge_bases.foreshadowing_db import ForeshadowingDB
+from knowledge_bases.story_db import StoryDB
 
 
 class OutlineGenerator(BaseGenerator):
@@ -94,104 +94,162 @@ class OutlineGenerator(BaseGenerator):
 
 ## 输出要求
 
-请输出严格的 JSON 格式，包含完整的三幕式大纲：
+**重要**：这是全局大纲，只需要大的发展方向和关键节点。不要生成具体情节、场景或详细事件。
+
+请输出严格的 JSON 格式：
 
 ```json
 {{
   "three_act_structure": {{
     "act1": {{
-      "name": "第一幕名称",
+      "name": "第一幕名称（简洁，如'觉醒与启程'）",
       "chapter_range": [1, {max(1, target_chapters // 4)}],
-      "description": "第一幕整体描述（50-100字）",
-      "key_events": ["事件1", "事件2", "事件3"]
+      "description": "这一阶段的发展方向（10-20字），不是详细情节",
+      "key_directions": ["方向1", "方向2"]
     }},
     "act2a": {{
       "name": "第二幕上名称",
       "chapter_range": [{max(1, target_chapters // 4) + 1}, {target_chapters // 2}],
-      "description": "第二幕上描述",
-      "key_events": ["事件1", "事件2", "事件3"]
+      "description": "这一阶段的发展方向（10-20字）",
+      "key_directions": ["方向1", "方向2"]
     }},
     "act2b": {{
       "name": "第二幕下名称",
       "chapter_range": [{target_chapters // 2 + 1}, {target_chapters * 3 // 4}],
-      "description": "第二幕下描述",
-      "key_events": ["事件1", "事件2", "事件3"]
+      "description": "这一阶段的发展方向（10-20字）",
+      "key_directions": ["方向1", "方向2"]
     }},
     "act3": {{
       "name": "第三幕名称",
       "chapter_range": [{target_chapters * 3 // 4 + 1}, {target_chapters}],
-      "description": "第三幕描述",
-      "key_events": ["事件1", "事件2", "事件3"]
+      "description": "这一阶段的发展方向（10-20字）",
+      "key_directions": ["方向1", "方向2"]
     }}
   }},
   "main_conflict": {{
-    "central_conflict": "核心冲突描述（主角 vs 什么/谁）",
-    "protagonist_goal": "主角的核心目标",
-    "antagonist_force": "对抗力量描述",
-    "stakes": "失败的代价/风险"
+    "central_conflict": "一句话概括核心冲突（主角 vs 什么/谁）",
+    "protagonist_goal": "一句话概括主角的核心目标",
+    "antagonist_force": "一句话概括对抗力量",
+    "stakes": "一句话概括失败的代价"
+  }},
+  "story_pattern": {{
+    "growth_curve": "steady_rise|up_and_down|power_fantasy|late_bloom",
+    "rhythm_mode": "step_by_step|crouching_tiger|underdog_hero|last_stand",
+    "highlight_density": "high|medium|low",
+    "description": "一句话描述本故事的节奏特点（如'扮猪吃虎，装逼打脸'）"
   }},
   "turning_points": [
     {{
-      "name": "转折点名称",
+      "name": "转折点名称（简洁）",
       "chapter": 章节数,
-      "description": "转折点描述",
-      "impact": "对故事的影响"
+      "description": "一句话描述转折内容"
     }}
   ],
   "ending": {{
-    "direction": "结局方向描述（可模糊）",
-    "protagonist_arc": "主角的成长弧线",
-    "resolution_type": "胜利/悲剧/ bittersweet/开放式"
+    "direction": "结局方向（一句话，可模糊）",
+    "resolution_type": "胜利/悲剧/bittersweet/开放式"
   }},
   "foreshadowing_list": [
     {{
-      "type": "plot|character|world|emotional",
-      "description": "伏笔内容描述",
-      "planted_act": "埋设幕次（act1/act2a/act2b）",
-      "trigger_act": "触发幕次",
+      "type": "plot|character|world",
+      "description": "一句话伏笔描述",
+      "planted_act": "埋设幕次",
       "resolution_act": "解决幕次",
-      "importance": "critical|major|minor"
+      "importance": "critical|major"
     }}
   ]
 }}
 ```
 
+## 剧情风格控制
+
+**基调**：`{project_meta.tone}`
+
+请根据上述基调，在大纲中体现相应的节奏模式：
+
+| 基调关键词 | 节奏模式 | 大纲特点 |
+|-----------|---------|---------|
+| 热血/爽文 | 一路开挂/扮猪吃虎 | 主角快速成长，每次挫折都是装逼机会 |
+| 成长/养成 | 稳扎稳打 | 每步成长都有代价，稳中求进 |
+| 跌宕起伏 | 大起大落 | 有高潮有低谷，情绪波动大 |
+| 虐心/悲剧 | 先甜后虐 | 前期顺利后期反转，结局可能不好 |
+| 悬疑/烧脑 | 真相递进 | 每次突破都揭示新真相，高潮解密 |
+| 轻松/日常 | 张弛有度 | 有热血也有日常，劳逸结合 |
+
+### 不同基调的大纲体现
+
+**热血/扮猪吃虎基调**：
+- 第一幕就展示主角潜力（被嘲笑）
+- 第二幕多次"打脸"名场面
+- 第三幕碾压式结局
+
+**稳扎稳打基调**：
+- 每阶段成长都有明确代价和积累
+- 盟友和敌人都有自己完整的成长线
+- 结局是量变到质变的自然结果
+
+**跌宕起伏基调**：
+- 第一幕末尾要有"跌"
+- 第二幕上要有"起"
+- 第二幕下要有更低谷
+- 第三幕最终"起"
+
+请根据 `{project_meta.tone}` 选择合适的节奏模式，在大纲中体现。
+
 ## 生成原则
 
-### 三幕结构原则
-1. **第一幕（约25%）**：建立世界、介绍人物、触发事件、主角踏上旅程
-2. **第二幕上（约25%）**：上升行动、遇到盟友和敌人、第一次重大挫折
-3. **第二幕下（约25%）**：深入对抗、揭示真相、最低点、转折准备
-4. **第三幕（约25%）**：最终对抗、高潮、结局、人物归宿
+### 宏观视角
+1. **方向而非情节**：描述"这一阶段主角要做什么/面对什么"，不是"具体发生什么事"
+2. **人物关系变化**：关注人物间关系的大方向（结盟/对立/背叛），不是具体事件
+3. **势力格局演变**：关注大势力间的冲突趋势，不是具体战役
 
-### 转折点设计原则
-1. **数量**：5-10个关键转折点
-2. **分布**：每个幕至少1-2个，高潮前必须有重大转折
-3. **类型**：包含正向转折（突破、发现）和负向转折（挫折、背叛）
-4. **影响**：每个转折点必须显著改变故事走向或人物关系
+### 内容精简
+1. **每幕 2 个方向**：只列出最重要的 2 个发展方向
+2. **转折点 3-5 个**：只列出全局关键转折点
+3. **伏笔 3-5 条**：只列出主线伏笔
+4. **描述要短**：每个描述 10-20 字，越简短越好
 
-### 伏笔设计原则
-1. **数量**：5-8条主线伏笔
-2. **类型分布**：
-   - 剧情伏笔（plot）：3-4条，主线相关
-   - 人物伏笔（character）：1-2条，人物命运相关
-   - 世界伏笔（world）：1-2条，世界观揭秘相关
-   - 情感伏笔（emotional）：0-1条，情感线相关
-3. **时间跨度**：早期埋设的伏笔应在后期解决
-4. **重要性**：至少2条 critical 级别的重要伏笔
+### 不同风格的 key_directions 示例
 
-### 核心冲突原则
-1. **多层次**：外在冲突（对抗势力）+ 内在冲突（主角内心）
-2. **升级**：冲突强度随章节推进而升级
-3. **个人化**：冲突必须与主角的个人目标和恐惧相关
+**扮猪吃虎（热血）**：
+- act1: "展现潜力但被低估"、"获得第一个打脸机会"
+- act2a: "多次装逼成功"、"积累名气"
+- act2b: "遭遇真正强敌"、"被打脸后反转"
+- act3: "终极装逼"、"碾压所有质疑者"
+
+**稳扎稳打（成长）**：
+- act1: "夯实基础"、"建立人脉"
+- act2a: "稳步提升境界"、"经营势力"
+- act2b: "遭遇瓶颈期"、"寻找突破契机"
+- act3: "水到渠成的质变"
+
+**跌宕起伏（虐心）**：
+- act1: "前期顺风顺水"
+- act2a: "遭遇重大挫折，跌入谷底"
+- act2b: "艰难恢复，再次跌入更低谷"
+- act3: "绝地反击，最终胜利或悲剧结局"
+
+### 示例对比
+
+❌ 错误（太细节）：
+- "主角在下山途中遭遇埋伏，与神秘黑衣人激战，身受重伤后被路过的老者所救"
+
+❌ 错误（太平淡）：
+- "主角开始修炼"
+- "主角遇到一个朋友"
+
+✅ 正确（符合风格的方向）：
+- "扮猪吃虎基调：第一幕就展示主角潜力但被嘲笑"（热血）
+- "稳步积累：每一境界都有明确代价和收获"（成长）
+- "跌入谷底：最信任的人背叛"（虐心）
 
 ## 重要提示
 
 - 只输出 JSON，不要输出任何其他内容
 - 不要使用 markdown 代码块包裹
-- 确保 JSON 格式正确，所有字符串使用双引号
+- **JSON 字符串要极简，每项不超过 20 字**
+- **JSON 字符串值内部如需引号，必须使用英文单引号（'）**
 - 章节范围必须连续且不重叠
-- 转折点章节必须在对应幕的范围内
 """
         return prompt
     
@@ -252,9 +310,9 @@ class OutlineGenerator(BaseGenerator):
                     stage="validation"
                 )
             
-            if "key_events" not in act_data or not act_data["key_events"]:
+            if "key_directions" not in act_data or not act_data["key_directions"]:
                 raise ValidationError(
-                    f"{act} 缺少关键事件",
+                    f"{act} 缺少发展方向",
                     stage="validation"
                 )
         
@@ -292,11 +350,38 @@ class OutlineGenerator(BaseGenerator):
                 stage="validation"
             )
         
+        # 验证剧情风格
+        story_pattern = result.get("story_pattern", {})
+        if not story_pattern:
+            raise ValidationError(
+                "缺少 story_pattern（剧情风格控制）",
+                stage="validation"
+            )
+        
+        valid_growth = ["steady_rise", "up_and_down", "power_fantasy", "late_bloom"]
+        if story_pattern.get("growth_curve") not in valid_growth:
+            raise ValidationError(
+                f"growth_curve 必须是 {valid_growth} 之一",
+                stage="validation"
+            )
+        
+        valid_rhythm = ["step_by_step", "crouching_tiger", "underdog_hero", "last_stand"]
+        if story_pattern.get("rhythm_mode") not in valid_rhythm:
+            raise ValidationError(
+                f"rhythm_mode 必须是 {valid_rhythm} 之一",
+                stage="validation"
+            )
+        
         # 验证转折点
         turning_points = result.get("turning_points", [])
         if len(turning_points) < 3:
             raise ValidationError(
                 f"转折点数量不足: 只有 {len(turning_points)} 个，至少需要 3 个",
+                stage="validation"
+            )
+        if len(turning_points) > 5:
+            raise ValidationError(
+                f"转折点数量过多: 有 {len(turning_points)} 个，最多 5 个（保持宏观视角）",
                 stage="validation"
             )
         
@@ -305,6 +390,11 @@ class OutlineGenerator(BaseGenerator):
         if len(foreshadowing) < 3:
             raise ValidationError(
                 f"伏笔数量不足: 只有 {len(foreshadowing)} 个，至少需要 3 个",
+                stage="validation"
+            )
+        if len(foreshadowing) > 5:
+            raise ValidationError(
+                f"伏笔数量过多: 有 {len(foreshadowing)} 个，最多 5 个（只列主线伏笔）",
                 stage="validation"
             )
         
@@ -365,7 +455,7 @@ class OutlineGenerator(BaseGenerator):
         for act_name, act_data in three_act.items():
             act_text = f"""{act_data.get('name', act_name)}
 {act_data.get('description', '')}
-关键事件：{'；'.join(act_data.get('key_events', []))}
+发展方向：{'；'.join(act_data.get('key_directions', []))}
 """
             await vector_store.upsert(
                 collection="outlines",

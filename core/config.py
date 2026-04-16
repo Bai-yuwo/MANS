@@ -102,6 +102,16 @@ class Config:
     ENABLE_VECTOR_SEARCH: bool = True
     
     # --------------------------------------------------------
+    # 向量存储配置
+    # --------------------------------------------------------
+    # 向量模型来源：local（本地 bge-m3）/ cloud（API 调用）
+    VECTOR_MODEL_SOURCE: str = "local"
+    # 本地向量模型：bge-m3 / m3e-base / text2vec-base
+    LOCAL_EMBED_MODEL: str = "bge-m3"
+    # 本地模型缓存目录
+    LOCAL_EMBED_CACHE_DIR: Optional[str] = None
+    
+    # --------------------------------------------------------
     # 日志配置
     # --------------------------------------------------------
     LOG_LEVEL: str = "INFO"
@@ -132,6 +142,10 @@ class Config:
         self.ENABLE_STREAMING = os.getenv("ENABLE_STREAMING", str(self.ENABLE_STREAMING)).lower() == "true"
         self.ENABLE_ASYNC_UPDATE = os.getenv("ENABLE_ASYNC_UPDATE", str(self.ENABLE_ASYNC_UPDATE)).lower() == "true"
         self.ENABLE_VECTOR_SEARCH = os.getenv("ENABLE_VECTOR_SEARCH", str(self.ENABLE_VECTOR_SEARCH)).lower() == "true"
+        
+        self.VECTOR_MODEL_SOURCE = os.getenv("VECTOR_MODEL_SOURCE", self.VECTOR_MODEL_SOURCE)
+        self.LOCAL_EMBED_MODEL = os.getenv("LOCAL_EMBED_MODEL", self.LOCAL_EMBED_MODEL)
+        self.LOCAL_EMBED_CACHE_DIR = os.getenv("LOCAL_EMBED_CACHE_DIR", self.LOCAL_EMBED_CACHE_DIR)
         
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", self.LOG_LEVEL)
         self.LOG_FILE = os.getenv("LOG_FILE", self.LOG_FILE)

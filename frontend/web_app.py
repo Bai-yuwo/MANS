@@ -106,7 +106,7 @@ async def create_project(request: CreateProjectRequest):
         (workspace_path / "characters").mkdir(parents=True)
         (workspace_path / "chapters").mkdir(parents=True)
         (workspace_path / "arcs").mkdir(parents=True)
-        (workspace_path / "vectors").mkdir(parents=True)
+        # vector_store 目录由 VectorStore 类自动创建，无需手动创建
         
         # 创建 ProjectMeta
         project_meta = ProjectMeta(

@@ -794,6 +794,7 @@ async function loadWritingInterface(projectId) {
         AppState.currentChapter = project.current_chapter || AppState.currentChapter || 1;
         localStorage.setItem('mans_current_chapter', String(AppState.currentChapter));
         await loadChapterPlan(projectId, AppState.currentChapter);
+        await loadExports();
     } catch (error) {
         console.error('加载写作界面失败:', error);
     }
@@ -1468,12 +1469,80 @@ async function confirmChapter() {
         );
 
         showMessage(`第${AppState.currentChapter}章已确认！字数: ${result.word_count}`);
+        // 刷新导出列表（完稿后会在 exports/ 生成只读 md）
+        await loadExports();
+
         AppState.currentChapter++;
         localStorage.setItem('mans_current_chapter', String(AppState.currentChapter));
         await loadChapterPlan(AppState.currentProject, AppState.currentChapter);
 
     } catch (error) {
         showMessage('确认章节失败: ' + error.message, 'error');
+    }
+}
+
+/**
+ * 加载已导出的文件列表
+ */
+async function loadExports() {
+    if (!AppState.currentProject) return;
+    const panel = document.getElementById('exports-panel');
+    panel.style.display = 'block';
+
+    try {
+        const data = await apiRequest(`/api/projects/${AppState.currentProject}/exports`);
+        if (!data.exports || data.exports.length === 0) {
+            panel.innerHTML = `
+                <div class="panel-empty" style="padding: 12px;">
+                    <p style="color: var(--text-secondary); font-size: 13px;">
+                        暂无已导出文件。确认完稿后，系统将自动生成只读发行版。
+                    </p>
+                </div>
+            `;
+            return;
+        }
+        const rows = data.exports.map(exp => `
+            <div class="export-item" onclick="viewExport('${escapeHtml(exp.filename)}')"
+                 style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;
+                        border-bottom:1px solid var(--bg-hover);cursor:pointer;"
+                 onmouseenter="this.style.background='var(--bg-hover)';"
+                 onmouseleave="this.style.background='transparent';"
+            >
+                <span>📄 ${escapeHtml(exp.filename)}</span>
+                <span style="color:var(--text-secondary);font-size:12px;">${exp.size} 字</span>
+            </div>
+        `).join('');
+        panel.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <strong style="font-size:14px;">已导出完稿</strong>
+                <button class="mans-btn sm" onclick="document.getElementById('exports-panel').style.display='none'">收起</button>
+            </div>
+            <div style="max-height:240px;overflow-y:auto;">${rows}</div>
+        `;
+    } catch (error) {
+        showMessage('加载导出列表失败: ' + error.message, 'error');
+    }
+}
+
+/**
+ * 查看导出的只读文件内容
+ */
+async function viewExport(filename) {
+    if (!AppState.currentProject) return;
+    try {
+        const data = await apiRequest(
+            `/api/projects/${AppState.currentProject}/exports/${encodeURIComponent(filename)}`
+        );
+        const html = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <span style="color:var(--warning);font-size:12px;">⚠ 只读发行版，任何修改均不会被系统同步</span>
+            </div>
+            <pre style="white-space:pre-wrap;background:var(--bg-dark);padding:12px;border-radius:6px;
+                        max-height:60vh;overflow-y:auto;line-height:1.8;font-size:14px;">${escapeHtml(data.content)}</pre>
+        `;
+        showModal(filename, html);
+    } catch (error) {
+        showMessage('读取导出文件失败: ' + error.message, 'error');
     }
 }
 
@@ -1914,7 +1983,6 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
             item.classList.add('active');
 
-            const panel = item.dataset.panel;
             if (panel) {
                 showPanel(panel + '-panel');
                 if (panel === 'arc' && AppState.currentProject) {
@@ -1954,6 +2022,8 @@ window.suggestArcDetail = suggestArcDetail;
 window.probeContext = probeContext;
 window.closeDynamicModal = closeDynamicModal;
 window.rewriteScene = rewriteScene;
+window.loadExports = loadExports;
+window.viewExport = viewExport;
 
 // ============================================
 // 弧线/章节规划 UI

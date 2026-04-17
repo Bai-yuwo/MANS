@@ -288,6 +288,15 @@ body {
     gap: 10px;
 }
 
+.exports-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--bg-hover);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 16px;
+    font-size: 13px;
+}
+
 .chapter-content {
     padding: 10px;
 }

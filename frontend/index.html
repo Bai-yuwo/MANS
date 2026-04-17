@@ -328,10 +328,12 @@
                     <div class="writing-header">
                         <h3>写作界面</h3>
                         <div class="writing-actions">
+                            <button id="view-exports-btn" class="mans-btn" onclick="loadExports()">导出列表</button>
                             <button id="view-kb-btn" class="mans-btn">查看知识库</button>
                             <button id="confirm-chapter-btn" class="mans-btn primary">确认本章</button>
                         </div>
                     </div>
+                    <div id="exports-panel" class="exports-panel" style="display:none;"></div>
                     <div id="chapter-plan-display" class="chapter-content">
                         <!-- 章节规划将动态加载 -->
                     </div>

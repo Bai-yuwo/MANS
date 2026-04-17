@@ -13,6 +13,7 @@ API 设计遵循文档第7章规范
 
 import asyncio
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -1474,8 +1475,33 @@ async def confirm_chapter(project_id: str, chapter_num: int):
         
         await story_db.save_chapter_final(chapter_final_obj)
 
-        # 更新项目当前章节
+        # ── 生成只读 TXT 发行版 ─────────────────────────────
         workspace_path = Path("workspace") / project_id
+        exports_dir = workspace_path / "exports"
+        exports_dir.mkdir(parents=True, exist_ok=True)
+
+        # 构建发行版文本（增加元信息头）
+        meta_info = f"""# {chapter_final_obj.title}
+
+> 第 {chapter_num} 章 | {len(scenes)} 个场景 | 约 {len(full_text)} 字
+> 确认时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+> 本文件由 MANS 系统自动生成，任何手动修改均不会被后端同步。
+> 如需修改正文，请在前端写作界面中使用「编辑」或「重写」功能。
+
+---
+
+"""
+        export_text = meta_info + full_text
+
+        # 清理文件名中的非法字符
+        safe_title = re.sub(r'[\\/:*?"<>|]', '_', chapter_final_obj.title)
+        export_filename = f"第{chapter_num}章_{safe_title}.md"
+        export_path = exports_dir / export_filename
+
+        async with aiofiles.open(export_path, 'w', encoding='utf-8') as f:
+            await f.write(export_text)
+
+        # 更新项目当前章节
         meta_path = workspace_path / "project_meta.json"
 
         async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
@@ -1508,6 +1534,59 @@ async def confirm_chapter(project_id: str, chapter_num: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"确认章节失败: {str(e)}")
+
+
+@app.get("/api/projects/{project_id}/exports")
+async def list_exports(project_id: str):
+    """列出项目所有已导出的文本文件"""
+    exports_dir = Path("workspace") / project_id / "exports"
+    if not exports_dir.exists():
+        return {"project_id": project_id, "exports": []}
+
+    exports = []
+    for file_path in sorted(exports_dir.iterdir()):
+        if file_path.is_file() and file_path.suffix in (".md", ".txt"):
+            exports.append({
+                "filename": file_path.name,
+                "chapter_number": _extract_chapter_number(file_path.name),
+                "size": file_path.stat().st_size,
+                "modified_at": datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
+            })
+    return {"project_id": project_id, "exports": exports}
+
+
+def _extract_chapter_number(filename: str) -> int | None:
+    """从导出文件名中提取章节号"""
+    match = re.search(r"第(\d+)章", filename)
+    return int(match.group(1)) if match else None
+
+
+@app.get("/api/projects/{project_id}/exports/{filename}")
+async def get_export(project_id: str, filename: str):
+    """获取/下载单个导出文件（纯文本内容，也可作为下载）"""
+    exports_dir = Path("workspace") / project_id / "exports"
+    file_path = exports_dir / filename
+
+    # 安全检查：确保文件在 exports 目录内
+    try:
+        file_path.resolve().relative_to(exports_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="非法路径")
+
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="导出文件不存在")
+
+    try:
+        async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+            content = await f.read()
+        return {
+            "filename": filename,
+            "content": content,
+            "size": len(content),
+            "is_readonly": True
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取导出文件失败: {e}")
 
 
 async def _sync_scene_to_vector_store(

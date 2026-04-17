@@ -1,14 +1,28 @@
+# MANS (Multi-Agent Novel System) 依赖列表
+# 安装命令: pip install -r requirements.txt
+
+# ===== Web 框架 =====
 fastapi>=0.100.0
 uvicorn>=0.23.0
-pydantic>=2.0.0
-openai>=1.0.0
-aiofiles>=23.2.1
-PyYAML>=6.0.1
-Jinja2>=3.1.2
-python-dotenv>=1.0.0
 sse-starlette>=1.6.0
-sentence-transformers>=2.2.0
+
+# ===== 数据校验与配置 =====
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+PyYAML>=6.0.1
+
+# ===== 模板引擎 =====
+Jinja2>=3.1.2
+
+# ===== 异步文件与HTTP =====
+aiofiles>=23.2.1
+aiohttp>=3.8.0
+
+# ===== LLM 客户端 =====
+openai>=1.0.0
+tiktoken>=0.5.0
+
+# ===== 向量存储与Embedding =====
 chromadb>=0.4.0
+sentence-transformers>=2.2.0
 torch>=2.0.0
-
-

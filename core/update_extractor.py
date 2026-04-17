@@ -233,17 +233,17 @@ class UpdateExtractor:
 输出严格的 JSON 格式，不要输出任何其他内容。
 
 场景背景：{scene_plan.intent}
-出场人物：{', '.join(scene_plan.present_characters)}
+计划出场人物：{', '.join(scene_plan.present_characters)}
 情绪基调：{scene_plan.emotional_tone}
 
-当前人物状态（用于对比）：
+当前人物状态（用于对比，仅限计划出场人物）：
 {json.dumps(current_characters, ensure_ascii=False, indent=2)}
 
 场景文本：
 {generated_text[:3000]}  # 限制长度避免超出 token 限制
 
 请提取以下信息：
-1. 人物状态变化（位置/修为/情绪/目标/关系）
+1. 人物状态变化（位置/修为/情绪/目标/关系）—— 重要：如果文本中出现了不在"计划出场人物"列表中的角色（例如路人、新登场的 NPC、意外出现的角色），也请一并提取其状态变化。
 2. 新发现或确认的世界规则
 3. 伏笔状态变化（planted→hinted 或 triggered 或 resolved）
 4. 新埋入的伏笔（如有）

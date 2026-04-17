@@ -87,10 +87,13 @@ class Writer:
             print(token, end="")
     """
     
+    # 类级缓存：所有 Writer 实例共享同一个 Jinja2 Environment
+    _template_env: Optional[Environment] = None
+
     def __init__(self, project_id: str):
         """
         初始化 Writer
-        
+
         Args:
             project_id: 项目ID
         """
@@ -99,17 +102,19 @@ class Writer:
         self.llm_client = LLMClient()
         self.injection_engine: Optional[InjectionEngine] = None
         self.update_extractor: Optional[UpdateExtractor] = None
-        
+
         # 知识库引用（延迟初始化）
         self._story_db = None
-        
-        # 初始化 Jinja2 模板环境
-        self.template_env = Environment(
-            loader=FileSystemLoader("writer/prompts"),
-            trim_blocks=True,
-            lstrip_blocks=True
-        )
-        
+
+        # 复用类级缓存的 Jinja2 模板环境，避免重复磁盘 I/O
+        if Writer._template_env is None:
+            Writer._template_env = Environment(
+                loader=FileSystemLoader("writer/prompts"),
+                trim_blocks=True,
+                lstrip_blocks=True
+            )
+        self.template_env = Writer._template_env
+
         # 延迟初始化依赖
         self._initialized = False
     
@@ -423,6 +428,8 @@ class Writer:
         """
         保存场景草稿到文件
 
+        防止丢失更新：保存前重读最新草稿，只更新当前场景。
+
         Args:
             chapter_number: 章节编号
             scene_index: 场景索引
@@ -450,7 +457,7 @@ class Writer:
                 }
             }
 
-            # 读取现有章节草稿，追加或更新场景
+            # 重读最新草稿（防止并发写入导致丢失更新）
             chapter_draft = await self.story_db.get_chapter_draft(chapter_number)
             if chapter_draft and "scenes" in chapter_draft:
                 scenes = chapter_draft["scenes"]
@@ -470,7 +477,7 @@ class Writer:
                     "scenes": [scene_data]
                 }
 
-            # 保存到 story_db
+            # 保存到 story_db（BaseDB 会自动深度合并，进一步防止丢失更新）
             await self.story_db.save_chapter_draft(chapter_number, chapter_draft)
 
         except Exception as e:
@@ -565,7 +572,72 @@ class Writer:
         )
         
         return full_text
-    
+
+    async def regenerate_scene_stream(
+        self,
+        scene_plan: ScenePlan,
+        chapter_plan: ChapterPlan,
+        previous_attempt: str,
+        feedback: str,
+        temperature: float = 0.75
+    ) -> AsyncIterator[str]:
+        """
+        根据反馈重新生成场景（流式迭代器版本）
+
+        Yields:
+            生成的文本片段
+        """
+        self._ensure_initialized()
+
+        injection_ctx = await self.injection_engine.build_context(
+            scene_plan=scene_plan,
+            chapter_plan=chapter_plan
+        )
+
+        base_prompt = self._render_prompt(injection_ctx)
+        feedback_prompt = f"""{base_prompt}
+
+---
+【修改要求】
+
+之前生成的文本存在以下问题，请根据反馈修改：
+
+{feedback}
+
+请重新生成本场景，确保解决上述问题。
+"""
+
+        full_text = ""
+        max_tokens = scene_plan.target_word_count * 2
+
+        async for token in self.llm_client.stream(
+            role="writer",
+            prompt=feedback_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature
+        ):
+            full_text += token
+            yield token
+
+        if not self._validate_generated_text(full_text, scene_plan):
+            raise InvalidOutputError(
+                f"重新生成文本校验失败：字数不足（{len(full_text)} < {scene_plan.target_word_count * 0.5}）",
+                stage="validation",
+                details={
+                    "actual_length": len(full_text),
+                    "expected_min_length": int(scene_plan.target_word_count * 0.5),
+                    "target_word_count": scene_plan.target_word_count
+                }
+            )
+
+        await self._save_scene_draft(
+            chapter_number=chapter_plan.chapter_number,
+            scene_index=scene_plan.scene_index,
+            text=full_text,
+            injection_ctx=injection_ctx,
+            scene_plan=scene_plan
+        )
+
     async def get_scene_draft(
         self,
         chapter_number: int,

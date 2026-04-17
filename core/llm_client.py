@@ -266,42 +266,62 @@ class LLMClient:
     DEFAULT_CONCURRENT_LIMIT = 5     # 最大并发请求数
     DEFAULT_MAX_RETRIES = 3          # 默认重试次数
     DEFAULT_RETRY_DELAY = 1.0        # 默认重试间隔（秒）
-    
-    def __init__(self, 
+
+    # 类级共享：所有 LLMClient 实例共用同一组 RateLimiter
+    _rate_limiters: dict[str, RateLimiter] = {}
+
+    @staticmethod
+    def _clean_json_content(content: str) -> str:
+        """
+        清洗 LLM 返回的 JSON 内容
+
+        去除 Markdown 代码块包裹（```json ... ```）、前后空白和 BOM 字符。
+        当 LLM 降级为纯文本输出时，返回的内容可能包含 markdown 包裹，
+        此函数确保调用方拿到的是纯 JSON 字符串。
+        """
+        import re
+        text = content.strip()
+        text = text.lstrip('\ufeff')
+        pattern = r'^```(?:json)?\s*\n?(.*?)\n?```\s*$'
+        match = re.match(pattern, text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+        return text
+
+    def __init__(self,
                  rate_limit: Optional[int] = None,
                  concurrent_limit: Optional[int] = None):
         """
         初始化 LLM 客户端
-        
+
         Args:
             rate_limit: 速率限制（请求/秒），默认 10
             concurrent_limit: 并发限制，默认 5
         """
         self.config = get_config()
         self.token_counters: dict[str, TokenCounter] = {}
-        
-        # 速率限制器（每个 provider 独立）
+
+        # 速率限制配置（仅在创建新的 RateLimiter 时使用）
         self.rate_limit = rate_limit or self.DEFAULT_RATE_LIMIT
-        self._rate_limiters: dict[str, RateLimiter] = {}
-        
+
         # 并发限制器（全局单例）
         self.concurrency_limiter = ConcurrencyLimiter(
             concurrent_limit or self.DEFAULT_CONCURRENT_LIMIT
         )
-        
+
         logger.info(
             f"LLMClient 初始化 - 速率限制: {self.rate_limit}/s, "
             f"并发限制: {concurrent_limit or self.DEFAULT_CONCURRENT_LIMIT}"
         )
-    
+
     def _get_rate_limiter(self, provider_name: str) -> RateLimiter:
-        """获取指定 Provider 的速率限制器"""
-        if provider_name not in self._rate_limiters:
-            self._rate_limiters[provider_name] = RateLimiter(
+        """获取指定 Provider 的速率限制器（类级共享）"""
+        if provider_name not in self.__class__._rate_limiters:
+            self.__class__._rate_limiters[provider_name] = RateLimiter(
                 max_requests=self.rate_limit,
                 time_window=1.0
             )
-        return self._rate_limiters[provider_name]
+        return self.__class__._rate_limiters[provider_name]
     
     def _get_token_counter(self, provider: str) -> TokenCounter:
         """获取指定 Provider 的 Token 计数器"""
@@ -535,8 +555,11 @@ class LLMClient:
                         f"总Tokens: {usage.get('total_tokens', 'N/A')}"
                     )
                     
+                    # 自动清洗 JSON 输出（去除 Markdown 代码块包裹等）
+                    cleaned_content = LLMClient._clean_json_content(content)
+
                     return LLMResponse(
-                        content=content,
+                        content=cleaned_content,
                         model=model,
                         provider=provider.name,
                         usage=usage,

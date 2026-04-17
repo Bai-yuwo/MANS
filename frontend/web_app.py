@@ -57,6 +57,7 @@ from knowledge_bases.story_db import StoryDB
 from knowledge_bases.foreshadowing_db import ForeshadowingDB
 from knowledge_bases.style_db import StyleDB
 from core.llm_client import quick_call
+from core.injection_engine import InjectionEngine
 
 app = FastAPI(title="MANS - Multi-Agent Novel System")
 
@@ -922,6 +923,29 @@ async def get_issues(project_id: str):
                     "urgency": item.get("urgency", "medium")
                 })
         
+        # 从更新记录中提取 implicit_issues
+        chapters_dir = workspace_path / "chapters"
+        if chapters_dir.exists():
+            for update_file in chapters_dir.glob("chapter_*_updates.json"):
+                try:
+                    async with aiofiles.open(update_file, "r", encoding="utf-8") as f:
+                        content = await f.read()
+                        records = json.loads(content)
+                    if isinstance(records, list):
+                        for record in records:
+                            implicit = record.get("implicit_issues", [])
+                            for issue in implicit:
+                                if issue:
+                                    issues.append({
+                                        "type": "implicit",
+                                        "id": f"implicit_{update_file.stem}_{len(issues)}",
+                                        "description": issue,
+                                        "status": "open",
+                                        "urgency": "medium"
+                                    })
+                except Exception as read_err:
+                    logger.warning(f"读取更新记录失败 {update_file.name}: {read_err}")
+
         # 连续性问题（简化：检查章节间状态一致性）
         outline = await story_db.get_outline()
         if outline:
@@ -934,7 +958,7 @@ async def get_issues(project_id: str):
                     "status": "pending",
                     "urgency": "major"
                 })
-        
+
         return {
             "project_id": project_id,
             "issues": issues,
@@ -945,6 +969,46 @@ async def get_issues(project_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取 Issue Pool 失败: {str(e)}")
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter_num}/updates")
+async def get_chapter_updates(project_id: str, chapter_num: int):
+    """获取某章节的更新记录（用于异步更新通知）"""
+    try:
+        workspace_path = Path("workspace") / project_id
+        if not workspace_path.exists():
+            raise HTTPException(status_code=404, detail="项目不存在")
+
+        record_path = workspace_path / "chapters" / f"chapter_{chapter_num}_updates.json"
+        if not record_path.exists():
+            return {
+                "chapter_number": chapter_num,
+                "updates": [],
+                "implicit_issues": [],
+                "has_new_issues": False
+            }
+
+        async with aiofiles.open(record_path, "r", encoding="utf-8") as f:
+            records = json.loads(await f.read())
+
+        if not isinstance(records, list):
+            records = [records]
+
+        latest = records[-1] if records else {}
+        implicit_issues = latest.get("implicit_issues", [])
+
+        return {
+            "chapter_number": chapter_num,
+            "updates_count": len(records),
+            "latest_update": latest,
+            "implicit_issues": implicit_issues,
+            "has_new_issues": len(implicit_issues) > 0
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取更新记录失败: {str(e)}")
 
 
 @app.get("/api/projects/{project_id}/stream/logs")
@@ -1152,6 +1216,75 @@ async def get_chapter_draft(project_id: str, chapter_num: int):
         raise HTTPException(status_code=500, detail=f"获取章节草稿失败: {str(e)}")
 
 
+@app.get("/api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}/context")
+async def get_scene_context(project_id: str, chapter_num: int, scene_index: int):
+    """获取场景注入上下文摘要（上下文探针）"""
+    try:
+        story_db = StoryDB(project_id)
+        chapter_plan_raw = await story_db.get_chapter_plan(chapter_num)
+        if not chapter_plan_raw:
+            raise HTTPException(status_code=404, detail="章节规划不存在")
+
+        if hasattr(chapter_plan_raw, 'model_dump'):
+            chapter_plan_data = chapter_plan_raw.model_dump()
+        else:
+            chapter_plan_data = chapter_plan_raw
+
+        chapter_plan = ChapterPlan(**chapter_plan_data)
+
+        scene_plan_data = None
+        for scene in chapter_plan_data.get("scenes", []):
+            if scene.get("scene_index") == scene_index:
+                scene_plan_data = scene
+                break
+
+        if not scene_plan_data:
+            raise HTTPException(status_code=404, detail="场景不存在")
+
+        scene_plan = ScenePlan(**scene_plan_data)
+
+        injection_engine = InjectionEngine(project_id)
+        ctx = await injection_engine.build_context(
+            scene_plan=scene_plan, chapter_plan=chapter_plan
+        )
+
+        # 返回摘要，避免返回超大文本
+        return {
+            "scene_index": scene_index,
+            "chapter_number": chapter_num,
+            "scene_intent": ctx.scene_plan.intent,
+            "chapter_goal": ctx.chapter_goal,
+            "previous_text_preview": (
+                ctx.previous_text[:200] + "..."
+                if len(ctx.previous_text) > 200 else ctx.previous_text
+            ),
+            "present_characters": [
+                {
+                    "name": c.name,
+                    "current_location": c.current_location,
+                    "current_emotion": c.current_emotion
+                }
+                for c in ctx.present_character_cards
+            ],
+            "relevant_world_rules_count": len(ctx.relevant_world_rules),
+            "active_foreshadowing_count": len(ctx.active_foreshadowing),
+            "style_reference_preview": (
+                ctx.style_reference[:200] + "..."
+                if len(ctx.style_reference) > 200 else ctx.style_reference
+            ),
+            "total_tokens_used": ctx.total_tokens_used,
+            "token_budget_remaining": ctx.token_budget_remaining,
+            "similar_scenes_count": len(ctx.similar_scenes_reference)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"获取上下文失败: {str(e)}"
+        )
+
+
 @app.post("/api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}/write")
 async def write_scene(project_id: str, chapter_num: int, scene_index: int):
     """
@@ -1176,8 +1309,10 @@ async def write_scene(project_id: str, chapter_num: int, scene_index: int):
         raise HTTPException(status_code=500, detail=f"创建写作任务失败: {str(e)}")
 
 
-@app.get("/api/projects/{project_id}/stream/{chapter_num}/{scene_index}")
-async def stream_scene(project_id: str, chapter_num: int, scene_index: int, request: Request, temperature: float = 0.75):
+@app.post("/api/projects/{project_id}/stream/{chapter_num}/{scene_index}")
+async def stream_scene(project_id: str, chapter_num: int, scene_index: int, request: Request):
+    body = await request.json()
+    temperature = body.get("temperature", 0.75)
     """
     SSE 接口：流式写作场景
     
@@ -1470,6 +1605,123 @@ async def edit_scene(project_id: str, chapter_num: int, scene_index: int, conten
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"编辑场景失败: {str(e)}")
+
+
+@app.post("/api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}/regenerate")
+async def regenerate_scene_stream_endpoint(
+    project_id: str, chapter_num: int, scene_index: int, request: Request
+):
+    """根据用户反馈流式重新生成场景"""
+    try:
+        body = await request.json()
+        feedback = body.get("feedback", "")
+        temperature = body.get("temperature", 0.75)
+
+        story_db = StoryDB(project_id)
+        chapter_plan_raw = await story_db.get_chapter_plan(chapter_num)
+        if not chapter_plan_raw:
+            raise HTTPException(status_code=404, detail="章节规划不存在")
+
+        if hasattr(chapter_plan_raw, 'model_dump'):
+            chapter_plan_data = chapter_plan_raw.model_dump()
+        else:
+            chapter_plan_data = chapter_plan_raw
+
+        chapter_plan = ChapterPlan(**chapter_plan_data)
+
+        scene_plan_data = None
+        for scene in chapter_plan_data.get("scenes", []):
+            if scene.get("scene_index") == scene_index:
+                scene_plan_data = scene
+                break
+
+        if not scene_plan_data:
+            raise HTTPException(status_code=404, detail="场景不存在")
+
+        scene_plan = ScenePlan(**scene_plan_data)
+
+        # 获取当前草稿作为 previous_attempt
+        draft = await story_db.get_chapter_draft(chapter_num)
+        previous_attempt = ""
+        if draft and "scenes" in draft:
+            for scene in draft.get("scenes", []):
+                if scene.get("scene_index") == scene_index:
+                    previous_attempt = scene.get("text", "")
+                    break
+
+        if not previous_attempt:
+            raise HTTPException(status_code=400, detail="场景暂无草稿，无法重写")
+
+        async def event_generator():
+            try:
+                writer = Writer(project_id)
+                full_text = ""
+                token_count = 0
+
+                yield {
+                    "event": "start",
+                    "data": json.dumps({
+                        "scene_index": scene_index,
+                        "intent": scene_plan.intent,
+                        "feedback": feedback
+                    }, ensure_ascii=False)
+                }
+
+                async for token in writer.regenerate_scene_stream(
+                    scene_plan=scene_plan,
+                    chapter_plan=chapter_plan,
+                    previous_attempt=previous_attempt,
+                    feedback=feedback,
+                    temperature=temperature
+                ):
+                    full_text += token
+                    token_count += 1
+
+                    if token_count % 50 == 0:
+                        yield {
+                            "event": "progress",
+                            "data": json.dumps({
+                                "token_count": token_count,
+                                "char_count": len(full_text)
+                            }, ensure_ascii=False)
+                        }
+
+                    yield {
+                        "event": "token",
+                        "data": json.dumps({"content": token}, ensure_ascii=False)
+                    }
+
+                yield {
+                    "event": "scene_complete",
+                    "data": json.dumps({
+                        "scene_index": scene_index,
+                        "word_count": len(full_text),
+                        "token_count": token_count
+                    }, ensure_ascii=False)
+                }
+
+                yield {
+                    "event": "done",
+                    "data": json.dumps({"message": "流式传输完成"}, ensure_ascii=False)
+                }
+
+            except Exception as e:
+                logger.error(f"流式重写失败: {e}")
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"message": str(e)}, ensure_ascii=False)
+                }
+
+        return EventSourceResponse(
+            event_generator(),
+            ping=15,
+            ping_message_factory=lambda: {"event": "ping", "data": "keepalive"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"重写场景失败: {str(e)}")
 
 
 # ============================================================

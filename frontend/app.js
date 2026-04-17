@@ -17,7 +17,7 @@ const AppState = {
     currentChapter: parseInt(localStorage.getItem('mans_current_chapter') || '1', 10),
     currentScene: 0,
     isGenerating: false,
-    eventSource: null
+    projectInitialized: false
 };
 
 // ============================================
@@ -123,6 +123,28 @@ function showMessage(message, type = 'info') {
         toast.style.animation = 'slideOut 0.3s ease';
         setTimeout(() => toast.remove(), 300);
     }, 3000);
+}
+
+/**
+ * 检查异步知识库更新（生成/重写后调用）
+ */
+async function checkAsyncUpdates(chapterNum) {
+    if (!AppState.currentProject) return;
+    try {
+        const data = await apiRequest(
+            `/api/projects/${AppState.currentProject}/chapters/${chapterNum}/updates`
+        );
+        if (data.has_new_issues) {
+            showMessage(
+                `知识库更新：检测到 ${data.implicit_issues.length} 个新问题，请查看 Issue Pool`,
+                'warning'
+            );
+        } else if (data.updates_count > 0) {
+            showMessage('知识库已同步更新', 'info');
+        }
+    } catch (e) {
+        // 静默忽略轮询错误
+    }
 }
 
 // 添加CSS动画
@@ -427,6 +449,7 @@ async function openProject(projectId, options = {}) {
     try {
         // 获取项目状态
         const status = await apiRequest(`/api/projects/${projectId}/status`);
+        AppState.projectInitialized = status.initialized;
 
         if (!options.skipPanelSwitch) {
             if (!status.initialized) {
@@ -494,6 +517,15 @@ async function checkInitializationStatus(projectId) {
             enterWritingBtn.style.display = 'inline-flex';
         } else if (enterWritingBtn) {
             enterWritingBtn.style.display = 'none';
+        }
+
+        AppState.projectInitialized = status.initialized;
+
+        // 如果初始化刚完成且用户仍在向导页，自动进入写作界面
+        const initPanel = document.getElementById('initialization-panel');
+        if (status.initialized && initPanel && initPanel.classList.contains('active')) {
+            showPanel('writing-panel');
+            loadWritingInterface(projectId);
         }
 
         console.log('初始化状态已更新:', {
@@ -783,6 +815,8 @@ function buildChapterPlanHtml(plan, showWritingActions = false) {
                     ${AppState.isGenerating ? '生成中...' : '生成'}
                 </button>
                 <button onclick="editScene(${escapeHtml(String(scene.scene_index))})">编辑</button>
+                <button onclick="probeContext(${escapeHtml(String(scene.scene_index))})" title="查看注入上下文">探针</button>
+                <button onclick="rewriteScene(${escapeHtml(String(scene.scene_index))})" title="基于反馈重写">重写</button>
             </div>
             <div class="scene-content" id="scene-content-${escapeHtml(String(scene.scene_index))}"></div>
             ` : ''}
@@ -842,10 +876,12 @@ function displayChapterPlanResult(plan) {
  */
 function updateAllSceneButtons() {
     document.querySelectorAll('.scene-actions button').forEach(btn => {
-        const isGenerateBtn = btn.getAttribute('onclick')?.startsWith('generateScene');
-        if (isGenerateBtn) {
+        const onClick = btn.getAttribute('onclick') || '';
+        if (onClick.startsWith('generateScene')) {
             btn.disabled = AppState.isGenerating;
             btn.textContent = AppState.isGenerating ? '生成中...' : '生成';
+        } else if (onClick.startsWith('editScene')) {
+            btn.disabled = AppState.isGenerating;
         }
     });
 }
@@ -858,114 +894,294 @@ async function generateScene(sceneIndex) {
     updateAllSceneButtons();
 
     const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
+    contentDiv.classList.add('locked');
     contentDiv.innerHTML = '<div class="generating">正在生成...</div>';
 
     try {
         // 直接连接 SSE 流开始生成
         await connectStream(sceneIndex, contentDiv);
+        // 生成完成后检查异步知识库更新
+        checkAsyncUpdates(AppState.currentChapter);
     } catch (error) {
         contentDiv.innerHTML = `<div class="error">生成失败: ${escapeHtml(error.message)}</div>`;
     } finally {
         AppState.isGenerating = false;
+        contentDiv.classList.remove('locked');
         updateAllSceneButtons();
     }
 }
 
 /**
- * 连接 SSE 流
+ * 连接流式生成（fetch + ReadableStream）
  * @returns {Promise<void>}
  */
 async function connectStream(sceneIndex, contentDiv) {
+    const projectId = AppState.currentProject;
+    const chapterNum = AppState.currentChapter;
+
+    const temperature = getSetting('temperature', 0.75);
+    const base = getApiBase().replace(/\/$/, '');
+    const streamUrl = base
+        ? `${base}/api/projects/${projectId}/stream/${chapterNum}/${sceneIndex}`
+        : `/api/projects/${projectId}/stream/${chapterNum}/${sceneIndex}`;
+
+    const response = await fetch(streamUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ temperature })
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let generatedText = '';
+    let hasError = false;
+
     return new Promise((resolve, reject) => {
-        const projectId = AppState.currentProject;
-        const chapterNum = AppState.currentChapter;
+        let currentEvent = { event: 'message', data: '' };
 
-        const temperature = getSetting('temperature', 0.75);
-        const base = getApiBase().replace(/\/$/, '');
-        const streamUrl = base
-            ? `${base}/api/projects/${projectId}/stream/${chapterNum}/${sceneIndex}?temperature=${encodeURIComponent(temperature)}`
-            : `/api/projects/${projectId}/stream/${chapterNum}/${sceneIndex}?temperature=${encodeURIComponent(temperature)}`;
-        const eventSource = new EventSource(streamUrl);
-
-        AppState.eventSource = eventSource;
-
-        let generatedText = '';
-        let hasError = false;
-        let isConnected = false;
-
-        // 处理开始事件
-        eventSource.addEventListener('start', (event) => {
-            isConnected = true;
-            const data = JSON.parse(event.data);
-            contentDiv.innerHTML = `<div class="generating">开始生成场景 ${data.scene_index + 1}：${escapeHtml(data.intent)}</div>`;
-        });
-
-        // 处理文本片段（打字机效果）
-        eventSource.addEventListener('token', (event) => {
-            const data = JSON.parse(event.data);
-            generatedText += data.content;
-            contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(generatedText)}</div>`;
-            contentDiv.scrollTop = contentDiv.scrollHeight;
-        });
-
-        // 处理进度事件
-        eventSource.addEventListener('progress', (event) => {
-            const data = JSON.parse(event.data);
-            // 可选：在UI中显示进度
-        });
-
-        // 处理场景完成事件
-        eventSource.addEventListener('scene_complete', (event) => {
-            const data = JSON.parse(event.data);
-            showMessage(`场景生成完成！字数: ${data.word_count}`);
-        });
-
-        // 处理错误事件
-        eventSource.addEventListener('error', (event) => {
-            hasError = true;
-            let msg = '生成出错';
+        const dispatchEvent = () => {
             try {
-                const data = JSON.parse(event.data);
-                msg = data.message || msg;
-            } catch {}
-            contentDiv.innerHTML += `<div class="error">错误: ${escapeHtml(msg)}</div>`;
-            eventSource.close();
-            AppState.isGenerating = false;
-            AppState.eventSource = null;
-            reject(new Error(msg));
-        });
-
-        // 处理结束事件
-        eventSource.addEventListener('done', (event) => {
-            eventSource.close();
-            AppState.isGenerating = false;
-            AppState.eventSource = null;
-            if (!hasError) resolve();
-        });
-
-        // 处理默认 message 事件（兼容性）
-        eventSource.onmessage = (event) => {
-            // ping 等无自定义 event 的事件会走这里
-        };
-
-        // 处理连接错误
-        eventSource.onerror = (error) => {
-            console.error('SSE 错误:', error);
-            if (!isConnected) {
-                hasError = true;
-                eventSource.close();
-                AppState.isGenerating = false;
-                AppState.eventSource = null;
-                contentDiv.innerHTML += '<div class="error">连接中断</div>';
-                reject(new Error('SSE 连接中断'));
-            } else if (!hasError) {
-                // 如果已经收到过数据，可能是正常结束或网络抖动
-                eventSource.close();
-                AppState.isGenerating = false;
-                AppState.eventSource = null;
-                resolve();
+                switch (currentEvent.event) {
+                    case 'start': {
+                        const data = JSON.parse(currentEvent.data);
+                        contentDiv.innerHTML = `<div class="generating">开始生成场景 ${data.scene_index + 1}：${escapeHtml(data.intent)}</div>`;
+                        break;
+                    }
+                    case 'token': {
+                        const data = JSON.parse(currentEvent.data);
+                        generatedText += data.content;
+                        contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(generatedText)}</div>`;
+                        contentDiv.scrollTop = contentDiv.scrollHeight;
+                        break;
+                    }
+                    case 'progress': {
+                        // 可选：在UI中显示进度
+                        break;
+                    }
+                    case 'scene_complete': {
+                        const data = JSON.parse(currentEvent.data);
+                        showMessage(`场景生成完成！字数: ${data.word_count}`);
+                        break;
+                    }
+                    case 'error': {
+                        hasError = true;
+                        let msg = '生成出错';
+                        try {
+                            const data = JSON.parse(currentEvent.data);
+                            msg = data.message || msg;
+                        } catch {}
+                        contentDiv.innerHTML += `<div class="error">错误: ${escapeHtml(msg)}</div>`;
+                        reject(new Error(msg));
+                        break;
+                    }
+                    case 'done': {
+                        if (!hasError) resolve();
+                        break;
+                    }
+                    default:
+                        // ping 等忽略
+                        break;
+                }
+            } catch (e) {
+                console.error('流事件处理错误:', e);
             }
+            currentEvent = { event: 'message', data: '' };
         };
+
+        const processChunk = () => {
+            reader.read().then(({ done, value }) => {
+                if (done) {
+                    if (!hasError) resolve();
+                    return;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // 保留不完整的行
+
+                for (const line of lines) {
+                    if (line.startsWith('event:')) {
+                        currentEvent.event = line.slice(6).trim();
+                    } else if (line.startsWith('data:')) {
+                        currentEvent.data = line.slice(5).trim();
+                    } else if (line === '') {
+                        dispatchEvent();
+                    }
+                }
+
+                processChunk();
+            }).catch(err => {
+                hasError = true;
+                reject(err);
+            });
+        };
+
+        processChunk();
+    });
+}
+
+/**
+ * 打开重写反馈模态框
+ */
+function rewriteScene(sceneIndex) {
+    if (AppState.isGenerating) {
+        showMessage('AI 正在生成中，请稍后再操作', 'warning');
+        return;
+    }
+    const html = `
+        <div>
+            <p style="margin-bottom: 12px; color: var(--text-secondary);">描述当前场景的问题或修改方向：</p>
+            <textarea id="rewrite-feedback-${sceneIndex}" rows="4"
+                style="width: 100%; background: var(--bg-dark); border: 1px solid var(--bg-hover); border-radius: 6px; padding: 8px; color: var(--text-primary);"
+                placeholder="例如：节奏太快，缺少环境描写..."></textarea>
+            <div style="margin-top: 12px; text-align: right;">
+                <button class="mans-btn primary" onclick="startRewrite(${sceneIndex})">开始重写</button>
+            </div>
+        </div>
+    `;
+    showModal('重写场景', html);
+}
+
+/**
+ * 开始流式重写
+ */
+async function startRewrite(sceneIndex) {
+    const feedback = document.getElementById(`rewrite-feedback-${sceneIndex}`)?.value.trim();
+    if (!feedback) {
+        showMessage('请输入反馈意见', 'warning');
+        return;
+    }
+    closeDynamicModal();
+
+    AppState.isGenerating = true;
+    AppState.currentScene = sceneIndex;
+    updateAllSceneButtons();
+
+    const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
+    contentDiv.classList.add('locked');
+    contentDiv.innerHTML = '<div class="generating">正在重写...</div>';
+
+    try {
+        await connectRewriteStream(sceneIndex, feedback, contentDiv);
+        checkAsyncUpdates(AppState.currentChapter);
+    } catch (error) {
+        contentDiv.innerHTML = `<div class="error">重写失败: ${escapeHtml(error.message)}</div>`;
+    } finally {
+        AppState.isGenerating = false;
+        contentDiv.classList.remove('locked');
+        updateAllSceneButtons();
+    }
+}
+
+/**
+ * 连接重写流
+ */
+async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
+    const projectId = AppState.currentProject;
+    const chapterNum = AppState.currentChapter;
+
+    const temperature = getSetting('temperature', 0.75);
+    const base = getApiBase().replace(/\/$/, '');
+    const streamUrl = base
+        ? `${base}/api/projects/${projectId}/chapters/${chapterNum}/scenes/${sceneIndex}/regenerate`
+        : `/api/projects/${projectId}/chapters/${chapterNum}/scenes/${sceneIndex}/regenerate`;
+
+    const response = await fetch(streamUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ temperature, feedback })
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let generatedText = '';
+    let hasError = false;
+
+    return new Promise((resolve, reject) => {
+        let currentEvent = { event: 'message', data: '' };
+
+        const dispatchEvent = () => {
+            try {
+                switch (currentEvent.event) {
+                    case 'start': {
+                        const data = JSON.parse(currentEvent.data);
+                        contentDiv.innerHTML = `<div class="generating">开始重写场景 ${data.scene_index + 1}：${escapeHtml(data.intent)}</div>`;
+                        break;
+                    }
+                    case 'token': {
+                        const data = JSON.parse(currentEvent.data);
+                        generatedText += data.content;
+                        contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(generatedText)}</div>`;
+                        contentDiv.scrollTop = contentDiv.scrollHeight;
+                        break;
+                    }
+                    case 'progress': break;
+                    case 'scene_complete': {
+                        const data = JSON.parse(currentEvent.data);
+                        showMessage(`场景重写完成！字数: ${data.word_count}`);
+                        break;
+                    }
+                    case 'error': {
+                        hasError = true;
+                        let msg = '重写出错';
+                        try {
+                            const data = JSON.parse(currentEvent.data);
+                            msg = data.message || msg;
+                        } catch {}
+                        contentDiv.innerHTML += `<div class="error">错误: ${escapeHtml(msg)}</div>`;
+                        reject(new Error(msg));
+                        break;
+                    }
+                    case 'done': {
+                        if (!hasError) resolve();
+                        break;
+                    }
+                    default: break;
+                }
+            } catch (e) {
+                console.error('流事件处理错误:', e);
+            }
+            currentEvent = { event: 'message', data: '' };
+        };
+
+        const processChunk = () => {
+            reader.read().then(({ done, value }) => {
+                if (done) {
+                    if (!hasError) resolve();
+                    return;
+                }
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    if (line.startsWith('event:')) {
+                        currentEvent.event = line.slice(6).trim();
+                    } else if (line.startsWith('data:')) {
+                        currentEvent.data = line.slice(5).trim();
+                    } else if (line === '') {
+                        dispatchEvent();
+                    }
+                }
+                processChunk();
+            }).catch(err => {
+                hasError = true;
+                reject(err);
+            });
+        };
+
+        processChunk();
     });
 }
 
@@ -982,10 +1198,16 @@ function escapeHtml(text) {
  * 编辑场景
  */
 function editScene(sceneIndex) {
+    if (AppState.isGenerating) {
+        showMessage('AI 正在生成中，请稍后再编辑', 'warning');
+        return;
+    }
+
     const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
     const currentText = contentDiv.textContent || '';
 
     contentDiv.dataset.originalContent = currentText;
+    contentDiv._autoSaveTimer = null;
 
     contentDiv.innerHTML = `
         <textarea id="edit-scene-${sceneIndex}" rows="10">${escapeHtml(currentText)}</textarea>
@@ -993,14 +1215,59 @@ function editScene(sceneIndex) {
             <button onclick="saveSceneEdit(${sceneIndex})">保存</button>
             <button onclick="cancelSceneEdit(${sceneIndex})">取消</button>
         </div>
+        <div class="save-status" id="save-status-${sceneIndex}"></div>
     `;
+
+    const textarea = document.getElementById(`edit-scene-${sceneIndex}`);
+
+    const triggerAutoSave = () => {
+        const statusDiv = document.getElementById(`save-status-${sceneIndex}`);
+        if (statusDiv) {
+            statusDiv.textContent = '正在保存...';
+            statusDiv.className = 'save-status saving';
+        }
+        saveSceneEdit(sceneIndex, { silent: true }).then(() => {
+            if (statusDiv) {
+                statusDiv.textContent = '已自动保存';
+                statusDiv.className = 'save-status saved';
+                setTimeout(() => {
+                    if (statusDiv && statusDiv.textContent === '已自动保存') {
+                        statusDiv.textContent = '';
+                    }
+                }, 3000);
+            }
+        }).catch(() => {
+            if (statusDiv) {
+                statusDiv.textContent = '自动保存失败';
+                statusDiv.className = 'save-status error';
+            }
+        });
+    };
+
+    textarea.addEventListener('input', () => {
+        if (contentDiv._autoSaveTimer) clearTimeout(contentDiv._autoSaveTimer);
+        const statusDiv = document.getElementById(`save-status-${sceneIndex}`);
+        if (statusDiv) {
+            statusDiv.textContent = '有未保存的更改';
+            statusDiv.className = 'save-status';
+        }
+        contentDiv._autoSaveTimer = setTimeout(triggerAutoSave, 2000);
+    });
 }
 
 /**
  * 保存场景编辑
  */
-async function saveSceneEdit(sceneIndex) {
+async function saveSceneEdit(sceneIndex, options = {}) {
+    const { silent = false } = options;
+    const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
+    if (contentDiv && contentDiv._autoSaveTimer) {
+        clearTimeout(contentDiv._autoSaveTimer);
+        contentDiv._autoSaveTimer = null;
+    }
+
     const textarea = document.getElementById(`edit-scene-${sceneIndex}`);
+    if (!textarea) return; // 编辑器已关闭，跳过
     const newText = textarea.value;
 
     try {
@@ -1012,12 +1279,17 @@ async function saveSceneEdit(sceneIndex) {
             }
         );
 
-        showMessage('场景已保存');
-        const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
-        contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(newText)}</div>`;
-
+        if (!silent) {
+            showMessage('场景已保存');
+        }
+        if (contentDiv) {
+            contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(newText)}</div>`;
+        }
     } catch (error) {
-        showMessage('保存失败: ' + error.message, 'error');
+        if (!silent) {
+            showMessage('保存失败: ' + error.message, 'error');
+        }
+        throw error;
     }
 }
 
@@ -1026,9 +1298,93 @@ async function saveSceneEdit(sceneIndex) {
  */
 function cancelSceneEdit(sceneIndex) {
     const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
+    if (contentDiv && contentDiv._autoSaveTimer) {
+        clearTimeout(contentDiv._autoSaveTimer);
+        contentDiv._autoSaveTimer = null;
+    }
     const originalContent = contentDiv.dataset.originalContent || '';
     contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(originalContent)}</div>`;
     delete contentDiv.dataset.originalContent;
+}
+
+/**
+ * 上下文探针：查看当前场景注入上下文摘要
+ */
+async function probeContext(sceneIndex) {
+    if (!AppState.currentProject) return;
+    try {
+        const data = await apiRequest(
+            `/api/projects/${AppState.currentProject}/chapters/${AppState.currentChapter}/scenes/${sceneIndex}/context`
+        );
+        const html = `
+            <div style="max-height: 70vh; overflow-y: auto;">
+                <div style="margin-bottom: 12px;">
+                    <strong>场景意图:</strong> ${escapeHtml(data.scene_intent)}
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <strong>本章目标:</strong> ${escapeHtml(data.chapter_goal)}
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <strong>前文预览:</strong>
+                    <pre style="white-space: pre-wrap; background: var(--bg-dark); padding: 8px; border-radius: 6px;">${escapeHtml(data.previous_text_preview)}</pre>
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <strong>出场人物 (${data.present_characters.length}):</strong>
+                    <ul>${data.present_characters.map(c => `<li>${escapeHtml(c.name)} — ${escapeHtml(c.current_location || '')} — ${escapeHtml(c.current_emotion || '')}</li>`).join('')}</ul>
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <strong>相关世界规则:</strong> ${data.relevant_world_rules_count} 条
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <strong>活跃伏笔:</strong> ${data.active_foreshadowing_count} 条
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <strong>风格参考:</strong>
+                    <pre style="white-space: pre-wrap; background: var(--bg-dark); padding: 8px; border-radius: 6px;">${escapeHtml(data.style_reference_preview)}</pre>
+                </div>
+                <div style="margin-bottom: 12px;">
+                    <strong>相似场景参考:</strong> ${data.similar_scenes_count} 条
+                </div>
+                <div>
+                    <strong>Token 使用:</strong> ${data.total_tokens_used} / ${data.total_tokens_used + data.token_budget_remaining}
+                    <span style="color: var(--text-secondary); margin-left: 8px;">(剩余 ${data.token_budget_remaining})</span>
+                </div>
+            </div>
+        `;
+        showModal(`场景 ${sceneIndex + 1} 注入上下文`, html);
+    } catch (error) {
+        showMessage('获取上下文失败: ' + error.message, 'error');
+    }
+}
+
+/**
+ * 显示通用模态框
+ */
+function showModal(title, htmlContent) {
+    const existing = document.getElementById('dynamic-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'dynamic-modal';
+    modal.className = 'modal';
+    modal.style.display = 'flex';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 720px; width: 95%;">
+            <div class="modal-header">
+                <h3>${escapeHtml(title)}</h3>
+                <button class="close-btn" onclick="closeDynamicModal()">&times;</button>
+            </div>
+            <div style="padding: 10px 0;">
+                ${htmlContent}
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+function closeDynamicModal() {
+    const modal = document.getElementById('dynamic-modal');
+    if (modal) modal.remove();
 }
 
 /**
@@ -1485,6 +1841,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            const panel = item.dataset.panel;
+            if (AppState.currentProject && !AppState.projectInitialized && panel !== 'works' && panel !== 'settings') {
+                showMessage('请先完成项目初始化向导', 'warning');
+                return;
+            }
+
             document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
             item.classList.add('active');
 
@@ -1525,6 +1887,9 @@ window.checkArcStatus = checkArcStatus;
 window.openCreateArcModal = openCreateArcModal;
 window.closeCreateArcModal = closeCreateArcModal;
 window.suggestArcDetail = suggestArcDetail;
+window.probeContext = probeContext;
+window.closeDynamicModal = closeDynamicModal;
+window.rewriteScene = rewriteScene;
 
 // ============================================
 // 弧线/章节规划 UI

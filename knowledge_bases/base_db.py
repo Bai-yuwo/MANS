@@ -24,38 +24,60 @@ from core.logging_config import get_logger, log_exception
 
 logger = get_logger('knowledge_bases.base_db')
 
+# ============================================================
+# 全局文件路径锁注册表（进程内单例）
+# ============================================================
+
+class FileLockRegistry:
+    """
+    基于文件路径的 asyncio.Lock 注册表
+
+    确保不同 BaseDB 实例操作同一文件时，共享同一把锁，
+    防止并发写入导致 JSON 损坏或丢失更新。
+    """
+    _locks: dict[str, asyncio.Lock] = {}
+    _meta_lock = asyncio.Lock()
+
+    @classmethod
+    async def acquire(cls, file_path: str) -> asyncio.Lock:
+        """获取指定文件路径的锁"""
+        async with cls._meta_lock:
+            if file_path not in cls._locks:
+                cls._locks[file_path] = asyncio.Lock()
+            return cls._locks[file_path]
+
 
 class BaseDB:
     """
     知识库基类（异步版本）
-    
+
     所有具体知识库继承此类，获得通用读写能力
-    
+
     使用示例：
         class CharacterDB(BaseDB):
             def __init__(self, project_id: str):
                 super().__init__(project_id, "characters")
     """
-    
+
     def __init__(self, project_id: str, db_name: str):
         """
         初始化知识库
-        
+
         Args:
             project_id: 项目 ID
             db_name: 知识库名称（对应子目录名）
         """
         self.project_id = project_id
         self.db_name = db_name
-        
+
         config = get_config()
         self.base_path = Path(config.WORKSPACE_PATH) / project_id
         self.db_path = self.base_path / db_name
-        
+
         # 确保目录存在
         self.db_path.mkdir(parents=True, exist_ok=True)
-        
-        # 并发控制锁（每个实例独立，不同key的操作可以并行）
+
+        # 实例级锁（仅用于本实例内部并发控制，跨实例通过 FileLockRegistry）
         self._lock = asyncio.Lock()
     
     def _get_file_path(self, key: str) -> Path:
@@ -65,18 +87,20 @@ class BaseDB:
     async def load(self, key: str) -> Optional[dict]:
         """
         加载指定 key 的数据（异步）
-        
+
         Args:
             key: 数据标识
-        
+
         Returns:
             数据字典，不存在则返回 None
         """
         file_path = self._get_file_path(key)
         if not file_path.exists():
             return None
-        
-        async with self._lock:
+
+        # 使用全局文件路径锁，确保跨实例并发安全
+        file_lock = await FileLockRegistry.acquire(str(file_path))
+        async with file_lock:
             try:
                 async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
                     content = await f.read()
@@ -84,40 +108,77 @@ class BaseDB:
             except (json.JSONDecodeError, IOError) as e:
                 logger.error(f"加载数据失败 {key}: {e}")
                 return None
-    
+
     async def save(self, key: str, data: dict) -> bool:
         """
         保存数据到指定 key（异步原子写入）
-        
+
+        防止丢失更新：在写入前重读最新数据，执行深度合并。
+
         Args:
             key: 数据标识
             data: 要保存的数据
-        
+
         Returns:
             是否保存成功
         """
         file_path = self._get_file_path(key)
         temp_path = file_path.with_suffix('.tmp')
-        
-        async with self._lock:
+
+        # 使用全局文件路径锁，确保跨实例并发安全
+        file_lock = await FileLockRegistry.acquire(str(file_path))
+        async with file_lock:
             try:
+                # 如果文件已存在，先读取最新数据，进行深度合并（防止丢失更新）
+                if file_path.exists():
+                    try:
+                        async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+                            latest = json.loads(await f.read())
+                        # 深度合并：data 的字段覆盖 latest 的字段，但保留 latest 中未被覆盖的字段
+                        merged = self._deep_merge(latest, data)
+                        data = merged
+                    except (json.JSONDecodeError, IOError):
+                        # 读取失败则继续使用传入的 data
+                        pass
+
                 # 添加更新时间
                 data['_updated_at'] = datetime.now().isoformat()
-                
+
                 # 写入临时文件
                 async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
                     await f.write(json.dumps(data, ensure_ascii=False, indent=2))
-                
+
                 # 原子替换
                 shutil.move(str(temp_path), str(file_path))
                 return True
-                
+
             except IOError as e:
                 logger.error(f"保存数据失败 {key}: {e}")
                 # 清理临时文件
                 if temp_path.exists():
                     temp_path.unlink()
                 return False
+
+    @staticmethod
+    def _deep_merge(base: dict, override: dict) -> dict:
+        """
+        深度合并两个字典
+
+        override 中的字段覆盖 base 中的同名字段，
+        但 base 中未被覆盖的字段保留。
+        对于 dict 类型字段，递归合并。
+        对于 list 类型字段，override 优先（直接替换）。
+        """
+        result = dict(base)
+        for key, value in override.items():
+            if key.startswith('_'):
+                # 内部字段（如 _updated_at）直接覆盖
+                result[key] = value
+            elif isinstance(value, dict) and isinstance(result.get(key), dict):
+                result[key] = BaseDB._deep_merge(result[key], value)
+            else:
+                result[key] = value
+        return result
     
     async def append(self, key: str, item: Any) -> bool:
         """
@@ -177,15 +238,16 @@ class BaseDB:
     async def delete(self, key: str) -> bool:
         """
         删除指定 key 的数据（异步）
-        
+
         Args:
             key: 数据标识
-        
+
         Returns:
             是否删除成功
         """
         file_path = self._get_file_path(key)
-        async with self._lock:
+        file_lock = await FileLockRegistry.acquire(str(file_path))
+        async with file_lock:
             try:
                 if file_path.exists():
                     file_path.unlink()

@@ -150,18 +150,20 @@ class VectorStore:
         
         return self._client
     
-    def _get_or_create_collection(self, collection: str):
-        """获取或创建 collection"""
+    async def _get_or_create_collection(self, collection: str):
+        """获取或创建 collection（异步包装，避免阻塞事件循环）"""
         if collection not in self._collections:
             client = self._get_client()
             collection_name = self._get_collection_name(collection)
-            
-            self._collections[collection] = client.get_or_create_collection(
+
+            # get_or_create_collection 会触发 sqlite 磁盘 I/O，用线程池封装
+            self._collections[collection] = await asyncio.to_thread(
+                client.get_or_create_collection,
                 name=collection_name,
                 metadata={"project_id": self.project_id, "source": collection}
             )
             logger.debug(f"Collection 获取/创建: {collection_name}")
-        
+
         return self._collections[collection]
     
     async def search(
@@ -197,10 +199,10 @@ class VectorStore:
             )
             
             # 执行检索
-            coll = self._get_or_create_collection(collection)
-            
+            coll = await self._get_or_create_collection(collection)
+
             include = include or ["documents", "metadatas", "distances"]
-            
+
             results = await asyncio.to_thread(
                 coll.query,
                 query_embeddings=[query_vector],
@@ -295,8 +297,8 @@ class VectorStore:
             metadatas = [item.get("metadata") for item in items]
             
             # 写入 ChromaDB
-            coll = self._get_or_create_collection(collection)
-            
+            coll = await self._get_or_create_collection(collection)
+
             await asyncio.to_thread(
                 coll.upsert,
                 ids=ids,
@@ -331,7 +333,7 @@ class VectorStore:
             是否删除成功
         """
         try:
-            coll = self._get_or_create_collection(collection)
+            coll = await self._get_or_create_collection(collection)
             await asyncio.to_thread(coll.delete, ids=[id])
             logger.info(f"向量删除成功: {collection}, id={id}")
             return True

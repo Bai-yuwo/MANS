@@ -19,6 +19,16 @@
     box-sizing: border-box;
 }
 
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(100%); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideOut {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(100%); }
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
     height: 100vh;
@@ -179,6 +189,30 @@ body {
     padding: 10px;
 }
 
+/* 初始化向导隔离样式 */
+#initialization-panel.active {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: 40px;
+    background: linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-card) 100%);
+}
+
+#initialization-panel.active .panel-title {
+    font-size: 24px;
+    margin-bottom: 8px;
+}
+
+#initialization-panel.active .init-steps {
+    width: 100%;
+    max-width: 720px;
+    padding: 20px;
+    background: var(--bg-card);
+    border-radius: 12px;
+    border: 1px solid var(--bg-hover);
+}
+
 .init-step {
     background-color: var(--bg-card);
     border: 1px solid var(--bg-hover);
@@ -315,6 +349,59 @@ body {
     padding: 15px;
     max-height: 500px;
     overflow-y: auto;
+    position: relative;
+    transition: opacity 0.3s ease;
+}
+
+/* 生成中锁定状态 */
+.scene-content.locked {
+    pointer-events: none;
+    opacity: 0.75;
+}
+
+.scene-content.locked::after {
+    content: 'AI 正在生成中...';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(15, 23, 42, 0.9);
+    color: var(--primary-light);
+    padding: 10px 24px;
+    border-radius: 20px;
+    border: 1px solid var(--primary);
+    font-size: 14px;
+    font-weight: 500;
+    z-index: 10;
+    white-space: nowrap;
+    pointer-events: none;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* 自动保存状态提示 */
+.save-status {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+    text-align: right;
+    transition: color 0.3s ease;
+}
+
+.save-status.saving {
+    color: var(--warning);
+}
+
+.save-status.saved {
+    color: var(--success);
+}
+
+.save-status.error {
+    color: var(--error);
 }
 
 .generated-text {

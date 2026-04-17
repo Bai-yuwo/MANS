@@ -861,7 +861,8 @@ function displayChapterPlan(plan) {
  * 构建章节规划 HTML（复用）
  */
 function buildChapterPlanHtml(plan, showWritingActions = false) {
-    const sceneCards = (plan.scenes || []).map((scene) => `
+    const scenes = plan.scenes || [];
+    const sceneCards = scenes.map((scene) => `
         <div class="scene-card" data-index="${escapeHtml(String(scene.scene_index))}">
             <div class="scene-header">
                 <span class="scene-number">场景 ${scene.scene_index + 1}</span>
@@ -894,6 +895,17 @@ function buildChapterPlanHtml(plan, showWritingActions = false) {
             <p class="goal">本章目标: ${escapeHtml(plan.chapter_goal || '')}</p>
             <p class="emotion">情绪走向: ${escapeHtml(plan.emotional_arc || '')}</p>
         </div>
+        ${showWritingActions && scenes.length > 0 ? `
+        <div class="chapter-batch-actions" style="margin-bottom:16px;display:flex;gap:10px;align-items:center;">
+            <button class="mans-btn primary" onclick="generateAllScenes()"
+                    ${AppState.isGenerating ? 'disabled' : ''}>
+                ${AppState.isGenerating ? '生成中...' : '一键生成全章'}
+            </button>
+            <span style="color:var(--text-secondary);font-size:13px;">
+                共 ${scenes.length} 个场景，将按顺序依次生成
+            </span>
+        </div>
+        ` : ''}
         <div class="scenes-list">
             ${sceneCards}
         </div>
@@ -949,6 +961,60 @@ function updateAllSceneButtons() {
             btn.disabled = AppState.isGenerating;
         }
     });
+}
+
+/**
+ * 一键生成全章所有场景（无人值守，顺序执行）
+ */
+async function generateAllScenes() {
+    if (!AppState.currentProject || AppState.isGenerating) return;
+
+    // 获取当前章节所有场景索引
+    const sceneCards = document.querySelectorAll('.scene-card');
+    const sceneIndices = Array.from(sceneCards).map(card => {
+        const idxAttr = card.getAttribute('data-index');
+        return idxAttr ? parseInt(idxAttr, 10) : null;
+    }).filter(idx => idx !== null);
+
+    if (sceneIndices.length === 0) {
+        showMessage('当前章节无场景可生成', 'warning');
+        return;
+    }
+
+    if (!confirm(`将按顺序生成 ${sceneIndices.length} 个场景，期间请勿关闭页面。确认开始？`)) {
+        return;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const sceneIndex of sceneIndices) {
+        // 检查是否已有内容（避免覆盖已生成的场景）
+        const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
+        const hasContent = contentDiv && contentDiv.querySelector('.generated-text');
+        if (hasContent) {
+            console.log(`场景 ${sceneIndex + 1} 已有内容，跳过`);
+            continue;
+        }
+
+        try {
+            await generateScene(sceneIndex);
+            successCount++;
+        } catch (error) {
+            failCount++;
+            showMessage(`场景 ${sceneIndex + 1} 生成失败: ${error.message}`, 'error');
+        }
+
+        // 每个场景之间短暂停顿，让系统喘息
+        if (sceneIndex !== sceneIndices[sceneIndices.length - 1]) {
+            await new Promise(r => setTimeout(r, 500));
+        }
+    }
+
+    showMessage(
+        `全章生成完成！成功: ${successCount}，失败: ${failCount}，跳过: ${sceneIndices.length - successCount - failCount}`,
+        failCount > 0 ? 'warning' : 'success'
+    );
 }
 
 async function generateScene(sceneIndex) {
@@ -1021,8 +1087,14 @@ async function connectStream(sceneIndex, contentDiv) {
                     case 'token': {
                         const data = JSON.parse(currentEvent.data);
                         generatedText += data.content;
+                        // 智能滚动：仅在用户处于底部时自动下拉
+                        const isNearBottom = (
+                            contentDiv.scrollHeight - contentDiv.scrollTop - contentDiv.clientHeight
+                        ) < 50;
                         contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(generatedText)}</div>`;
-                        contentDiv.scrollTop = contentDiv.scrollHeight;
+                        if (isNearBottom) {
+                            contentDiv.scrollTop = contentDiv.scrollHeight;
+                        }
                         break;
                     }
                     case 'progress': {
@@ -1188,8 +1260,14 @@ async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
                     case 'token': {
                         const data = JSON.parse(currentEvent.data);
                         generatedText += data.content;
+                        // 智能滚动：仅在用户处于底部时自动下拉
+                        const isNearBottom = (
+                            contentDiv.scrollHeight - contentDiv.scrollTop - contentDiv.clientHeight
+                        ) < 50;
                         contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(generatedText)}</div>`;
-                        contentDiv.scrollTop = contentDiv.scrollHeight;
+                        if (isNearBottom) {
+                            contentDiv.scrollTop = contentDiv.scrollHeight;
+                        }
                         break;
                     }
                     case 'progress': break;
@@ -1457,6 +1535,28 @@ function closeDynamicModal() {
  */
 async function confirmChapter() {
     if (!AppState.currentProject) return;
+
+    // ── 强制保存所有活跃编辑器，防止防抖定时器内的修改丢失 ──
+    const pendingSaves = [];
+    document.querySelectorAll('.scene-content').forEach(contentDiv => {
+        if (contentDiv._autoSaveTimer) {
+            clearTimeout(contentDiv._autoSaveTimer);
+            contentDiv._autoSaveTimer = null;
+            const sceneIndex = parseInt(contentDiv.id.replace('scene-content-', ''), 10);
+            if (!isNaN(sceneIndex)) {
+                pendingSaves.push(saveSceneEdit(sceneIndex, { silent: true }));
+            }
+        }
+    });
+    if (pendingSaves.length > 0) {
+        try {
+            await Promise.all(pendingSaves);
+            showMessage('已强制保存未落盘的编辑内容', 'info');
+        } catch (e) {
+            showMessage('强制保存失败: ' + e.message, 'error');
+            return;
+        }
+    }
 
     if (!confirm('确认本章已完成？确认后将进入下一章。')) {
         return;
@@ -2007,6 +2107,7 @@ window.deleteProject = deleteProject;
 window.openCreateModal = openCreateModal;
 window.closeCreateModal = closeCreateModal;
 window.generateScene = generateScene;
+window.generateAllScenes = generateAllScenes;
 window.editScene = editScene;
 window.saveSceneEdit = saveSceneEdit;
 window.cancelSceneEdit = cancelSceneEdit;

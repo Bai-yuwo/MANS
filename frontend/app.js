@@ -142,8 +142,70 @@ async function checkAsyncUpdates(chapterNum) {
         } else if (data.updates_count > 0) {
             showMessage('知识库已同步更新', 'info');
         }
+        refreshIssueBadge();
     } catch (e) {
         // 静默忽略轮询错误
+    }
+}
+
+/**
+ * 渲染 Issue Pool 悬浮角标
+ */
+function renderIssueBadge() {
+    let badge = document.getElementById('issue-badge');
+    if (!badge) {
+        badge = document.createElement('div');
+        badge.id = 'issue-badge';
+        badge.style.cssText = `
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--error);
+            color: white;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+            cursor: pointer;
+            z-index: 3000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transition: transform 0.2s;
+        `;
+        badge.addEventListener('click', () => {
+            document.querySelector('.sidebar-item[data-panel="issues"]')?.click();
+        });
+        badge.addEventListener('mouseenter', () => {
+            badge.style.transform = 'scale(1.1)';
+        });
+        badge.addEventListener('mouseleave', () => {
+            badge.style.transform = 'scale(1)';
+        });
+        document.body.appendChild(badge);
+    }
+    return badge;
+}
+
+/**
+ * 刷新 Issue Pool 角标计数
+ */
+async function refreshIssueBadge() {
+    if (!AppState.currentProject) {
+        const badge = document.getElementById('issue-badge');
+        if (badge) badge.style.display = 'none';
+        return;
+    }
+    try {
+        const data = await apiRequest(`/api/projects/${AppState.currentProject}/issues`);
+        const count = data.total || 0;
+        const badge = renderIssueBadge();
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.style.display = count > 0 ? 'flex' : 'none';
+    } catch (e) {
+        // ignore
     }
 }
 
@@ -460,6 +522,8 @@ async function openProject(projectId, options = {}) {
                 await loadWritingInterface(projectId);
             }
         }
+
+        refreshIssueBadge();
 
     } catch (error) {
         showMessage('打开项目失败: ' + error.message, 'error');

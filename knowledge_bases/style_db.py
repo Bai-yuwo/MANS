@@ -25,54 +25,54 @@ class StyleDB(BaseDB):
     def __init__(self, project_id: str):
         super().__init__(project_id, "style")
     
-    def get_examples_by_tone(self, tone: str, limit: int = 3) -> list[str]:
+    async def get_examples_by_tone(self, tone: str, limit: int = 3) -> list[str]:
         """
         根据情绪基调获取参考范文
-        
+
         Args:
             tone: 情绪基调（如"热血"/"压抑"/"温情"）
             limit: 返回数量限制
-        
+
         Returns:
             范文片段列表
         """
-        data = self.load(f"tone_{tone}") or {}
+        data = await self.load(f"tone_{tone}") or {}
         examples = data.get("examples", [])
         return examples[:limit]
     
-    def add_example(self, tone: str, example: str) -> bool:
+    async def add_example(self, tone: str, example: str) -> bool:
         """
         添加文风范例
-        
+
         Args:
             tone: 情绪基调
             example: 范文片段
-        
+
         Returns:
             是否添加成功
         """
-        return self.append(f"tone_{tone}", {
+        return await self.append(f"tone_{tone}", {
             "text": example,
             "tone": tone
         })
     
-    def get_style_config(self) -> dict:
+    async def get_style_config(self) -> dict:
         """
         获取文风配置
-        
+
         Returns:
             文风配置字典
         """
-        return self.load("config") or {}
+        return await self.load("config") or {}
     
-    def save_style_config(self, config: dict) -> bool:
+    async def save_style_config(self, config: dict) -> bool:
         """
         保存文风配置
-        
+
         Args:
             config: 文风配置
-        
+
         Returns:
             是否保存成功
         """
-        return self.save("config", config)
+        return await self.save("config", config)

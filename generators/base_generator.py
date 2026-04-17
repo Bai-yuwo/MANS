@@ -203,6 +203,10 @@ class BaseGenerator(ABC):
         # 提取生成参数
         temperature = kwargs.pop('temperature', 0.7)
         max_retries = kwargs.pop('max_retries', 3)
+        max_tokens = kwargs.pop('max_tokens', 4000)
+        connect_timeout = kwargs.pop('connect_timeout', 30)
+        sock_read_timeout = kwargs.pop('sock_read_timeout', 60)
+        total_timeout = kwargs.pop('total_timeout', 600)
 
         # Step 1: 构建 prompt
         try:
@@ -215,62 +219,87 @@ class BaseGenerator(ABC):
                 details={"error": str(e)}
             )
 
-        # Step 2: 调用 LLM
-        try:
-            self._report_progress(f"[{generator_name}] 调用大模型...")
+        # Step 2-4: 调用 LLM、解析、验证（带重试）
+        current_prompt = prompt
+        last_error = None
+        validation_retries = max(1, max_retries + 1)
 
-            # 获取 JSON Schema（如果子类定义了）
-            json_schema = self.get_output_schema()
+        for attempt in range(validation_retries):
+            try:
+                self._report_progress(f"[{generator_name}] 调用大模型... (尝试 {attempt + 1}/{validation_retries})")
 
-            # 使用 json_schema 模式（豆包官方推荐）
-            response_format = "json_schema" if json_schema else None
+                # 获取 JSON Schema（如果子类定义了）
+                json_schema = self.get_output_schema()
 
-            response: LLMResponse = await self.llm_client.call_with_retry(
-                role="generator",
-                prompt=prompt,
-                system_prompt="",
-                response_format=response_format,
-                json_schema=json_schema,
-                max_tokens=4000,
-                temperature=temperature,
-                max_retries=max_retries
-            )
-        except LLMError as e:
-            raise LLMCallError(
-                f"LLM 调用失败: {str(e)}",
-                stage="llm_call",
-                details={"provider": e.provider, "model": e.model}
-            )
-        
-        # Step 3: 解析响应
-        try:
-            self._report_progress(f"[{generator_name}] 解析响应...")
-            result = self._parse_response(response.content)
-        except Exception as e:
-            raise ParseError(
-                f"解析响应失败: {str(e)}",
-                stage="parse",
-                details={"raw_response": response.content[:500]}
-            )
-        
-        # Step 4: 验证结果
-        try:
-            self._report_progress(f"[{generator_name}] 验证结果...")
-            is_valid = self._validate_result(result)
-            if not is_valid:
-                raise ValidationError(
-                    "结果验证未通过",
-                    stage="validation",
-                    details={"result": str(result)[:500]}
+                # 使用 json_schema 模式（豆包官方推荐）
+                response_format = "json_schema" if json_schema else None
+
+                response: LLMResponse = await self.llm_client.call_with_retry(
+                    role="generator",
+                    prompt=current_prompt,
+                    system_prompt="",
+                    response_format=response_format,
+                    json_schema=json_schema,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    max_retries=max_retries,
+                    connect_timeout=connect_timeout,
+                    sock_read_timeout=sock_read_timeout,
+                    total_timeout=total_timeout
                 )
-        except ValidationError:
-            raise
-        except Exception as e:
-            raise ValidationError(
-                f"验证过程出错: {str(e)}",
-                stage="validation",
-                details={"error": str(e)}
-            )
+            except LLMError as e:
+                raise LLMCallError(
+                    f"LLM 调用失败: {str(e)}",
+                    stage="llm_call",
+                    details={"provider": e.provider, "model": e.model}
+                )
+
+            # Step 3: 解析响应
+            try:
+                self._report_progress(f"[{generator_name}] 解析响应...")
+                result = self._parse_response(response.content)
+            except Exception as e:
+                if attempt < validation_retries - 1:
+                    last_error = f"JSON 解析失败: {str(e)}"
+                    self._report_progress(f"[{generator_name}] {last_error}，正在重试...")
+                    current_prompt = prompt + f"\n\n【修正要求】之前输出存在格式错误：{last_error}。请确保输出严格的 JSON 格式，不要包含 markdown 代码块或其他说明文字。"
+                    continue
+                raise ParseError(
+                    f"解析响应失败: {str(e)}",
+                    stage="parse",
+                    details={"raw_response": response.content[:500]}
+                )
+
+            # Step 4: 验证结果
+            try:
+                self._report_progress(f"[{generator_name}] 验证结果...")
+                is_valid = self._validate_result(result)
+                if not is_valid:
+                    raise ValidationError(
+                        "结果验证未通过",
+                        stage="validation",
+                        details={"result": str(result)[:500]}
+                    )
+                # 验证通过，跳出重试循环
+                break
+            except ValidationError as e:
+                if attempt < validation_retries - 1:
+                    last_error = str(e)
+                    self._report_progress(f"[{generator_name}] 验证失败: {last_error}，正在重试...")
+                    current_prompt = prompt + f"\n\n【修正要求】之前输出未通过数据验证：{last_error}。请根据要求修正后重新输出严格的 JSON。"
+                    continue
+                raise
+            except Exception as e:
+                if attempt < validation_retries - 1:
+                    last_error = f"验证过程出错: {str(e)}"
+                    self._report_progress(f"[{generator_name}] {last_error}，正在重试...")
+                    current_prompt = prompt + f"\n\n【修正要求】之前输出在验证时发生错误：{last_error}。请修正后重新输出。"
+                    continue
+                raise ValidationError(
+                    f"验证过程出错: {str(e)}",
+                    stage="validation",
+                    details={"error": str(e)}
+                )
         
         # Step 5: 保存到知识库
         try:
@@ -312,6 +341,10 @@ class BaseGenerator(ABC):
 
         # 提取生成参数
         temperature = kwargs.pop('temperature', 0.7)
+        max_tokens = kwargs.pop('max_tokens', 4000)
+        connect_timeout = kwargs.pop('connect_timeout', 30)
+        sock_read_timeout = kwargs.pop('sock_read_timeout', 60)
+        total_timeout = kwargs.pop('total_timeout', 600)
 
         try:
             # Step 1: 构建 prompt
@@ -333,15 +366,15 @@ class BaseGenerator(ABC):
             async for token in self.llm_client.stream(
                 role="generator",
                 prompt=prompt,
-                max_tokens=4000,
+                max_tokens=max_tokens,
                 temperature=temperature,
-                connect_timeout=30,
-                sock_read_timeout=60,
-                total_timeout=600
+                connect_timeout=connect_timeout,
+                sock_read_timeout=sock_read_timeout,
+                total_timeout=total_timeout
             ):
                 full_content += token
                 token_count += 1
-                
+
                 # yield token事件
                 yield {
                     "type": "token",

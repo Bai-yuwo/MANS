@@ -45,68 +45,79 @@ class ChapterPlanner(BaseGenerator):
                       previous_chapter_summary: str = "",
                       **kwargs) -> str:
         """
-        构建章节规划 prompt
-        
-        Args:
-            chapter_number: 章节编号
-            arc_plan: 弧线规划数据
-            previous_chapter_summary: 上一章摘要
-            
-        Returns:
-            完整的 prompt 字符串
+        构建章节规划 prompt（适配缩略版弧线）
         """
-        # 提取弧线信息
         arc_id = arc_plan.get("arc_id", "unknown")
         arc_theme = arc_plan.get("arc_theme", "")
-        
-        # 找到本章的弧线内规划
-        chapter_plans = arc_plan.get("chapter_plans", [])
-        current_chapter_plan = None
-        for cp in chapter_plans:
-            if cp.get("chapter_number") == chapter_number:
-                current_chapter_plan = cp
+        chapter_range = arc_plan.get("chapter_range", [0, 0])
+
+        # 本章里程碑
+        milestones = arc_plan.get("chapter_milestones", [])
+        current_milestone = None
+        for ms in milestones:
+            if ms.get("chapter_number") == chapter_number:
+                current_milestone = ms
                 break
-        
-        if not current_chapter_plan:
-            # 使用默认规划
-            current_chapter_plan = {
+        if not current_milestone:
+            current_milestone = {
                 "chapter_number": chapter_number,
-                "title": f"第{chapter_number}章",
-                "key_event": "推进剧情",
-                "emotional_tone": "平静"
+                "milestone": "推进剧情",
+                "must_happen": "本章需完成的核心事件"
             }
-        
-        # 提取情绪曲线
-        emotional_curve = arc_plan.get("emotional_curve", [])
-        current_emotion = None
-        for ec in emotional_curve:
-            if ec.get("chapter") == chapter_number:
-                current_emotion = ec
-                break
-        
-        prompt = f"""基于以下弧线规划，生成第 {chapter_number} 章的详细场景序列。
+
+        # 本章涉及的转折点
+        turning_points = arc_plan.get("key_turning_points", [])
+        current_turning_points = [
+            tp for tp in turning_points
+            if tp.get("chapter") == chapter_number
+        ]
+
+        # 情绪弧线
+        emotional_arc = arc_plan.get("emotional_arc", {})
+
+        # 相邻章里程碑（用于把握上下文）
+        prev_milestone = None
+        next_milestone = None
+        for ms in milestones:
+            if ms.get("chapter_number") == chapter_number - 1:
+                prev_milestone = ms
+            if ms.get("chapter_number") == chapter_number + 1:
+                next_milestone = ms
+
+        prompt = f"""基于以下弧线宏观规划，自主设计第 {chapter_number} 章的详细场景序列。
 
 ## 弧线信息
 
 - **弧线ID**：{arc_id}
 - **弧线主题**：{arc_theme}
 - **弧线目标**：{arc_plan.get('arc_goal', '')}
+- **主角成长方向**：{arc_plan.get('protagonist_development', '')}
+- **弧线章节范围**：第 {chapter_range[0]} 章 ~ 第 {chapter_range[1]} 章
 
-## 本章规划（来自弧线）
+## 弧线情绪走向
+
+- **整体模式**：{emotional_arc.get('pattern', '波浪')}
+- **开篇情绪**：{emotional_arc.get('opening', '')}
+- **高潮情绪**：{emotional_arc.get('climax_emotion', '')}（约第 {emotional_arc.get('climax_chapter', 0)} 章）
+- **结尾情绪**：{emotional_arc.get('ending', '')}
+
+## 本章定位
 
 - **章节编号**：{chapter_number}
-- **暂定标题**：{current_chapter_plan.get('title', '')}
-- **关键事件**：{current_chapter_plan.get('key_event', '')}
-- **主角行动**：{current_chapter_plan.get('protagonist_action', '')}
-- **情绪基调**：{current_chapter_plan.get('emotional_tone', '')}
+- **里程碑**：{current_milestone.get('milestone', '')}
+- **必须发生**：{current_milestone.get('must_happen', '')}
 """
-        
-        if current_emotion:
-            prompt += f"""
-- **情绪强度**：{current_emotion.get('intensity', 5)}/10
-- **情绪描述**：{current_emotion.get('description', '')}
-"""
-        
+
+        if prev_milestone:
+            prompt += f"- **前一章进展**：{prev_milestone.get('milestone', '')}\n"
+        if next_milestone:
+            prompt += f"- **后一章铺垫**：{next_milestone.get('milestone', '')}\n"
+
+        if current_turning_points:
+            prompt += "\n## 本章转折点\n\n"
+            for tp in current_turning_points:
+                prompt += f"- **{tp.get('name', '')}**：{tp.get('description', '')}（影响：{tp.get('impact', '')}）\n"
+
         if previous_chapter_summary:
             prompt += f"""
 
@@ -114,7 +125,7 @@ class ChapterPlanner(BaseGenerator):
 
 {previous_chapter_summary}
 """
-        
+
         prompt += f"""
 
 ## 输出要求

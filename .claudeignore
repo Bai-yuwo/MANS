@@ -1,0 +1,9 @@
+.cache/
+.qoder/
+logs/
+.env.example
+APItest.py
+项目文档.md
+.idea/
+.gitignore
+__pycache__/

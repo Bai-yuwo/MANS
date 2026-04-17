@@ -9,10 +9,24 @@
 <body>
     <!-- 上边栏 -->
     <div class="top-bar">
-        <div class="top-bar-icon" title="菜单">
-            <svg viewBox="0 0 24 24">
-                <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
-            </svg>
+        <div class="top-bar-left">
+            <div class="top-bar-icon" title="菜单">
+                <svg viewBox="0 0 24 24">
+                    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+                </svg>
+            </div>
+            <div class="top-bar-title">MANS 创作助手</div>
+        </div>
+        <div class="top-bar-center">
+            <span class="top-bar-project-name" id="current-project-name"></span>
+        </div>
+        <div class="top-bar-right" id="top-bar-project">
+            <button class="mans-btn sm" id="back-to-works-btn" title="返回作品列表">
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;">
+                    <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+                </svg>
+                返回列表
+            </button>
         </div>
     </div>
 
@@ -27,25 +41,25 @@
                     </svg>
                     <span class="sidebar-item-text">作品创作</span>
                 </li>
-                <li class="sidebar-item" data-panel="arc">
+                <li class="sidebar-item disabled" data-panel="arc" data-requires-project="true">
                     <svg viewBox="0 0 24 24">
                         <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
                     </svg>
                     <span class="sidebar-item-text">弧线规划</span>
                 </li>
-                <li class="sidebar-item" data-panel="chapter-plan">
+                <li class="sidebar-item disabled" data-panel="chapter-plan" data-requires-project="true">
                     <svg viewBox="0 0 24 24">
                         <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
                     </svg>
                     <span class="sidebar-item-text">章节规划</span>
                 </li>
-                <li class="sidebar-item" data-panel="issues">
+                <li class="sidebar-item disabled" data-panel="issues" data-requires-project="true">
                     <svg viewBox="0 0 24 24">
                         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
                     </svg>
                     <span class="sidebar-item-text">Issue Pool</span>
                 </li>
-                <li class="sidebar-item" data-panel="knowledge">
+                <li class="sidebar-item disabled" data-panel="knowledge" data-requires-project="true">
                     <svg viewBox="0 0 24 24">
                         <path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/>
                     </svg>
@@ -57,7 +71,7 @@
                     </svg>
                     <span class="sidebar-item-text">系统设置</span>
                 </li>
-                <li class="sidebar-item" data-panel="monitor">
+                <li class="sidebar-item disabled" data-panel="monitor" data-requires-project="true">
                     <svg viewBox="0 0 24 24">
                         <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
                     </svg>
@@ -70,17 +84,16 @@
         <div class="content-area">
             <!-- 作品创作面板 -->
             <div class="content-panel active" id="works-panel">
-                <!-- 工具栏：创建作品按钮居中 -->
                 <div class="works-toolbar">
+                    <h2>我的作品</h2>
                     <button class="mans-btn primary" id="works-add-btn">
-                        <svg viewBox="0 0 24 24" style="width: 16px; height: 16px; fill: currentColor; margin-right: 6px;">
+                        <svg viewBox="0 0 24 24" style="width: 16px; height: 16px; fill: currentColor;">
                             <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
                         </svg>
                         创建作品
                     </button>
                 </div>
-                <!-- 作品内容 -->
-                <div id="works-content" style="padding: 10px;">
+                <div id="works-content">
                     <div id="project-list" class="project-grid">
                         <!-- 项目列表将动态加载 -->
                     </div>
@@ -150,7 +163,7 @@
 
             <!-- 初始化流程面板 -->
             <div class="content-panel" id="initialization-panel">
-                <h3>初始化流程</h3>
+                <h3 class="panel-title">初始化流程</h3>
                 <div class="init-steps">
                     <div class="init-step pending" id="bible-step">
                         <div class="step-header">
@@ -191,15 +204,71 @@
             <div class="content-panel" id="arc-panel">
                 <h3 class="panel-title">弧线规划</h3>
                 <div class="panel-content">
-                    <div id="arc-list" style="display: flex; flex-direction: column; gap: 16px;">
-                        <!-- 弧线将动态生成 -->
+                    <div id="arc-empty" class="panel-empty">
+                        <svg class="panel-empty-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                        </svg>
+                        <p class="panel-empty-text">请先选择一个作品，再生成弧线规划</p>
                     </div>
-                    <div style="margin-top: 20px; display: flex; gap: 10px;">
-                        <button class="mans-btn primary" id="generate-arc-1-btn" onclick="generateArc(1)">生成弧线 1</button>
-                        <button class="mans-btn" id="generate-arc-2-btn" onclick="generateArc(2)">生成弧线 2</button>
-                        <button class="mans-btn" id="generate-arc-3-btn" onclick="generateArc(3)">生成弧线 3</button>
-                        <button class="mans-btn" id="generate-arc-4-btn" onclick="generateArc(4)">生成弧线 4</button>
+                    <div id="arc-content" style="display: none;">
+                        <div class="arc-toolbar" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+                            <button class="mans-btn primary" onclick="openCreateArcModal()">
+                                <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;vertical-align:middle;margin-right:4px;">
+                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                </svg>
+                                创建新弧线
+                            </button>
+                            <button class="mans-btn" id="suggest-arc-btn" onclick="suggestNextArc()">
+                                <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;vertical-align:middle;margin-right:4px;">
+                                    <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6A4.997 4.997 0 0 1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z"/>
+                                </svg>
+                                智能推荐
+                            </button>
+                        </div>
+                        <div id="arc-suggest-result" style="display:none;margin-bottom:16px;"></div>
+                        <div class="arc-grid" id="arc-list-dynamic">
+                            <!-- 动态加载弧线列表 -->
+                        </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- 创建弧线模态框 -->
+            <div id="create-arc-modal" class="modal" style="display: none;">
+                <div class="modal-content" style="max-width: 520px;">
+                    <div class="modal-header">
+                        <h3>创建新弧线</h3>
+                        <button class="close-btn" onclick="closeCreateArcModal()">&times;</button>
+                    </div>
+                    <form id="create-arc-form">
+                        <div class="form-group">
+                            <label>章节范围 *</label>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <input type="number" id="arc-create-start" required min="1" placeholder="起始" style="flex:1;">
+                                <span>~</span>
+                                <input type="number" id="arc-create-end" required min="1" placeholder="结束" style="flex:1;">
+                            </div>
+                            <small style="color:var(--text-secondary);font-size:12px;">系统自动建议：起始为最新章+1，结束为起始+50</small>
+                        </div>
+                        <div class="form-group">
+                            <label>弧线走向/作用 *</label>
+                            <textarea id="arc-create-desc" required rows="2" placeholder="用一句话描述这条弧线的核心走向或作用，如：主角初入宗门，埋下后期背叛伏笔"></textarea>
+                            <button type="button" class="mans-btn sm" style="margin-top:6px;" id="arc-suggest-detail-btn" onclick="suggestArcDetail()">
+                                <svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:currentColor;vertical-align:middle;margin-right:4px;">
+                                    <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6A4.997 4.997 0 0 1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z"/>
+                                </svg>
+                                智能提示
+                            </button>
+                        </div>
+                        <div class="form-group">
+                            <label>弧线名称</label>
+                            <input type="text" id="arc-create-title" placeholder="如不填写，将在生成时由系统根据走向自动命名">
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="mans-btn primary">创建并生成</button>
+                            <button type="button" class="mans-btn" onclick="closeCreateArcModal()">取消</button>
+                        </div>
+                    </form>
                 </div>
             </div>
 
@@ -207,13 +276,21 @@
             <div class="content-panel" id="chapter-plan-panel">
                 <h3 class="panel-title">章节规划</h3>
                 <div class="panel-content">
-                    <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center;">
-                        <label>章节编号:</label>
-                        <input type="number" id="chapter-plan-number" min="1" value="1" style="width: 80px; text-align: center; padding: 6px; background: var(--bg-dark); border: 1px solid var(--bg-hover); border-radius: 4px; color: var(--text-primary);">
-                        <button class="mans-btn primary" onclick="generateChapterPlan(parseInt(document.getElementById('chapter-plan-number').value))">生成章节规划</button>
+                    <div id="chapter-plan-empty" class="panel-empty">
+                        <svg class="panel-empty-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                        </svg>
+                        <p class="panel-empty-text">请先选择一个作品，再生成章节规划</p>
                     </div>
-                    <div id="chapter-plan-result">
-                        <!-- 章节规划结果将动态显示 -->
+                    <div id="chapter-plan-content" style="display: none;">
+                        <div class="chapter-input-group">
+                            <label>章节编号:</label>
+                            <input type="number" id="chapter-plan-number" min="1" value="1">
+                            <button class="mans-btn primary" onclick="generateChapterPlan(parseInt(document.getElementById('chapter-plan-number').value))">生成章节规划</button>
+                        </div>
+                        <div id="chapter-plan-result" class="chapter-plan-result">
+                            <!-- 章节规划结果将动态显示 -->
+                        </div>
                     </div>
                 </div>
             </div>
@@ -222,34 +299,60 @@
             <div class="content-panel" id="issues-panel">
                 <h3 class="panel-title">Issue Pool</h3>
                 <div class="panel-content">
-                    <div id="issues-panel-list" style="min-height: 60px;">
-                        <p style="color: var(--text-secondary); text-align: center;">请先打开一个项目</p>
+                    <div id="issues-empty" class="panel-empty">
+                        <svg class="panel-empty-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                        </svg>
+                        <p class="panel-empty-text">请先选择一个作品以查看 Issues</p>
                     </div>
-                    <div style="margin-top: 16px; text-align: center;">
-                        <button class="mans-btn" onclick="loadIssuesForPanel()">刷新</button>
+                    <div id="issues-content" style="display: none;">
+                        <div class="action-bar right" style="margin-bottom: 16px;">
+                            <button class="mans-btn" onclick="loadIssuesForPanel()">刷新</button>
+                        </div>
+                        <div id="issues-panel-list" class="monitor-section-content">
+                            <!-- Issues 动态加载 -->
+                        </div>
                     </div>
                 </div>
             </div>
 
             <!-- 写作面板 -->
             <div class="content-panel" id="writing-panel">
-                <div class="writing-header">
-                    <h3>写作界面</h3>
-                    <div class="writing-actions">
-                        <button id="view-kb-btn" class="mans-btn">查看知识库</button>
-                        <button id="confirm-chapter-btn" class="mans-btn primary">确认本章</button>
-                    </div>
+                <div id="writing-empty" class="panel-empty">
+                    <svg class="panel-empty-icon" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                    </svg>
+                    <p class="panel-empty-text">请先选择一个作品进入写作界面</p>
                 </div>
-                <div id="chapter-plan-display" class="chapter-content">
-                    <!-- 章节规划将动态加载 -->
+                <div id="writing-content" style="display: none;">
+                    <div class="writing-header">
+                        <h3>写作界面</h3>
+                        <div class="writing-actions">
+                            <button id="view-kb-btn" class="mans-btn">查看知识库</button>
+                            <button id="confirm-chapter-btn" class="mans-btn primary">确认本章</button>
+                        </div>
+                    </div>
+                    <div id="chapter-plan-display" class="chapter-content">
+                        <!-- 章节规划将动态加载 -->
+                    </div>
                 </div>
             </div>
 
             <!-- 知识库面板 -->
             <div class="content-panel" id="knowledge-panel">
-                <h3>知识库</h3>
-                <div id="knowledge-display">
-                    <!-- 知识库内容将动态加载 -->
+                <h3 class="panel-title">知识库</h3>
+                <div class="panel-content">
+                    <div id="knowledge-empty" class="panel-empty">
+                        <svg class="panel-empty-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z"/>
+                        </svg>
+                        <p class="panel-empty-text">请先选择一个作品以查看知识库</p>
+                    </div>
+                    <div id="knowledge-content" style="display: none;">
+                        <div id="knowledge-display">
+                            <!-- 知识库内容将动态加载 -->
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -292,37 +395,39 @@
             <div class="content-panel" id="monitor-panel">
                 <h3 class="panel-title">实时监控</h3>
                 <div class="panel-content">
-                    <div id="monitor-issues-section" style="margin-bottom: 24px;">
-                        <h4 style="margin-bottom: 12px; color: var(--primary-light);">Issue Pool</h4>
-                        <div id="issues-list" style="min-height: 60px;">
-                            <p style="color: var(--text-secondary);">请先打开一个项目以查看 Issues</p>
-                        </div>
+                    <div id="monitor-empty" class="panel-empty">
+                        <svg class="panel-empty-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
+                        </svg>
+                        <p class="panel-empty-text">请先选择一个作品以查看实时监控</p>
                     </div>
-                    <div id="monitor-foreshadowing-section" style="margin-bottom: 24px;">
-                        <h4 style="margin-bottom: 12px; color: var(--primary-light);">伏笔状态</h4>
-                        <div id="foreshadowing-monitor" style="min-height: 60px;">
-                            <p style="color: var(--text-secondary);">请先打开一个项目以查看伏笔</p>
-                        </div>
-                    </div>
-                    <div id="monitor-stats-section">
-                        <h4 style="margin-bottom: 12px; color: var(--primary-light);">项目统计</h4>
-                        <div id="project-stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
-                            <div style="background: var(--bg-dark); padding: 16px; border-radius: 8px; text-align: center;">
-                                <div style="font-size: 24px; font-weight: 600; color: var(--primary-light);" id="stat-chapters">-</div>
-                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">当前章节</div>
+                    <div id="monitor-content" style="display: none;">
+                        <div class="console-toolbar">
+                            <div class="console-toolbar-left">
+                                <select id="console-log-level" class="custom-select" onchange="setConsoleFilter(this.value)" style="width:120px;">
+                                    <option value="DEBUG">DEBUG</option>
+                                    <option value="INFO" selected>INFO</option>
+                                    <option value="WARNING">WARNING</option>
+                                    <option value="ERROR">ERROR</option>
+                                </select>
+                                <label class="console-checkbox">
+                                    <input type="checkbox" id="console-auto-scroll" checked>
+                                    <span>自动滚动</span>
+                                </label>
                             </div>
-                            <div style="background: var(--bg-dark); padding: 16px; border-radius: 8px; text-align: center;">
-                                <div style="font-size: 24px; font-weight: 600; color: var(--success);" id="stat-words">-</div>
-                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">总字数</div>
-                            </div>
-                            <div style="background: var(--bg-dark); padding: 16px; border-radius: 8px; text-align: center;">
-                                <div style="font-size: 24px; font-weight: 600; color: var(--warning);" id="stat-issues">-</div>
-                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">待处理 Issues</div>
+                            <div class="console-toolbar-right">
+                                <span class="console-connection-status" id="console-connection-status">未连接</span>
+                                <button class="mans-btn sm" id="console-connect-btn" onclick="connectLogStream()">连接</button>
+                                <button class="mans-btn sm" onclick="clearConsoleLog()">清空</button>
                             </div>
                         </div>
-                    </div>
-                    <div style="margin-top: 20px; text-align: center;">
-                        <button class="mans-btn primary" onclick="refreshMonitor()">刷新监控</button>
+                        <div class="console-output" id="console-output">
+                            <div class="console-log info">
+                                <span class="console-log-time">--:--:--</span>
+                                <span class="console-log-level">INFO</span>
+                                <span class="console-log-msg">等待连接日志流...</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

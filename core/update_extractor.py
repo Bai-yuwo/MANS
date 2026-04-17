@@ -22,7 +22,9 @@ import aiofiles
 from core.config import get_config
 from core.schemas import (
     ScenePlan, ExtractedUpdates, CharacterStateUpdate,
-    WorldRule, ForeshadowingItem, CharacterCard
+    WorldRule, ForeshadowingItem, CharacterCard,
+    WorldRuleCategory, WorldRuleImportance,
+    ForeshadowingType, ForeshadowingStatus
 )
 from core.llm_client import LLMClient, quick_call
 from core.logging_config import get_logger, log_exception
@@ -89,15 +91,18 @@ class UpdateExtractor:
         self.project_id = project_id
         self.config = get_config()
         self.llm_client = LLMClient()
-        
+
         # 项目路径
         self.project_path = Path(self.config.WORKSPACE_PATH) / project_id
-        
+
         # 知识库引用（延迟初始化）
         self._character_db = None
         self._bible_db = None
         self._foreshadowing_db = None
         self._vector_store = None
+
+        # 更新记录文件锁
+        self._update_record_lock = asyncio.Lock()
     
     @property
     def character_db(self):
@@ -148,7 +153,7 @@ class UpdateExtractor:
         )
         
         # 步骤 2：并发写入各知识库
-        await self._apply_updates(updates)
+        await self._apply_updates(updates, chapter_number=chapter_number)
         
         # 步骤 3：向量化存储（如果启用）
         if self.config.ENABLE_VECTOR_SEARCH:
@@ -194,19 +199,12 @@ class UpdateExtractor:
                 scene_plan=scene_plan
             )
         else:
-            # 默认异步：创建后台任务，不阻塞调用者
-            asyncio.create_task(
-                self._do_extract_and_update(
-                    generated_text=generated_text,
-                    chapter_number=chapter_number,
-                    scene_index=scene_index,
-                    scene_plan=scene_plan
-                )
-            )
-            # 返回轻量标记（实际结果在后台处理）
-            return ExtractedUpdates(
-                source_chapter=chapter_number,
-                source_scene_index=scene_index
+            # 默认异步：返回后台协程，由调用者自行包装为任务
+            return self._do_extract_and_update(
+                generated_text=generated_text,
+                chapter_number=chapter_number,
+                scene_index=scene_index,
+                scene_plan=scene_plan
             )
     
     async def _extract_updates(
@@ -221,7 +219,7 @@ class UpdateExtractor:
         # 获取当前人物状态（用于对比）
         current_characters = {}
         for name in scene_plan.present_characters:
-            char = self.character_db.get_character(name)
+            char = await self.character_db.get_character(name)
             if char:
                 current_characters[name] = {
                     "location": char.current_location,
@@ -391,29 +389,56 @@ class UpdateExtractor:
             # 解析 JSON 响应
             data = json.loads(response_obj.content)
             
-            # 构建 ExtractedUpdates
+            # 构建 ExtractedUpdates（带枚举值安全校验）
+            valid_categories = {e.value for e in WorldRuleCategory}
+            valid_importances = {e.value for e in WorldRuleImportance}
+            valid_fs_types = {e.value for e in ForeshadowingType}
+            valid_fs_statuses = {e.value for e in ForeshadowingStatus}
+
+            sanitized_world_rules = []
+            for wr in data.get("new_world_rules", []):
+                cat = wr.get("category", "special")
+                if cat not in valid_categories:
+                    cat = "special"
+                imp = wr.get("importance", "major")
+                if imp not in valid_importances:
+                    imp = "major"
+                wr["category"] = cat
+                wr["importance"] = imp
+                try:
+                    sanitized_world_rules.append(
+                        WorldRule(source_chapter=chapter_number, **wr)
+                    )
+                except Exception as e:
+                    logger.warning(f"跳过非法 world_rule: {e}")
+
+            sanitized_foreshadowing = []
+            for nf in data.get("new_foreshadowing", []):
+                fs_type = nf.get("type", "plot")
+                if fs_type not in valid_fs_types:
+                    fs_type = "plot"
+                nf["type"] = fs_type
+                status = nf.get("status", "planted")
+                if status not in valid_fs_statuses:
+                    status = "planted"
+                nf["status"] = status
+                try:
+                    sanitized_foreshadowing.append(
+                        ForeshadowingItem(planted_chapter=chapter_number, **nf)
+                    )
+                except Exception as e:
+                    logger.warning(f"跳过非法 foreshadowing: {e}")
+
             updates = ExtractedUpdates(
                 source_chapter=chapter_number,
                 source_scene_index=scene_index,
                 character_updates=[
-                    CharacterStateUpdate(**cu) 
+                    CharacterStateUpdate(**cu)
                     for cu in data.get("character_updates", [])
                 ],
-                new_world_rules=[
-                    WorldRule(
-                        source_chapter=chapter_number,
-                        **wr
-                    )
-                    for wr in data.get("new_world_rules", [])
-                ],
+                new_world_rules=sanitized_world_rules,
                 foreshadowing_status_changes=data.get("foreshadowing_status_changes", []),
-                new_foreshadowing=[
-                    ForeshadowingItem(
-                        planted_chapter=chapter_number,
-                        **nf
-                    )
-                    for nf in data.get("new_foreshadowing", [])
-                ],
+                new_foreshadowing=sanitized_foreshadowing,
                 implicit_issues=data.get("implicit_issues", [])
             )
             
@@ -433,23 +458,24 @@ class UpdateExtractor:
                 source_scene_index=scene_index
             )
     
-    async def _apply_updates(self, updates: ExtractedUpdates) -> None:
+    async def _apply_updates(self, updates: ExtractedUpdates, chapter_number: int = 0) -> None:
         """并发应用更新到各知识库"""
         tasks = []
-        
+
         # 人物更新
         if updates.character_updates:
-            tasks.append(self._update_characters(updates.character_updates))
-        
+            tasks.append(self._update_characters(updates.character_updates, chapter_number=chapter_number))
+
         # 世界观规则更新
         if updates.new_world_rules:
             tasks.append(self._update_bible(updates.new_world_rules))
-        
+
         # 伏笔更新
         if updates.foreshadowing_status_changes or updates.new_foreshadowing:
             tasks.append(self._update_foreshadowing(
                 updates.foreshadowing_status_changes,
-                updates.new_foreshadowing
+                updates.new_foreshadowing,
+                chapter_number=chapter_number
             ))
         
         # 并发执行所有更新（错误隔离）
@@ -461,11 +487,15 @@ class UpdateExtractor:
                 if isinstance(result, Exception):
                     logger.error(f"更新任务 {i} 失败: {result}")
     
-    async def _update_characters(self, updates: list[CharacterStateUpdate]) -> None:
+    async def _update_characters(self, updates: list[CharacterStateUpdate], chapter_number: int = 0) -> None:
         """更新人物库"""
         try:
             for update in updates:
-                await self.character_db.apply_update(update)
+                char = await self.character_db.get_character(update.character_name)
+                if not char:
+                    logger.warning(f"UpdateExtractor 跳过不存在的角色: {update.character_name}")
+                    continue
+                await self.character_db.apply_update(update, chapter=chapter_number)
         except Exception as e:
             logger.error(f"人物库更新失败: {e}")
             raise
@@ -482,7 +512,8 @@ class UpdateExtractor:
     async def _update_foreshadowing(
         self,
         status_changes: list[dict],
-        new_items: list[ForeshadowingItem]
+        new_items: list[ForeshadowingItem],
+        chapter_number: int = 0
     ) -> None:
         """更新伏笔库"""
         try:
@@ -491,13 +522,14 @@ class UpdateExtractor:
                 await self.foreshadowing_db.update_status(
                     fs_id=change["id"],
                     new_status=change["new_status"],
-                    notes=change.get("notes", "")
+                    notes=change.get("notes", ""),
+                    triggered_chapter=chapter_number
                 )
-            
+
             # 添加新伏笔
             for item in new_items:
                 await self.foreshadowing_db.add_item(item)
-                
+
         except Exception as e:
             logger.error(f"伏笔库更新失败: {e}")
             raise
@@ -532,25 +564,26 @@ class UpdateExtractor:
         """保存更新记录到文件（用于调试和审计）"""
         try:
             record_path = (
-                self.project_path / "chapters" / 
+                self.project_path / "chapters" /
                 f"chapter_{updates.source_chapter}_updates.json"
             )
             record_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # 读取现有记录
-            records = []
-            if record_path.exists():
-                async with aiofiles.open(record_path, 'r', encoding='utf-8') as f:
-                    content = await f.read()
-                    records = json.loads(content)
-            
-            # 添加新记录
-            records.append(updates.model_dump())
-            
-            # 保存
-            async with aiofiles.open(record_path, 'w', encoding='utf-8') as f:
-                await f.write(json.dumps(records, ensure_ascii=False, indent=2))
-                
+
+            async with self._update_record_lock:
+                # 读取现有记录
+                records = []
+                if record_path.exists():
+                    async with aiofiles.open(record_path, 'r', encoding='utf-8') as f:
+                        content = await f.read()
+                        records = json.loads(content)
+
+                # 添加新记录
+                records.append(updates.model_dump())
+
+                # 保存
+                async with aiofiles.open(record_path, 'w', encoding='utf-8') as f:
+                    await f.write(json.dumps(records, ensure_ascii=False, indent=2))
+
         except Exception as e:
             logger.error(f"保存更新记录失败: {e}")
             # 记录失败不影响主流程

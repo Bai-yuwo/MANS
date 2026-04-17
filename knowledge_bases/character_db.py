@@ -64,7 +64,7 @@ class CharacterDB(BaseDB):
         """
         return await self.save(character.name, character.model_dump())
     
-    async def apply_update(self, update: CharacterStateUpdate) -> bool:
+    async def apply_update(self, update: CharacterStateUpdate, chapter: int = 0) -> bool:
         """
         应用人物状态更新（异步）
         
@@ -103,7 +103,7 @@ class CharacterDB(BaseDB):
         # 记录状态历史
         if updates:
             char.update_state(
-                chapter=0,  # 应该从更新中提取章节号
+                chapter=chapter,
                 updates=updates
             )
         

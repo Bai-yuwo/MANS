@@ -354,9 +354,8 @@ class LLMClient:
                 }
             }
         elif response_format == "json":
-            # 兼容旧版 json_object 模式（仅非豆包模型）
-            if "doubao" not in provider.name.lower():
-                payload["response_format"] = {"type": "json_object"}
+            # 使用 json_object 模式约束模型输出 JSON（豆包/Seed2 等模型通常支持）
+            payload["response_format"] = {"type": "json_object"}
         
         return payload
     
@@ -786,7 +785,34 @@ class LLMClient:
                 )
                 await asyncio.sleep(wait_time)
                 last_error = e
-            except (LLMTimeoutError, LLMAPIError) as e:
+            except LLMAPIError as e:
+                error_str = str(e).lower()
+                # 1. json_schema 不支持 → 降级为 json_object，进入下一次重试
+                is_json_schema_error = (
+                    kwargs.get("response_format") == "json_schema"
+                    and ("json_schema" in error_str or "not supported" in error_str or "not valid" in error_str)
+                    and e.status_code in (400, 422, 403)
+                )
+                if is_json_schema_error:
+                    logger.warning(f"模型 {kwargs.get('model', role)} 不支持 json_schema，降级为 json_object 输出")
+                    kwargs["response_format"] = "json"
+                    kwargs.pop("json_schema", None)
+                    continue
+
+                # 2. json_object 也不支持 → 降级为纯文本+强制 JSON 提示，进入下一次重试
+                is_json_object_error = (
+                    kwargs.get("response_format") == "json"
+                    and ("json_object" in error_str or "not supported" in error_str or "not valid" in error_str)
+                    and e.status_code in (400, 422, 403)
+                )
+                if is_json_object_error:
+                    logger.warning(f"模型 {kwargs.get('model', role)} 不支持 json_object，降级为纯文本+Prompt约束")
+                    kwargs.pop("response_format", None)
+                    kwargs.pop("json_schema", None)
+                    # 追加严格的 JSON 输出约束到 prompt
+                    prompt = prompt.rstrip() + "\n\n【重要】请严格输出 JSON 格式，不要输出 Markdown 代码块、不要输出任何解释性文字，只返回纯 JSON。"
+                    continue
+
                 # 网络/超时错误，指数退避重试
                 wait_time = retry_delay * (2 ** attempt)
                 logger.warning(
@@ -796,11 +822,21 @@ class LLMClient:
                 )
                 await asyncio.sleep(wait_time)
                 last_error = e
-        
+            except (LLMTimeoutError,) as e:
+                # 网络/超时错误，指数退避重试
+                wait_time = retry_delay * (2 ** attempt)
+                logger.warning(
+                    f"调用失败 ({type(e).__name__}), "
+                    f"等待 {wait_time:.1f}s 后重试 "
+                    f"(尝试 {attempt + 1}/{max_retries})"
+                )
+                await asyncio.sleep(wait_time)
+                last_error = e
+
         # 重试耗尽，抛出最后一个错误
         logger.error(f"重试耗尽 ({max_retries} 次尝试后仍失败)")
         raise last_error
-    
+
     async def stream_with_retry(
         self,
         role: str,

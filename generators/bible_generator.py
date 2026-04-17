@@ -374,7 +374,7 @@ class BibleGenerator(BaseGenerator):
                 id=f"rule_{i}",
                 text=rule["content"],
                 metadata={
-                    "category": rule.get("category", "general"),
+                    "category": rule.get("category", "special"),
                     "importance": rule.get("importance", "major"),
                     "source": "bible_generation"
                 }
@@ -400,14 +400,24 @@ class BibleGenerator(BaseGenerator):
         
         # 向量化势力信息
         factions = result.get("factions", [])
+        power_level_map = {
+            "low": "minor",
+            "medium": "major",
+            "high": "critical",
+            "minor": "minor",
+            "major": "major",
+            "critical": "critical"
+        }
         for i, faction in enumerate(factions):
+            raw_power = faction.get("power_level", "medium")
+            mapped_importance = power_level_map.get(raw_power, "major")
             await vector_store.upsert(
                 collection="bible_rules",
                 id=f"faction_{i}",
                 text=f"{faction['name']}: {faction['description']}",
                 metadata={
                     "category": "social",
-                    "importance": faction.get("power_level", "medium"),
+                    "importance": mapped_importance,
                     "source": "bible_generation"
                 }
             )

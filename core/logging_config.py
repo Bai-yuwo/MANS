@@ -9,8 +9,10 @@ MANS - 日志系统配置
 - 模块化日志（不同模块独立日志）
 """
 
+import asyncio
 import logging
 import sys
+import threading
 from pathlib import Path
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from datetime import datetime
@@ -43,18 +45,26 @@ class LogConfig:
     }
 
 
+_logging_initialized = False
+
+
 def setup_logging(console_level=None):
     """
     设置全局日志配置
-    
+
     Args:
         console_level: 控制台日志级别（默认使用 LogConfig.CONSOLE_LEVEL）
     """
+    global _logging_initialized
+    if _logging_initialized:
+        return
+    _logging_initialized = True
+
     console_level = console_level or LogConfig.CONSOLE_LEVEL
-    
+
     # 确保日志目录存在
     LogConfig.LOG_DIR.mkdir(exist_ok=True)
-    
+
     # 配置根日志器
     root_logger = logging.getLogger('mans')
     root_logger.setLevel(logging.DEBUG)  # 根日志器捕获所有级别
@@ -108,20 +118,77 @@ def setup_logging(console_level=None):
     root_logger.info("="*80)
 
 
+class SSELogHandler(logging.Handler):
+    """
+    用于 SSE 流式日志传输的 Handler
+
+    维护一组 asyncio.Queue，每个连接的客户端对应一个 Queue。
+    当产生日志记录时，将其分发给所有活跃的 Queue。
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._queues = set()
+        self._lock = threading.Lock()
+
+    def add_queue(self, queue):
+        with self._lock:
+            self._queues.add(queue)
+
+    def remove_queue(self, queue):
+        with self._lock:
+            self._queues.discard(queue)
+
+    def emit(self, record):
+        try:
+            log_entry = {
+                'level': record.levelname,
+                'message': self.format(record),
+                'time': datetime.now().strftime('%H:%M:%S'),
+                'name': record.name
+            }
+            with self._lock:
+                queues = list(self._queues)
+            for queue in queues:
+                try:
+                    # 使用 call_soon_threadsafe 将同步日志线程安全地放入异步队列
+                    loop = asyncio.get_running_loop()
+                    loop.call_soon_threadsafe(queue.put_nowait, log_entry)
+                except RuntimeError:
+                    # 没有运行中的事件循环，跳过
+                    pass
+        except Exception:
+            self.handleError(record)
+
+
+# 全局 SSE Handler 实例
+sse_log_handler = SSELogHandler()
+sse_log_handler.setLevel(logging.DEBUG)
+sse_formatter = logging.Formatter('%(message)s')
+sse_log_handler.setFormatter(sse_formatter)
+
+
+def setup_sse_logging():
+    """将 SSE Handler 附加到 mans 根日志器"""
+    root_logger = logging.getLogger('mans')
+    if sse_log_handler not in root_logger.handlers:
+        root_logger.addHandler(sse_log_handler)
+
+
 def get_logger(name: str) -> logging.Logger:
     """
     获取模块日志器
-    
+
     Args:
         name: 模块名称（如 'mans.core.injection_engine'）
-        
+
     Returns:
         logging.Logger 实例
     """
     # 确保日志器名称以 'mans.' 开头
     if not name.startswith('mans.'):
         name = f'mans.{name}'
-    
+
     return logging.getLogger(name)
 
 

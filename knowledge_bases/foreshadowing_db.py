@@ -11,7 +11,7 @@ knowledge_bases/foreshadowing_db.py
 from typing import Optional
 
 from knowledge_bases.base_db import BaseDB
-from core.schemas import ForeshadowingItem, ForeshadowingStatus
+from core.schemas import ForeshadowingItem, ForeshadowingStatus, ForeshadowingType
 from core.logging_config import get_logger, log_exception
 
 logger = get_logger('knowledge_bases.foreshadowing_db')
@@ -42,14 +42,23 @@ class ForeshadowingDB(BaseDB):
         data = await self.load("items") or {}
         items_data = data.get("items", [])
         
+        valid_types = {e.value for e in ForeshadowingType}
+        valid_statuses = {e.value for e in ForeshadowingStatus}
+
         items = []
         for item_data in items_data:
             try:
+                fs_type = item_data.get("type", "plot")
+                if fs_type not in valid_types:
+                    item_data = {**item_data, "type": "plot"}
+                status = item_data.get("status", "planted")
+                if status not in valid_statuses:
+                    item_data = {**item_data, "status": "planted"}
                 items.append(ForeshadowingItem(**item_data))
             except Exception as e:
                 logger.error(f"解析伏笔失败: {e}")
                 continue
-        
+
         return items
     
     async def get_active_for_chapter(
@@ -90,7 +99,8 @@ class ForeshadowingDB(BaseDB):
         self,
         fs_id: str,
         new_status: str,
-        notes: str = ""
+        notes: str = "",
+        triggered_chapter: int = 0
     ) -> bool:
         """
         更新伏笔状态（异步）
@@ -105,18 +115,22 @@ class ForeshadowingDB(BaseDB):
         """
         items = await self.get_all_items()
         
+        valid_statuses = {e.value for e in ForeshadowingStatus}
+        if new_status not in valid_statuses:
+            logger.error(f"无效的伏笔状态: {new_status}")
+            return False
+
         for item in items:
             if item.id == fs_id:
                 item.status = ForeshadowingStatus(new_status)
-                
+
                 # 记录实际触发章节（如果是 triggered 状态）
                 if new_status == "triggered":
-                    # 应该从调用方传入当前章节
-                    pass
-                
+                    item.actual_trigger_chapter = triggered_chapter
+
                 # 保存所有伏笔
                 return await self._save_all_items(items)
-        
+
         logger.error(f"伏笔不存在: {fs_id}")
         return False
     
@@ -169,7 +183,11 @@ class ForeshadowingDB(BaseDB):
             是否添加成功
         """
         import uuid
-        
+
+        valid_types = {e.value for e in ForeshadowingType}
+        if fs_type not in valid_types:
+            fs_type = "plot"
+
         # 映射urgency值到合法枚举
         urgency_map = {
             "critical": "high",
@@ -180,14 +198,14 @@ class ForeshadowingDB(BaseDB):
             "high": "high"
         }
         normalized_urgency = urgency_map.get(urgency, "medium")
-        
+
         item = ForeshadowingItem(
             id=f"fs_{uuid.uuid4().hex[:8]}",
-            type=fs_type,  # 修复：使用type而不是fs_type
+            type=fs_type,
             description=description,
             planted_chapter=trigger_range[0],
             trigger_range=list(trigger_range),
-            urgency=normalized_urgency,  # 修复：使用标准化后的值
+            urgency=normalized_urgency,
             status=ForeshadowingStatus.PLANTED
         )
         return await self.append("items", item.model_dump())

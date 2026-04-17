@@ -9,7 +9,7 @@ knowledge_bases/bible_db.py
 """
 
 from knowledge_bases.base_db import BaseDB
-from core.schemas import WorldRule
+from core.schemas import WorldRule, WorldRuleCategory, WorldRuleImportance
 from core.logging_config import get_logger, log_exception
 
 logger = get_logger('knowledge_bases.bible_db')
@@ -39,7 +39,7 @@ class BibleDB(BaseDB):
         Returns:
             是否追加成功
         """
-        return self.append("world_rules", rule.model_dump())
+        return await self.append("world_rules", rule.model_dump())
     
     async def get_rules(self, category: str = None) -> list[WorldRule]:
         """
@@ -54,16 +54,25 @@ class BibleDB(BaseDB):
         data = await self.load("world_rules") or {}
         items = data.get("items", [])
         
+        valid_categories = {e.value for e in WorldRuleCategory}
+        valid_importances = {e.value for e in WorldRuleImportance}
+
         rules = []
         for item in items:
             try:
+                cat = item.get("category", "special")
+                if cat not in valid_categories:
+                    item = {**item, "category": "special"}
+                imp = item.get("importance", "major")
+                if imp not in valid_importances:
+                    item = {**item, "importance": "major"}
                 rule = WorldRule(**item)
                 if category is None or rule.category == category:
                     rules.append(rule)
             except Exception as e:
                 logger.error(f"解析世界规则失败: {e}")
                 continue
-        
+
         return rules
     
     async def get_rule_by_id(self, rule_id: str) -> WorldRule | None:

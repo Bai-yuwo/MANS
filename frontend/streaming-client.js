@@ -31,35 +31,45 @@ const StreamingState = {
 /**
  * 开始流式生成（以Bible为例）
  */
-async function startStreamingGeneration(type = 'bible') {
+async function startStreamingGeneration(type = 'bible', extraParams = {}) {
     if (!AppState.currentProject) {
         showMessage('请先选择项目', 'error');
         return;
     }
-    
+
     if (StreamingState.isStreaming) {
         showMessage('正在生成中，请稍候', 'warning');
         return;
     }
-    
+
     // 显示流式面板
     showStreamingPanel(`生成${getTypeName(type)}...`);
-    
+
     // 重置状态
     StreamingState.isStreaming = true;
     StreamingState.fullContent = '';
     StreamingState.logs = [];
     StreamingState.startTime = Date.now();
-    
+
     // 添加开始日志
     addStreamingLog('progress', `开始${getTypeName(type)}生成...`);
-    
+
     try {
         // 读取温度设置
         const temperature = typeof getSetting === 'function' ? getSetting('temperature', 0.7) : 0.7;
 
-        // 创建SSE连接（附加温度参数）
-        const url = `/api/projects/${AppState.currentProject}/stream/${type}?temperature=${encodeURIComponent(temperature)}`;
+        // 构建查询参数
+        const queryParams = new URLSearchParams();
+        queryParams.append('temperature', temperature);
+        for (const [key, value] of Object.entries(extraParams)) {
+            queryParams.append(key, value);
+        }
+
+        // 构建SSE连接URL（支持自定义apiBase）
+        const base = (typeof getApiBase === 'function' ? getApiBase() : '').replace(/\/$/, '');
+        const url = base
+            ? `${base}/api/projects/${AppState.currentProject}/stream/${type}?${queryParams.toString()}`
+            : `/api/projects/${AppState.currentProject}/stream/${type}?${queryParams.toString()}`;
 
         // 使用fetch + ReadableStream处理POST SSE
         const response = await fetch(url, {
@@ -123,16 +133,18 @@ async function startStreamingGeneration(type = 'bible') {
         }
         
         // 只有在没有错误的情况下才显示完成消息
-        if (StreamingState.status !== 'error') {
-            addStreamingLog('complete', '生成完成！');
-            updateStreamingStatus('complete', '已完成');
+        if (StreamingState.status === 'error') {
+            throw new Error(StreamingState.lastError || '生成过程中出现错误');
         }
-        
+        addStreamingLog('complete', '生成完成！');
+        updateStreamingStatus('complete', '已完成');
+
     } catch (error) {
         console.error('流式生成失败:', error);
         addStreamingLog('error', `生成失败: ${error.message}`);
         updateStreamingStatus('error', '失败');
         showMessage('生成失败: ' + error.message, 'error');
+        throw error; // 继续向上抛出，让调用方知道失败
     } finally {
         StreamingState.isStreaming = false;
         document.getElementById('btn-copy-output').disabled = false;
@@ -212,16 +224,20 @@ function handleSSEEvent(eventType, data) {
                 addStreamingLog('complete', data.message);
             }
             updateStreamingStatus('complete', '已完成');
-            
+
             // 重置currentTokenLog，下次生成时创建新的
             StreamingState.currentTokenLog = null;
-            
+
             // 显示完整结果
             if (data.data) {
                 addStreamingLog('token', JSON.stringify(data.data, null, 2));
                 // 自动显示生成的内容
                 if (data.data.world_name || data.data.world_description) {
                     displayBible(data.data);
+                }
+                // 弧线生成完成后刷新弧线列表
+                if (typeof checkArcStatus === 'function' && AppState.currentProject) {
+                    checkArcStatus(AppState.currentProject);
                 }
             }
             document.getElementById('btn-copy-output').disabled = false;
@@ -230,6 +246,7 @@ function handleSSEEvent(eventType, data) {
         case 'error':
             if (data.error) {
                 addStreamingLog('error', data.error);
+                StreamingState.lastError = data.error;
             }
             updateStreamingStatus('error', '错误');
             break;
@@ -353,7 +370,8 @@ function getTypeName(type) {
     const names = {
         'bible': 'Bible',
         'characters': '人物设定',
-        'outline': '大纲'
+        'outline': '大纲',
+        'arc': '弧线规划'
     };
     return names[type] || type;
 }

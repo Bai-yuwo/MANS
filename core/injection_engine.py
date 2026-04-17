@@ -16,7 +16,8 @@ from pathlib import Path
 from core.config import get_config
 from core.schemas import (
     ScenePlan, ChapterPlan, InjectionContext,
-    CharacterCard, WorldRule, ForeshadowingItem
+    CharacterCard, WorldRule, ForeshadowingItem,
+    WorldRuleCategory, WorldRuleImportance
 )
 from core.llm_client import LLMClient, quick_call
 from core.logging_config import get_logger, log_exception
@@ -122,8 +123,8 @@ class InjectionEngine:
         Returns:
             组装完成的 InjectionContext
         """
-        # 第一层：规则层（同步，<10ms）
-        mandatory = self._get_mandatory_context(scene_plan, chapter_plan)
+        # 第一层：规则层（异步，<10ms）
+        mandatory = await self._get_mandatory_context(scene_plan, chapter_plan)
         
         # 计算剩余预算
         used_tokens = self._estimate_mandatory_tokens(mandatory)
@@ -132,12 +133,13 @@ class InjectionEngine:
         # 第二层：向量检索层（异步，~200ms）
         retrieved = await self._get_retrieved_context(
             scene_plan,
+            chapter_number=chapter_plan.chapter_number,
             budget_tokens=remaining_budget
         )
-        
+
         # 合并上下文
         context_data = {**mandatory, **retrieved}
-        
+
         # 第三层：裁剪层（条件执行，仅超预算时触发）
         total_tokens = self._estimate_tokens(context_data)
         if total_tokens > self.config.INJECTION_TOKEN_BUDGET:
@@ -155,7 +157,7 @@ class InjectionEngine:
         
         return injection_context
     
-    def _get_mandatory_context(
+    async def _get_mandatory_context(
         self,
         scene_plan: ScenePlan,
         chapter_plan: ChapterPlan
@@ -166,35 +168,37 @@ class InjectionEngine:
         """
         # 1. 当前场景意图
         scene_intent = scene_plan.intent
-        
+
         # 2. 本章目标
         chapter_goal = chapter_plan.chapter_goal
-        
+
         # 3. 上一场景末尾文本
-        previous_text = self._get_previous_scene_tail(
+        previous_text = await self._get_previous_scene_tail(
             chapter_plan.chapter_number,
             scene_plan.scene_index,
             tail_chars=400
         )
-        
+
         # 4. 出场人物卡（限制数量）
         character_cards = []
         max_chars = self.config.INJECTION_MAX_CHARACTERS
         for name in scene_plan.present_characters[:max_chars]:
-            char = self.character_db.get_character(name)
+            char = await self.character_db.get_character(name)
             if char:
                 character_cards.append(char)
-        
+            else:
+                logger.warning(f"人物 '{name}' 不在知识库中，无法注入人物卡。请检查 scene_plan.present_characters 与 CharacterDB 名称是否一致。")
+
         # 5. 需要处理的伏笔（限制数量）
         max_fs = self.config.INJECTION_MAX_FORESHADOWING
         active_foreshadowing = []
         if hasattr(self.foreshadowing_db, 'get_active_for_chapter'):
-            all_foreshadowing = self.foreshadowing_db.get_active_for_chapter(
+            all_foreshadowing = await self.foreshadowing_db.get_active_for_chapter(
                 current_chapter=chapter_plan.chapter_number,
                 trigger_ids=scene_plan.foreshadowing_to_trigger + scene_plan.foreshadowing_to_plant
             )
             active_foreshadowing = all_foreshadowing[:max_fs]
-        
+
         return {
             "scene_plan": scene_plan,
             "chapter_goal": chapter_goal,
@@ -206,6 +210,7 @@ class InjectionEngine:
     async def _get_retrieved_context(
         self,
         scene_plan: ScenePlan,
+        chapter_number: int,
         budget_tokens: int
     ) -> dict:
         """
@@ -214,36 +219,58 @@ class InjectionEngine:
         """
         # 构建检索 query
         query = f"{scene_plan.intent} {' '.join(scene_plan.present_characters)} {scene_plan.emotional_tone}"
-        
+
         results = {}
-        
+
         # 如果启用向量检索
         if self.config.ENABLE_VECTOR_SEARCH:
             try:
                 # 检索相关世界规则
-                world_rules = await self.vector_store.search(
+                world_rules_raw = await self.vector_store.search(
                     collection="bible_rules",
                     query=query,
                     n_results=5
                 )
+                # 转换为 WorldRule 对象，确保枚举值有效
+                valid_categories = {e.value for e in WorldRuleCategory}
+                valid_importances = {e.value for e in WorldRuleImportance}
+                world_rules = []
+                for r in world_rules_raw:
+                    cat = r.get("metadata", {}).get("category", "special")
+                    if cat not in valid_categories:
+                        cat = "special"
+                    imp = r.get("metadata", {}).get("importance", "major")
+                    if imp not in valid_importances:
+                        imp = "major"
+                    try:
+                        world_rules.append(
+                            WorldRule(
+                                content=r.get("text", ""),
+                                category=cat,
+                                source_chapter=chapter_number,
+                                importance=imp
+                            )
+                        )
+                    except Exception:
+                        continue
                 results["world_rules"] = world_rules
-                
+
                 # 检索相似历史场景
-                similar_scenes = await self.vector_store.search(
+                similar_scenes_raw = await self.vector_store.search(
                     collection="chapter_scenes",
                     query=query,
                     n_results=3
                 )
-                results["similar_scenes"] = similar_scenes
-                
+                results["similar_scenes"] = [r.get("text", "") for r in similar_scenes_raw]
+
                 # 检索文风范例
-                style_examples = await self.vector_store.search(
+                style_examples_raw = await self.vector_store.search(
                     collection="style_examples",
                     query=scene_plan.emotional_tone,
                     n_results=2
                 )
-                results["style_examples"] = style_examples
-                
+                results["style_examples"] = [r.get("text", "") for r in style_examples_raw]
+
             except Exception as e:
                 # 向量检索失败，记录日志但继续执行
                 logger.error(f"向量检索失败: {e}")
@@ -254,7 +281,7 @@ class InjectionEngine:
             results["world_rules"] = []
             results["similar_scenes"] = []
             results["style_examples"] = []
-        
+
         return results
     
     async def _trim_to_budget(
@@ -326,12 +353,21 @@ Token 预算：{budget_tokens}
             
             # 解析压缩结果
             trimmed = json.loads(response_obj.content)
-            
-            # 更新上下文
-            context["world_rules"] = trimmed.get("world_rules", [])
+
+            # 将裁剪后的规则字符串转回 WorldRule 对象
+            trimmed_rules = trimmed.get("world_rules", [])
+            context["world_rules"] = [
+                WorldRule(
+                    content=r,
+                    category=WorldRuleCategory.SPECIAL.value,
+                    source_chapter=0,
+                    importance=WorldRuleImportance.MAJOR.value
+                )
+                for r in trimmed_rules
+            ]
             context["similar_scenes"] = trimmed.get("similar_scenes", [])
             context["style_reference"] = trimmed.get("style_reference", "")
-            
+
         except Exception as e:
             # 压缩失败，简单截断
             logger.error(f"上下文裁剪失败: {e}，使用简单截断")
@@ -348,6 +384,12 @@ Token 预算：{budget_tokens}
         remaining_budget: int
     ) -> InjectionContext:
         """组装最终的 InjectionContext"""
+        # 处理文风参考：优先使用 style_reference，否则从 style_examples 拼接
+        style_reference = context.get("style_reference", "")
+        if not style_reference:
+            style_examples = context.get("style_examples", [])
+            style_reference = "\n\n".join(style_examples[:2])
+
         return InjectionContext(
             scene_plan=context["scene_plan"],
             chapter_goal=context["chapter_goal"],
@@ -356,12 +398,12 @@ Token 预算：{budget_tokens}
             relevant_world_rules=context.get("world_rules", []),
             active_foreshadowing=context.get("active_foreshadowing", []),
             similar_scenes_reference=context.get("similar_scenes", []),
-            style_reference=context.get("style_reference", ""),
+            style_reference=style_reference,
             total_tokens_used=used_tokens,
             token_budget_remaining=remaining_budget
         )
     
-    def _get_previous_scene_tail(
+    async def _get_previous_scene_tail(
         self,
         chapter_number: int,
         scene_index: int,
@@ -370,25 +412,23 @@ Token 预算：{budget_tokens}
         """获取上一场景的末尾文本"""
         if scene_index == 0:
             # 本章第一个场景，获取上一章摘要
-            return self.story_db.get_chapter_summary(chapter_number - 1) if hasattr(self.story_db, 'get_chapter_summary') else ""
-        
+            if hasattr(self.story_db, 'get_chapter_summary'):
+                return await self.story_db.get_chapter_summary(chapter_number - 1)
+            return ""
+
         # 获取本章之前场景的草稿
-        draft_path = self.project_path / "chapters" / f"chapter_{chapter_number}_draft.json"
-        if draft_path.exists():
+        draft = await self.story_db.get_chapter_draft(chapter_number)
+        if draft:
             try:
-                import aiofiles
-                # 这里简化处理，实际应该异步读取
-                with open(draft_path, 'r', encoding='utf-8') as f:
-                    draft = json.load(f)
-                    scenes = draft.get("scenes", [])
-                    if scene_index > 0 and len(scenes) >= scene_index:
-                        prev_scene_text = scenes[scene_index - 1].get("text", "")
-                        return prev_scene_text[-tail_chars:] if len(prev_scene_text) > tail_chars else prev_scene_text
+                scenes = draft.get("scenes", [])
+                if scene_index > 0 and len(scenes) >= scene_index:
+                    prev_scene_text = scenes[scene_index - 1].get("text", "")
+                    return prev_scene_text[-tail_chars:] if len(prev_scene_text) > tail_chars else prev_scene_text
             except Exception:
                 pass
-        
+
         return ""
-    
+
     def _estimate_mandatory_tokens(self, mandatory: dict) -> int:
         """估算强制注入内容的 token 数"""
         total = 0
@@ -425,7 +465,13 @@ Token 预算：{budget_tokens}
         """格式化世界规则"""
         if not rules:
             return "无"
-        return "\n".join([f"- {rule}" for rule in rules[:5]])
+        formatted = []
+        for rule in rules[:5]:
+            if isinstance(rule, WorldRule):
+                formatted.append(f"- {rule.content}")
+            else:
+                formatted.append(f"- {rule}")
+        return "\n".join(formatted)
     
     def _format_similar_scenes(self, scenes: list) -> str:
         """格式化相似场景"""

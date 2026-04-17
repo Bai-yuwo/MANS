@@ -32,9 +32,14 @@ from core.schemas import (
     CharacterCard, WorldRule, ForeshadowingItem
 )
 from core.config import get_config
-from core.logging_config import get_logger, log_exception
+from core.logging_config import get_logger, log_exception, sse_log_handler, setup_sse_logging
+from vector_store.store import VectorStore
+from core.update_extractor import UpdateExtractor
 
 logger = get_logger('frontend.web_app')
+
+# 启动 SSE 日志捕获
+setup_sse_logging()
 
 # 导入生成器
 from generators import (
@@ -51,6 +56,7 @@ from knowledge_bases.character_db import CharacterDB
 from knowledge_bases.story_db import StoryDB
 from knowledge_bases.foreshadowing_db import ForeshadowingDB
 from knowledge_bases.style_db import StyleDB
+from core.llm_client import quick_call
 
 app = FastAPI(title="MANS - Multi-Agent Novel System")
 
@@ -68,6 +74,14 @@ class CreateProjectRequest(BaseModel):
     tone: str = ""
     style_reference: str = ""
     forbidden_elements: list[str] = []
+
+
+class CreateArcRequest(BaseModel):
+    """创建弧线请求"""
+    arc_number: Optional[int] = None
+    title: str
+    chapter_range: list[int]
+    description: str
 
 
 class GenerateResponse(BaseModel):
@@ -105,9 +119,9 @@ async def create_project(request: CreateProjectRequest):
     
     try:
         # 创建目录结构
-        (workspace_path / "characters").mkdir(parents=True)
-        (workspace_path / "chapters").mkdir(parents=True)
-        (workspace_path / "arcs").mkdir(parents=True)
+        (workspace_path / "characters").mkdir(parents=True, exist_ok=True)
+        (workspace_path / "chapters").mkdir(parents=True, exist_ok=True)
+        (workspace_path / "arcs").mkdir(parents=True, exist_ok=True)
         # vector_store 目录由 VectorStore 类自动创建，无需手动创建
         
         # 创建 ProjectMeta
@@ -359,7 +373,8 @@ async def stream_generate_bible(project_id: str, request: Request, temperature: 
                 "event": "error",
                 "data": json.dumps({"error": str(e)}, ensure_ascii=False)
             }
-    
+            return
+
     return EventSourceResponse(event_generator())
 
 
@@ -501,6 +516,196 @@ async def confirm_outline(project_id: str):
         raise HTTPException(status_code=500, detail=f"确认大纲失败: {str(e)}")
 
 
+@app.get("/api/projects/{project_id}/arcs")
+async def list_arcs(project_id: str):
+    """获取所有已保存的弧线规划列表"""
+    workspace_path = Path("workspace") / project_id
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    story_db = StoryDB(project_id)
+    arcs = await story_db.list_arc_plans()
+    return {
+        "project_id": project_id,
+        "arcs": arcs,
+        "count": len(arcs)
+    }
+
+
+@app.get("/api/projects/{project_id}/arcs/{arc_number}/status")
+async def get_arc_status(project_id: str, arc_number: int):
+    """检查弧线规划是否存在"""
+    arc_path = Path("workspace") / project_id / "arcs" / f"arc_{arc_number}.json"
+    return {
+        "project_id": project_id,
+        "arc_number": arc_number,
+        "exists": arc_path.exists()
+    }
+
+
+@app.post("/api/projects/{project_id}/arcs")
+async def create_arc_meta(project_id: str, request: CreateArcRequest):
+    """创建弧线元数据（占位符，供前端列表展示）"""
+    workspace_path = Path("workspace") / project_id
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    story_db = StoryDB(project_id)
+
+    # 自动分配弧线编号
+    arc_number = request.arc_number
+    if arc_number is None:
+        existing = await story_db.list_arc_plans()
+        numbers = {a.get("arc_number", 0) for a in existing}
+        arc_number = 1
+        while arc_number in numbers:
+            arc_number += 1
+
+    arc_data = {
+        "arc_id": f"arc_{arc_number}",
+        "arc_number": arc_number,
+        "arc_theme": request.title or "未命名弧线",
+        "arc_goal": request.description,
+        "chapter_range": request.chapter_range,
+        "key_directions": [],
+        "is_placeholder": True
+    }
+
+    await story_db.save_arc_plan(str(arc_number), arc_data)
+    return {
+        "success": True,
+        "arc_number": arc_number,
+        "message": f"弧线 {arc_number} 创建成功"
+    }
+
+
+@app.delete("/api/projects/{project_id}/arcs/{arc_number}")
+async def delete_arc_meta(project_id: str, arc_number: int):
+    """删除弧线规划"""
+    workspace_path = Path("workspace") / project_id
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    arc_path = workspace_path / "arcs" / f"arc_{arc_number}.json"
+    if arc_path.exists():
+        arc_path.unlink()
+        return {"success": True, "message": f"弧线 {arc_number} 已删除"}
+    return {"success": False, "message": f"弧线 {arc_number} 不存在"}
+
+
+@app.post("/api/projects/{project_id}/arcs/suggest")
+async def suggest_arc(project_id: str, request: Request):
+    """基于大纲和已有弧线，智能推荐下一条弧线。可接收可选的 chapter_range 作为约束。"""
+    workspace_path = Path("workspace") / project_id
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    story_db = StoryDB(project_id)
+    outline = await story_db.get_outline()
+    if not outline:
+        raise HTTPException(status_code=400, detail="请先生成大纲")
+
+    existing_arcs = await story_db.list_arc_plans()
+    existing_arcs.sort(key=lambda a: a.get("arc_number", 0))
+
+    # 读取可选的请求体
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    user_range = body.get("chapter_range")
+
+    # 计算推荐章节范围
+    last_end = 0
+    for arc in existing_arcs:
+        cr = arc.get("chapter_range", [0, 0])
+        if len(cr) >= 2 and cr[1] > last_end:
+            last_end = cr[1]
+
+    if last_end == 0:
+        next_start = 1
+    else:
+        next_start = last_end + 1
+
+    if user_range and len(user_range) >= 2:
+        next_start = user_range[0]
+        next_end = user_range[1]
+    else:
+        # 默认 50 章
+        next_end = next_start + 49
+
+    three_act = outline.get("three_act_structure", {})
+    outline_text = json.dumps(three_act, ensure_ascii=False)
+    arcs_text = json.dumps(existing_arcs, ensure_ascii=False)
+
+    prompt = f"""基于以下小说大纲和已存在的弧线列表，为第 {next_start} ~ {next_end} 章推荐一条弧线的名称和描述（核心走向/作用）。
+
+大纲三幕结构：
+{outline_text}
+
+已有弧线：
+{arcs_text}
+
+章节范围：第 {next_start} 章 ~ 第 {next_end} 章。
+
+请输出严格的 JSON：
+
+{{
+  "chapter_range": [{next_start}, {next_end}],
+  "title": "弧线名称（简洁，10字以内）",
+  "description": "用一句话描述这条弧线的核心走向或作用"
+}}
+
+只输出 JSON，不要其他内容。"""
+
+    try:
+        response = await quick_call(
+            role="extract",
+            prompt=prompt,
+            max_tokens=500,
+            temperature=0.5
+        )
+        suggestion = json.loads(response)
+        return {"success": True, "suggestion": suggestion}
+    except Exception as e:
+        logger.error(f"弧线推荐失败: {e}")
+        # 回退：基于大纲幕结构给出默认推荐
+        act_keys = ["act1", "act2a", "act2b", "act3"]
+        fallback_idx = min(len(existing_arcs), len(act_keys) - 1)
+        act_data = three_act.get(act_keys[fallback_idx], {})
+        fallback = {
+            "chapter_range": [next_start, next_end],
+            "title": act_data.get("name", f"弧线 {len(existing_arcs) + 1}"),
+            "description": act_data.get("description", "继续推进剧情")
+        }
+        return {"success": True, "suggestion": fallback}
+
+
+async def _resolve_arc_act_data(project_id: str, arc_number: int) -> dict:
+    """解析弧线生成所需的 act_data：优先读取用户自定义弧线，否则回退到大纲三幕结构"""
+    story_db = StoryDB(project_id)
+    outline = await story_db.get_outline()
+    if not outline:
+        raise HTTPException(status_code=400, detail="请先生成大纲")
+
+    # 优先读取已有弧线文件（可能是用户创建的占位符）
+    arc_plan = await story_db.get_arc_plan(str(arc_number))
+    if arc_plan and arc_plan.get("is_placeholder"):
+        return {
+            "name": arc_plan.get("arc_theme", ""),
+            "description": arc_plan.get("arc_goal", ""),
+            "chapter_range": arc_plan.get("chapter_range", [1, 10]),
+            "key_directions": arc_plan.get("key_directions", [])
+        }
+
+    # 回退到大纲三幕结构
+    three_act = outline.get("three_act_structure", {})
+    act_keys = ["act1", "act2a", "act2b", "act3"]
+    return three_act.get(act_keys[min(arc_number - 1, len(act_keys) - 1)], {})
+
+
 @app.post("/api/projects/{project_id}/generate/arc")
 async def generate_arc(project_id: str, arc_number: int = 1, temperature: float = 0.7):
     """触发弧线规划生成"""
@@ -535,22 +740,14 @@ async def generate_arc(project_id: str, arc_number: int = 1, temperature: float 
                 else:
                     characters_data["supporting_characters"].append(char_data)
 
-        # 读取大纲
-        story_db = StoryDB(project_id)
-        outline = await story_db.get_outline()
-        if not outline:
-            raise HTTPException(status_code=400, detail="请先生成大纲")
-
-        # 获取对应幕的数据
-        three_act = outline.get("three_act_structure", {})
-        act_keys = ["act1", "act2a", "act2b", "act3"]
-        act_data = three_act.get(act_keys[min(arc_number - 1, len(act_keys) - 1)], {})
-
         # 读取已有伏笔
         foreshadowing_db = ForeshadowingDB(project_id)
         existing_foreshadowing = await foreshadowing_db.list_all_foreshadowing()
 
-        # 生成弧线规划
+        # 获取 act_data（支持用户自定义弧线）
+        act_data = await _resolve_arc_act_data(project_id, arc_number)
+
+        # 生成弧线规划（缩略版，宏观设计即可）
         planner = ArcPlanner(project_id)
         result = await planner.generate(
             arc_number=arc_number,
@@ -558,7 +755,10 @@ async def generate_arc(project_id: str, arc_number: int = 1, temperature: float 
             bible_data=bible_data,
             characters_data=characters_data,
             existing_foreshadowing=existing_foreshadowing,
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=6000,
+            total_timeout=900,
+            sock_read_timeout=120
         )
 
         return {
@@ -571,6 +771,84 @@ async def generate_arc(project_id: str, arc_number: int = 1, temperature: float 
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成弧线规划失败: {str(e)}")
+
+
+@app.post("/api/projects/{project_id}/stream/arc")
+async def stream_generate_arc(project_id: str, request: Request, arc_number: int = 1, temperature: float = 0.7):
+    """流式生成弧线规划（SSE）"""
+    workspace_path = Path("workspace") / project_id
+
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    async def event_generator():
+        try:
+            async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
+                content = await f.read()
+                meta = json.loads(content)
+            project_meta = ProjectMeta(**meta)
+
+            # 读取 Bible
+            bible_db = BibleDB(project_id)
+            bible_data = await bible_db.load("bible")
+            if not bible_data:
+                yield {"event": "error", "data": json.dumps({"error": "请先生成 Bible"}, ensure_ascii=False)}
+                return
+
+            # 读取人物
+            character_db = CharacterDB(project_id)
+            characters_data = {"protagonist": {}, "supporting_characters": []}
+            char_files = list((workspace_path / "characters").glob("*.json"))
+            for char_file in char_files:
+                if char_file.name != "relationships.json":
+                    async with aiofiles.open(char_file, "r", encoding="utf-8") as f:
+                        content = await f.read()
+                        char_data = json.loads(content)
+                    if not characters_data["protagonist"]:
+                        characters_data["protagonist"] = char_data
+                    else:
+                        characters_data["supporting_characters"].append(char_data)
+
+            # 读取已有伏笔
+            foreshadowing_db = ForeshadowingDB(project_id)
+            existing_foreshadowing = await foreshadowing_db.list_all_foreshadowing()
+
+            # 获取 act_data（支持用户自定义弧线）
+            act_data = await _resolve_arc_act_data(project_id, arc_number)
+
+            generator = ArcPlanner(project_id)
+
+            yield {"event": "start", "data": json.dumps({"message": f"开始生成弧线 {arc_number} 规划..."}, ensure_ascii=False)}
+
+            async for event in generator.generate_stream(
+                arc_number=arc_number,
+                act_data=act_data,
+                bible_data=bible_data,
+                characters_data=characters_data,
+                existing_foreshadowing=existing_foreshadowing,
+                temperature=temperature,
+                max_tokens=6000,
+                total_timeout=900,
+                sock_read_timeout=120
+            ):
+                event_type = event.get("type", "message")
+                if event_type == "progress":
+                    yield {"event": "progress", "data": json.dumps({"message": event.get("message", "")}, ensure_ascii=False)}
+                elif event_type == "token":
+                    yield {"event": "token", "data": json.dumps({"content": event.get("content", "")}, ensure_ascii=False)}
+                elif event_type == "complete":
+                    yield {"event": "complete", "data": json.dumps({"message": event.get("message", ""), "data": event.get("data", {})}, ensure_ascii=False)}
+                elif event_type == "error":
+                    yield {"event": "error", "data": json.dumps({"error": event.get("error", "未知错误")}, ensure_ascii=False)}
+
+            yield {"event": "done", "data": json.dumps({"message": "流式传输完成"})}
+
+        except Exception as e:
+            logger.error(f"流式生成弧线规划失败: {e}")
+            yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
+            return
+
+    return EventSourceResponse(event_generator())
 
 
 @app.post("/api/projects/{project_id}/generate/chapter")
@@ -669,6 +947,54 @@ async def get_issues(project_id: str):
         raise HTTPException(status_code=500, detail=f"获取 Issue Pool 失败: {str(e)}")
 
 
+@app.get("/api/projects/{project_id}/stream/logs")
+async def stream_logs(project_id: str, request: Request, level: str = "INFO"):
+    """
+    SSE 接口：流式推送系统日志
+
+    实时将 mans 命名空间下的日志推送到前端监控面板。
+    """
+    workspace_path = Path("workspace") / project_id
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    level_map = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
+    min_level = level_map.get(level.upper(), 20)
+
+    log_queue = asyncio.Queue(maxsize=500)
+    sse_log_handler.add_queue(log_queue)
+
+    async def event_generator():
+        try:
+            yield {
+                "event": "start",
+                "data": json.dumps({"message": "日志流已连接"}, ensure_ascii=False)
+            }
+            while True:
+                # 检查客户端是否断开连接
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    log_entry = await asyncio.wait_for(log_queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # 发送心跳保持连接
+                    yield {"event": "ping", "data": "keepalive"}
+                    continue
+
+                if level_map.get(log_entry.get("level", "INFO"), 20) >= min_level:
+                    yield {
+                        "event": "log",
+                        "data": json.dumps(log_entry, ensure_ascii=False)
+                    }
+        except Exception as e:
+            logger.error(f"日志流异常: {e}")
+        finally:
+            sse_log_handler.remove_queue(log_queue)
+
+    return EventSourceResponse(event_generator())
+
+
 @app.post("/api/projects/{project_id}/stream/characters")
 async def stream_generate_characters(project_id: str, request: Request, temperature: float = 0.7):
     """流式生成人物设定（SSE）"""
@@ -714,6 +1040,7 @@ async def stream_generate_characters(project_id: str, request: Request, temperat
         except Exception as e:
             logger.error(f"流式生成人物设定失败: {e}")
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
+            return
 
     return EventSourceResponse(event_generator())
 
@@ -777,6 +1104,7 @@ async def stream_generate_outline(project_id: str, request: Request, temperature
         except Exception as e:
             logger.error(f"流式生成大纲失败: {e}")
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
+            return
 
     return EventSourceResponse(event_generator())
 
@@ -804,6 +1132,24 @@ async def get_chapter_plan(project_id: str, chapter_num: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取章节规划失败: {str(e)}")
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter_num}/draft")
+async def get_chapter_draft(project_id: str, chapter_num: int):
+    """获取章节草稿（包含已生成的场景正文）"""
+    try:
+        story_db = StoryDB(project_id)
+        draft = await story_db.get_chapter_draft(chapter_num)
+
+        if not draft:
+            raise HTTPException(status_code=404, detail="章节草稿不存在")
+
+        return draft
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取章节草稿失败: {str(e)}")
 
 
 @app.post("/api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}/write")
@@ -855,18 +1201,24 @@ async def stream_scene(project_id: str, chapter_num: int, scene_index: int, requ
         try:
             # 读取章节规划
             story_db = StoryDB(project_id)
-            chapter_plan_data = await story_db.get_chapter_plan(chapter_num)
-            
-            if not chapter_plan_data:
+            chapter_plan_raw = await story_db.get_chapter_plan(chapter_num)
+
+            if not chapter_plan_raw:
                 yield {
                     "event": "error",
                     "data": json.dumps({"message": "章节规划不存在，请先生成章节规划"}, ensure_ascii=False)
                 }
                 return
-            
+
+            # 转换为 dict（StoryDB 返回的是 ChapterPlan 对象）
+            if hasattr(chapter_plan_raw, 'model_dump'):
+                chapter_plan_data = chapter_plan_raw.model_dump()
+            else:
+                chapter_plan_data = chapter_plan_raw
+
             # 构建 ChapterPlan
             chapter_plan = ChapterPlan(**chapter_plan_data)
-            
+
             # 查找对应场景
             scene_plan_data = None
             for scene in chapter_plan_data.get("scenes", []):
@@ -946,7 +1298,8 @@ async def stream_scene(project_id: str, chapter_num: int, scene_index: int, requ
                 "event": "error",
                 "data": json.dumps({"message": str(e)}, ensure_ascii=False)
             }
-    
+            return
+
     return EventSourceResponse(
         event_generator(),
         ping=15,  # 每15秒发送ping保持连接
@@ -985,20 +1338,31 @@ async def confirm_chapter(project_id: str, chapter_num: int):
         )
         
         await story_db.save_chapter_final(chapter_final_obj)
-        
+
         # 更新项目当前章节
         workspace_path = Path("workspace") / project_id
         meta_path = workspace_path / "project_meta.json"
-        
+
         async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
             content = await f.read()
             meta = json.loads(content)
-        
+
         meta["current_chapter"] = max(meta.get("current_chapter", 0), chapter_num)
-        
+
         async with aiofiles.open(meta_path, "w", encoding="utf-8") as f:
             await f.write(json.dumps(meta, ensure_ascii=False, indent=2))
-        
+
+        # 同步所有场景到向量库，确保最终定稿与向量存储一致
+        for scene in scenes:
+            await _sync_scene_to_vector_store(
+                project_id=project_id,
+                chapter_num=chapter_num,
+                scene_index=scene.get("scene_index", 0),
+                text=scene.get("text", ""),
+                emotional_tone=scene.get("emotional_tone", ""),
+                pov_character=scene.get("pov_character", "")
+            )
+
         return {
             "success": True,
             "message": "章节已确认",
@@ -1009,6 +1373,33 @@ async def confirm_chapter(project_id: str, chapter_num: int):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"确认章节失败: {str(e)}")
+
+
+async def _sync_scene_to_vector_store(
+    project_id: str,
+    chapter_num: int,
+    scene_index: int,
+    text: str,
+    emotional_tone: str = "",
+    pov_character: str = ""
+) -> None:
+    """将单个场景同步到向量库（内部辅助函数）"""
+    try:
+        vector_store = VectorStore(project_id)
+        await vector_store.upsert(
+            collection="chapter_scenes",
+            id=f"ch{chapter_num}_sc{scene_index}",
+            text=text,
+            metadata={
+                "chapter": chapter_num,
+                "scene": scene_index,
+                "emotional_tone": emotional_tone,
+                "pov_character": pov_character,
+                "updated_at": datetime.now().isoformat()
+            }
+        )
+    except Exception as e:
+        logger.error(f"同步场景到向量库失败 ch{chapter_num}_sc{scene_index}: {e}")
 
 
 @app.put("/api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}")
@@ -1034,13 +1425,143 @@ async def edit_scene(project_id: str, chapter_num: int, scene_index: int, conten
         
         # 保存
         await story_db.save_chapter_draft(chapter_num, draft)
-        
+
+        # 同步到向量库
+        updated_scene = next(
+            (s for s in scenes if s.get("scene_index") == scene_index), None
+        )
+        if updated_scene:
+            await _sync_scene_to_vector_store(
+                project_id=project_id,
+                chapter_num=chapter_num,
+                scene_index=scene_index,
+                text=updated_scene.get("text", ""),
+                emotional_tone=updated_scene.get("emotional_tone", ""),
+                pov_character=updated_scene.get("pov_character", "")
+            )
+
+            # 异步触发更新提取（不阻塞响应）
+            try:
+                from core.schemas import ScenePlan
+                # 构建一个轻量的 scene_plan 用于更新提取
+                extractor = UpdateExtractor(project_id)
+                asyncio.create_task(
+                    extractor.extract_and_update(
+                        generated_text=updated_scene.get("text", ""),
+                        chapter_number=chapter_num,
+                        scene_index=scene_index,
+                        scene_plan=ScenePlan(
+                            scene_index=scene_index,
+                            intent=updated_scene.get("intent", ""),
+                            pov_character=updated_scene.get("pov_character", ""),
+                            present_characters=updated_scene.get("present_characters", []),
+                            emotional_tone=updated_scene.get("emotional_tone", ""),
+                            target_word_count=updated_scene.get("target_word_count", 1200)
+                        ),
+                        sync=False
+                    )
+                )
+            except Exception as update_err:
+                logger.warning(f"手动编辑后异步更新提取失败: {update_err}")
+
         return {"success": True, "message": "场景已更新"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"编辑场景失败: {str(e)}")
+
+
+# ============================================================
+# 向量库同步接口
+# ============================================================
+
+@app.post("/api/projects/{project_id}/sync/vectors")
+async def sync_vectors(project_id: str):
+    """手动同步项目数据到向量库（用于修复工作区手动修改后的向量库不一致）"""
+    workspace_path = Path("workspace") / project_id
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    try:
+        vector_store = VectorStore(project_id)
+        results = {"bible": 0, "characters": 0, "scenes": 0}
+
+        # 1. 同步 Bible 规则
+        bible_db = BibleDB(project_id)
+        bible_data = await bible_db.load("bible")
+        if bible_data:
+            items = []
+            rules = bible_data.get("world_rules", [])
+            if isinstance(rules, list):
+                for i, rule in enumerate(rules):
+                    content_text = rule.get("content", rule.get("description", ""))
+                    category = rule.get("category", "special")
+                    items.append({
+                        "id": f"bible_rule_{i}",
+                        "text": content_text,
+                        "metadata": {"type": "world_rule", "category": category}
+                    })
+            if items:
+                await vector_store.upsert_batch(collection="bible_rules", items=items)
+                results["bible"] = len(items)
+
+        # 2. 同步人物
+        character_db = CharacterDB(project_id)
+        characters = await character_db.list_all_characters()
+        if characters:
+            items = []
+            for char in characters:
+                if not char or not isinstance(char, dict):
+                    continue
+                name = char.get("name", "未知")
+                text_parts = [f"人物姓名：{name}"]
+                if char.get("appearance"):
+                    text_parts.append(f"外貌：{char.get('appearance', '')}")
+                if char.get("personality_core"):
+                    text_parts.append(f"性格：{char.get('personality_core', '')}")
+                if char.get("background"):
+                    text_parts.append(f"背景：{char.get('background', '')}")
+                items.append({
+                    "id": f"char_{char.get('id', name)}",
+                    "text": "，".join(text_parts),
+                    "metadata": {"type": "character", "name": name}
+                })
+            if items:
+                await vector_store.upsert_batch(collection="character_cards", items=items)
+                results["characters"] = len(items)
+
+        # 3. 同步所有章节场景（草稿保存在 story/ 目录下）
+        story_db = StoryDB(project_id)
+        scene_count = 0
+        story_dir = workspace_path / "story"
+        if story_dir.exists():
+            for draft_file in story_dir.glob("chapter_*_draft.json"):
+                try:
+                    async with aiofiles.open(draft_file, "r", encoding="utf-8") as f:
+                        content = await f.read()
+                        draft = json.loads(content)
+                    for scene in draft.get("scenes", []):
+                        await _sync_scene_to_vector_store(
+                            project_id=project_id,
+                            chapter_num=draft.get("chapter_number", 0),
+                            scene_index=scene.get("scene_index", 0),
+                            text=scene.get("text", ""),
+                            emotional_tone=scene.get("emotional_tone", ""),
+                            pov_character=scene.get("pov_character", "")
+                        )
+                        scene_count += 1
+                except Exception as e:
+                    logger.warning(f"同步草稿文件失败 {draft_file.name}: {e}")
+            results["scenes"] = scene_count
+
+        return {
+            "success": True,
+            "message": "向量库同步完成",
+            "results": results
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"同步向量库失败: {str(e)}")
 
 
 # ============================================================

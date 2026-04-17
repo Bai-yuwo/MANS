@@ -285,11 +285,15 @@ class Writer:
         
         # Step 4: 校验生成结果
         if not self._validate_generated_text(full_text, scene_plan):
-            logger.warning(
-                f"[Writer] 生成文本校验失败：字数不足（{len(full_text)} < {scene_plan.target_word_count * 0.5}），"
-                f"跳过更新和保存"
+            raise InvalidOutputError(
+                f"生成文本校验失败：字数不足（{len(full_text)} < {scene_plan.target_word_count * 0.5}）",
+                stage="validation",
+                details={
+                    "actual_length": len(full_text),
+                    "expected_min_length": int(scene_plan.target_word_count * 0.5),
+                    "target_word_count": scene_plan.target_word_count
+                }
             )
-            return  # 提前退出，不触发更新和保存
         
         # Step 5: 触发异步更新（在生成完成后）
         update_task = asyncio.create_task(
@@ -418,20 +422,20 @@ class Writer:
     ) -> None:
         """
         保存场景草稿到文件
-        
+
         Args:
             chapter_number: 章节编号
             scene_index: 场景索引
             text: 生成的场景文本
             injection_ctx: 注入上下文
             scene_plan: 场景规划
-            
+
         Raises:
             SaveError: 保存失败
         """
         try:
-            # 构建草稿数据
-            draft_data = {
+            # 构建单场景草稿数据
+            scene_data = {
                 "scene_index": scene_index,
                 "text": text,
                 "word_count": len(text),
@@ -445,10 +449,30 @@ class Writer:
                     "token_budget_remaining": injection_ctx.token_budget_remaining
                 }
             }
-            
+
+            # 读取现有章节草稿，追加或更新场景
+            chapter_draft = await self.story_db.get_chapter_draft(chapter_number)
+            if chapter_draft and "scenes" in chapter_draft:
+                scenes = chapter_draft["scenes"]
+                # 查找并替换已有场景，或追加新场景
+                updated = False
+                for i, scene in enumerate(scenes):
+                    if scene.get("scene_index") == scene_index:
+                        scenes[i] = scene_data
+                        updated = True
+                        break
+                if not updated:
+                    scenes.append(scene_data)
+                chapter_draft["scenes"] = scenes
+            else:
+                chapter_draft = {
+                    "chapter_number": chapter_number,
+                    "scenes": [scene_data]
+                }
+
             # 保存到 story_db
-            await self.story_db.save_chapter_draft(chapter_number, draft_data)
-            
+            await self.story_db.save_chapter_draft(chapter_number, chapter_draft)
+
         except Exception as e:
             raise SaveError(
                 f"保存场景草稿失败: {str(e)}",
@@ -459,7 +483,7 @@ class Writer:
                     "error": str(e)
                 }
             )
-    
+
     async def regenerate_scene(
         self,
         scene_plan: ScenePlan,
@@ -542,25 +566,25 @@ class Writer:
         
         return full_text
     
-    def get_scene_draft(
+    async def get_scene_draft(
         self,
         chapter_number: int,
         scene_index: int
     ) -> Optional[dict]:
         """
         获取场景草稿
-        
+
         Args:
             chapter_number: 章节编号
             scene_index: 场景索引
-            
+
         Returns:
             草稿数据，如果不存在返回 None
         """
         self._ensure_initialized()
-        
+
         try:
-            draft = self.story_db.get_chapter_draft(chapter_number)
+            draft = await self.story_db.get_chapter_draft(chapter_number)
             if draft and "scenes" in draft:
                 for scene in draft["scenes"]:
                     if scene.get("scene_index") == scene_index:

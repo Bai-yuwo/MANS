@@ -36,6 +36,8 @@ wheels/
 *~
 *.png
 *.md
+.claude/
+.claudeignore
 
 # OS
 .DS_Store

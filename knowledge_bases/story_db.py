@@ -149,70 +149,123 @@ class StoryDB(BaseDB):
     
     async def save_arc_plan(self, arc_id: str, arc_data: dict) -> bool:
         """
-        保存弧线规划（异步）
-        
+        保存弧线规划到 arcs/ 目录（异步）
+
         Args:
             arc_id: 弧线ID
             arc_data: 弧线规划数据
-        
+
         Returns:
             是否保存成功
         """
-        key = f"arc_{arc_id}"
-        return await self.save(key, arc_data)
-    
+        arcs_dir = Path(self.base_path) / "arcs"
+        arcs_dir.mkdir(parents=True, exist_ok=True)
+        file_path = arcs_dir / f"arc_{arc_id}.json"
+        temp_path = file_path.with_suffix('.tmp')
+
+        try:
+            async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
+                await f.write(json.dumps(arc_data, ensure_ascii=False, indent=2))
+            import shutil
+            shutil.move(str(temp_path), str(file_path))
+            return True
+        except Exception as e:
+            logger.error(f"保存弧线规划失败: {e}")
+            if temp_path.exists():
+                temp_path.unlink()
+            return False
+
     async def get_arc_plan(self, arc_id: str) -> dict | None:
         """
         获取弧线规划（异步）
-        
+
         Args:
             arc_id: 弧线ID
-        
+
         Returns:
             弧线规划数据，不存在则返回 None
         """
-        key = f"arc_{arc_id}"
-        return await self.load(key)
-    
+        file_path = Path(self.base_path) / "arcs" / f"arc_{arc_id}.json"
+        if not file_path.exists():
+            # 兼容旧数据：尝试从 story 目录查找
+            story_path = Path(self.base_path) / "story" / f"arc_arc_{arc_id}.json"
+            if story_path.exists():
+                file_path = story_path
+            else:
+                return None
+
+        try:
+            async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+                content = await f.read()
+                return json.loads(content)
+        except Exception as e:
+            logger.error(f"读取弧线规划失败: {e}")
+            return None
+
+    async def list_arc_plans(self) -> list[dict]:
+        """
+        列出所有已保存的弧线规划（异步）
+
+        Returns:
+            弧线规划元信息列表
+        """
+        arcs = []
+        arcs_dir = Path(self.base_path) / "arcs"
+        if arcs_dir.exists():
+            for arc_file in sorted(arcs_dir.glob("arc_*.json")):
+                try:
+                    async with aiofiles.open(arc_file, 'r', encoding='utf-8') as f:
+                        data = json.loads(await f.read())
+                    arcs.append({
+                        "arc_id": data.get("arc_id", arc_file.stem),
+                        "arc_number": data.get("arc_number", 0),
+                        "title": data.get("arc_theme", "未命名弧线"),
+                        "chapter_range": data.get("chapter_range", [0, 0]),
+                        "description": data.get("arc_goal", ""),
+                        "is_placeholder": data.get("is_placeholder", False)
+                    })
+                except Exception:
+                    continue
+        return arcs
+
     async def get_arc_plan_for_chapter(self, chapter_number: int) -> dict | None:
         """
         根据章节号查找对应的弧线规划（异步）
-        
+
         Args:
             chapter_number: 章节编号
-        
+
         Returns:
             包含该章节的弧线规划数据，未找到则返回 None
         """
         arcs_dir = Path(self.base_path) / "arcs"
-        if not arcs_dir.exists():
-            # 尝试从 story 数据目录查找
-            story_dir = Path(self.base_path) / "story"
-            if story_dir.exists():
-                for f in story_dir.iterdir():
-                    if f.name.startswith("arc_") and f.suffix == ".json":
-                        try:
-                            async with aiofiles.open(f, 'r', encoding='utf-8') as fp:
-                                content = await fp.read()
-                                arc_data = json.loads(content)
-                            chapter_range = arc_data.get("chapter_range", [0, 0])
-                            if chapter_range[0] <= chapter_number <= chapter_range[1]:
-                                return arc_data
-                        except Exception:
-                            continue
-            return None
-        
-        for arc_file in arcs_dir.glob("arc_*.json"):
-            try:
-                async with aiofiles.open(arc_file, 'r', encoding='utf-8') as f:
-                    content = await f.read()
-                    arc_data = json.loads(content)
-                chapter_range = arc_data.get("chapter_range", [0, 0])
-                if chapter_range[0] <= chapter_number <= chapter_range[1]:
-                    return arc_data
-            except Exception:
-                continue
-        
+        if arcs_dir.exists():
+            for arc_file in arcs_dir.glob("arc_*.json"):
+                try:
+                    async with aiofiles.open(arc_file, 'r', encoding='utf-8') as f:
+                        content = await f.read()
+                        arc_data = json.loads(content)
+                    chapter_range = arc_data.get("chapter_range", [0, 0])
+                    if chapter_range[0] <= chapter_number <= chapter_range[1]:
+                        return arc_data
+                except Exception:
+                    continue
+
+        # 兼容旧数据：尝试从 story 目录查找
+        story_dir = Path(self.base_path) / "story"
+        if story_dir.exists():
+            for f in story_dir.iterdir():
+                if f.name.startswith("arc_") and f.suffix == ".json":
+                    try:
+                        async with aiofiles.open(f, 'r', encoding='utf-8') as fp:
+                            content = await fp.read()
+                            arc_data = json.loads(content)
+                        chapter_range = arc_data.get("chapter_range", [0, 0])
+                        if chapter_range[0] <= chapter_number <= chapter_range[1]:
+                            return arc_data
+                    except Exception:
+                        continue
+
         return None
     
     async def get_chapter_final(self, chapter_number: int) -> dict | None:

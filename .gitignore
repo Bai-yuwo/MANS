@@ -38,6 +38,7 @@ wheels/
 *.md
 .claude/
 .claudeignore
+auto.py
 
 # OS
 .DS_Store

@@ -64,7 +64,7 @@ class CharacterDB(BaseDB):
         """
         return await self.save(character.name, character.model_dump())
     
-    async def apply_update(self, update: CharacterStateUpdate, chapter: int = 0) -> bool:
+    async def apply_update(self, update: CharacterStateUpdate, chapter: int = 0, scene_index: int = -1) -> bool:
         """
         应用人物状态更新（异步）
         
@@ -87,7 +87,16 @@ class CharacterDB(BaseDB):
             updates['location'] = update.location_change
         
         if update.cultivation_change:
-            # 简化处理，实际应该解析修为变化
+            # 应用修为变化到角色卡对象
+            from core.schemas import CultivationLevel
+            if char.cultivation is None:
+                char.cultivation = CultivationLevel(
+                    realm=update.cultivation_change,
+                    stage="",
+                    combat_power_estimate="未知"
+                )
+            else:
+                char.cultivation.realm = update.cultivation_change
             updates['cultivation'] = update.cultivation_change
         
         if update.emotion_change:
@@ -99,14 +108,52 @@ class CharacterDB(BaseDB):
                 if goal not in char.active_goals:
                     char.active_goals.append(goal)
             updates['goals'] = update.goal_updates
-        
+
+        # 处理关系更新（此前完全遗漏）
+        if update.relationship_updates:
+            from core.schemas import Relationship
+            for rel_update in update.relationship_updates:
+                if not isinstance(rel_update, dict):
+                    continue
+                target_name = rel_update.get("target", "")
+                change_desc = rel_update.get("change", "")
+                if not target_name or not change_desc:
+                    continue
+
+                # 查找是否已存在与该目标的关系
+                existing_rel = None
+                for rel in char.relationships:
+                    if rel.target_name == target_name:
+                        existing_rel = rel
+                        break
+
+                if existing_rel:
+                    # 更新现有关系
+                    existing_rel.current_sentiment = change_desc
+                    existing_rel.add_history_note(
+                        f"第{chapter}章: {change_desc}"
+                    )
+                else:
+                    # 新建关系
+                    new_rel = Relationship(
+                        target_character_id="",
+                        target_name=target_name,
+                        relation_type="关联",
+                        current_sentiment=change_desc
+                    )
+                    new_rel.add_history_note(
+                        f"第{chapter}章: {change_desc}"
+                    )
+                    char.relationships.append(new_rel)
+
         # 记录状态历史
         if updates:
             char.update_state(
                 chapter=chapter,
-                updates=updates
+                updates=updates,
+                scene_index=scene_index
             )
-        
+
         return await self.save_character(char)
     
     async def list_characters(self) -> list[str]:

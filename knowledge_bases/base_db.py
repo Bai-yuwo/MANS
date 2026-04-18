@@ -148,8 +148,9 @@ class BaseDB:
                 async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
                     await f.write(json.dumps(data, ensure_ascii=False, indent=2))
 
-                # 原子替换
-                shutil.move(str(temp_path), str(file_path))
+                # 原子替换（os.replace 在 Python 3.3+ 支持跨文件系统原子操作）
+                import os
+                os.replace(str(temp_path), str(file_path))
                 return True
 
             except IOError as e:
@@ -271,7 +272,8 @@ class BaseDB:
             data['_updated_at'] = datetime.now().isoformat()
             async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
                 await f.write(json.dumps(data, ensure_ascii=False, indent=2))
-            shutil.move(str(temp_path), str(file_path))
+            import os
+            os.replace(str(temp_path), str(file_path))
             return True
         except IOError as e:
             logger.error(f"无锁保存数据失败 {key}: {e}")

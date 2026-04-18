@@ -212,9 +212,14 @@ class InjectionEngine:
         max_fs = self.config.INJECTION_MAX_FORESHADOWING
         active_foreshadowing = []
         if hasattr(self.foreshadowing_db, 'get_active_for_chapter'):
+            trigger_ids = []
+            if hasattr(scene_plan, 'foreshadowing_to_trigger') and scene_plan.foreshadowing_to_trigger:
+                trigger_ids.extend(scene_plan.foreshadowing_to_trigger)
+            if hasattr(scene_plan, 'foreshadowing_to_plant') and scene_plan.foreshadowing_to_plant:
+                trigger_ids.extend(scene_plan.foreshadowing_to_plant)
             all_foreshadowing = await self.foreshadowing_db.get_active_for_chapter(
                 current_chapter=chapter_plan.chapter_number,
-                trigger_ids=scene_plan.foreshadowing_to_trigger + scene_plan.foreshadowing_to_plant
+                trigger_ids=trigger_ids or None
             )
             active_foreshadowing = all_foreshadowing[:max_fs]
 
@@ -497,8 +502,8 @@ Token 预算：{budget_tokens}
         # 简化估算：将内容转为 JSON 后按字符数估算
         try:
             text = json.dumps(context, default=str, ensure_ascii=False)
-            # 中文字符约占 1.5 tokens
-            return int(len(text) * 0.75)
+            # 中文在 cl100k_base 下平均每字约 1.5 tokens，保守估算用 1.5
+            return int(len(text) * 1.5)
         except Exception:
             return 0
     

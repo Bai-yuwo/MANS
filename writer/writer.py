@@ -554,6 +554,15 @@ class Writer:
                 }
             )
         
+        # 回滚旧场景产生的知识库更新，防止旧状态污染
+        try:
+            await self.update_extractor.rollback_scene_updates(
+                chapter_number=chapter_plan.chapter_number,
+                scene_index=scene_plan.scene_index
+            )
+        except Exception as e:
+            logger.warning(f"[Writer] 回滚旧场景更新失败（可能无更新记录）: {e}")
+
         # 保存（覆盖原草稿）
         await self._save_scene_draft(
             chapter_number=chapter_plan.chapter_number,
@@ -562,7 +571,17 @@ class Writer:
             injection_ctx=injection_ctx,
             scene_plan=scene_plan
         )
-        
+
+        # 触发新文本的异步更新提取
+        asyncio.create_task(
+            self._trigger_update(
+                generated_text=full_text,
+                chapter_number=chapter_plan.chapter_number,
+                scene_index=scene_plan.scene_index,
+                scene_plan=scene_plan
+            )
+        )
+
         return full_text
 
     async def regenerate_scene_stream(

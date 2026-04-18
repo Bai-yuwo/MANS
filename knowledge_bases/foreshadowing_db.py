@@ -80,13 +80,17 @@ class ForeshadowingDB(BaseDB):
         active = []
         
         for item in items:
+            # 已解决的伏笔不再激活
+            if item.status == ForeshadowingStatus.RESOLVED:
+                continue
+
             # 检查是否在本场景触发列表中
             if trigger_ids and item.id in trigger_ids:
                 active.append(item)
                 continue
-            
-            # 检查是否在触发范围内
-            if item.can_trigger_in_chapter(current_chapter):
+
+            # 检查是否在触发范围内（仅限 planted 或 hinted 状态）
+            if item.status in (ForeshadowingStatus.PLANTED, ForeshadowingStatus.HINTED) and item.can_trigger_in_chapter(current_chapter):
                 active.append(item)
         
         # 按 urgency 排序

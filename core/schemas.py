@@ -153,16 +153,17 @@ class CharacterCard(BaseModel):
     # 扩展：状态历史（用于追踪人物变化轨迹）
     state_history: list[dict] = Field(default_factory=list)
     
-    def update_state(self, chapter: int, updates: dict[str, Any]) -> None:
+    def update_state(self, chapter: int, updates: dict[str, Any], scene_index: int = -1) -> None:
         """更新人物状态并记录历史"""
         snapshot = {
             "chapter": chapter,
+            "scene_index": scene_index,
             "timestamp": datetime.now().isoformat(),
             "updates": updates
         }
         self.state_history.append(snapshot)
         self.last_updated_chapter = chapter
-        
+
         # 应用更新
         for key, value in updates.items():
             if hasattr(self, key):

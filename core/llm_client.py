@@ -664,12 +664,19 @@ class LLMClient:
         """
         判断是否需要关闭深度思考。
 
-        Seed-2.0 系列默认开启 thinking，但 extract/trim 角色输出严格 JSON，
-        思考过程会污染解析，必须关闭。
+        Seed-2.0 / DeepSeek-R1 等系列默认开启 thinking，但 extract/trim 角色
+        输出严格 JSON，思考过程会污染解析，必须关闭。
         """
-        is_seed_model = "seed" in model.lower() or "doubao-seed" in model.lower()
+        model_lower = model.lower()
+        has_thinking = (
+            "seed" in model_lower
+            or "doubao-seed" in model_lower
+            or "deepseek-r1" in model_lower
+            or "r1" in model_lower
+            or "thinking" in model_lower
+        )
         is_structured_role = role in ("extract", "trim")
-        return is_seed_model and is_structured_role
+        return has_thinking and is_structured_role
     
     def _parse_stream_line(self, line: str, provider_name: str) -> Optional[str]:
         """解析流式响应的一行数据"""
@@ -1176,7 +1183,13 @@ class LLMClient:
                             f"检测到能力错误，降级到 {next_level} 后重试 "
                             f"(尝试 {attempt + 1}/{max_retries})"
                         )
+                        last_error = e
                         continue
+                    else:
+                        # 已降级到最低级别仍报错，不再尝试降级
+                        logger.error(
+                            f"模型 {model} 已降级到最低级别仍报错，停止降级"
+                        )
 
                 # 非能力错误，指数退避重试
                 wait_time = retry_delay * (2 ** attempt)

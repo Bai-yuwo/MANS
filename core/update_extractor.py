@@ -279,7 +279,21 @@ class UpdateExtractor:
 
         # 更新记录文件锁
         self._update_record_lock = asyncio.Lock()
-    
+
+    @staticmethod
+    def _truncate_text_for_extraction(text: str, max_chars: int = 3000, head_chars: int = 500) -> str:
+        """
+        为提取器截断文本，优先保留尾部（最新变化更关键）。
+
+        策略：保留开头 head_chars（上下文衔接）+ 尾部剩余部分（最新变化）。
+        如果文本长度在限制内，返回全文。
+        """
+        if len(text) <= max_chars:
+            return text
+        head = text[:head_chars]
+        tail = text[-(max_chars - head_chars):]
+        return f"{head}\n\n...[中间省略 {len(text) - max_chars} 字]...\n\n{tail}"
+
     @property
     def character_db(self):
         """延迟初始化人物库"""
@@ -375,12 +389,14 @@ class UpdateExtractor:
                 scene_plan=scene_plan
             )
         else:
-            # 默认异步：返回后台协程，由调用者自行包装为任务
-            return self._do_extract_and_update(
-                generated_text=generated_text,
-                chapter_number=chapter_number,
-                scene_index=scene_index,
-                scene_plan=scene_plan
+            # 默认异步：包装为 asyncio.Task 真正后台执行
+            return asyncio.create_task(
+                self._do_extract_and_update(
+                    generated_text=generated_text,
+                    chapter_number=chapter_number,
+                    scene_index=scene_index,
+                    scene_plan=scene_plan
+                )
             )
     
     async def _extract_updates(
@@ -416,7 +432,7 @@ class UpdateExtractor:
 {json.dumps(current_characters, ensure_ascii=False, indent=2)}
 
 场景文本：
-{generated_text[:3000]}  # 限制长度避免超出 token 限制
+{self._truncate_text_for_extraction(generated_text)}  # 优先保留尾部（最新变化更关键）
 
 请提取以下信息：
 1. 人物状态变化（位置/修为/情绪/目标/关系）—— 重要：如果文本中出现了不在"计划出场人物"列表中的角色（例如路人、新登场的 NPC、意外出现的角色），也请一并提取其状态变化。
@@ -751,7 +767,7 @@ class UpdateExtractor:
                         )
                     await self.character_db.save_character(char)
                     continue
-                await self.character_db.apply_update(update, chapter=chapter_number)
+                await self.character_db.apply_update(update, chapter=chapter_number, scene_index=scene_index)
         except Exception as e:
             logger.error(f"人物库更新失败: {e}")
             raise
@@ -904,12 +920,11 @@ class UpdateExtractor:
                     if not char:
                         continue
 
-                    # 移除该章节添加的状态历史快照（按章节匹配，
-                    # 因为同一章节内场景顺序生成，回滚时安全清除本章全部快照）
+                    # 精确移除该场景添加的状态历史快照（按 scene_index 匹配）
                     original_len = len(char.state_history)
                     char.state_history = [
                         s for s in char.state_history
-                        if s.get("chapter") != chapter_number
+                        if not (s.get("chapter") == chapter_number and s.get("scene_index") == scene_index)
                     ]
 
                     # 如果移除了快照，需要重新计算当前状态

@@ -59,7 +59,7 @@
 {% for char in context.present_character_cards %}
 ▸ {{ char.name }}
   - 当前位置：{{ char.current_location }}
-  - 当前修为：{{ char.cultivation.realm }}{{ char.cultivation.stage }}
+  - 当前修为：{% if char.cultivation %}{{ char.cultivation.realm }}{% if char.cultivation.stage %}{{ char.cultivation.stage }}{% endif %}{% else %}未知{% endif %}
   - 当前情绪：{{ char.current_emotion }}
   - 性格关键词：{{ char.personality_core }}
   {% if char.voice_keywords %}

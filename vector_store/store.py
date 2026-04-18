@@ -345,15 +345,15 @@ class VectorStore:
     async def count(self, collection: str) -> int:
         """
         获取 collection 中的向量数量
-        
+
         Args:
             collection: collection 名称
-        
+
         Returns:
             向量数量
         """
         try:
-            coll = self._get_or_create_collection(collection)
+            coll = await self._get_or_create_collection(collection)
             count = await asyncio.to_thread(coll.count)
             return count
         except Exception as e:

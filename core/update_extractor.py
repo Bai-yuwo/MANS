@@ -382,6 +382,7 @@ class UpdateExtractor:
                 role="extract",
                 prompt=extraction_prompt,
                 max_tokens=2000,
+                temperature=0.1,
                 response_format="json_schema",
                 json_schema=extraction_schema
             )
@@ -493,7 +494,30 @@ class UpdateExtractor:
             for update in updates:
                 char = await self.character_db.get_character(update.character_name)
                 if not char:
-                    logger.warning(f"UpdateExtractor 跳过不存在的角色: {update.character_name}")
+                    # 新登场角色：自动初始化临时人物卡
+                    logger.info(
+                        f"检测到新登场角色 '{update.character_name}'，"
+                        f"自动创建临时人物卡（章节 {chapter_number}）"
+                    )
+                    char = CharacterCard(
+                        name=update.character_name,
+                        appearance="待补充",
+                        personality_core="待补充",
+                        background="待补充",
+                        current_location=update.location_change or "未知",
+                        current_emotion=update.emotion_change or "",
+                        first_appeared_chapter=chapter_number,
+                        last_updated_chapter=chapter_number
+                    )
+                    # 如果有修为变化，也记录上
+                    if update.cultivation_change:
+                        from core.schemas import CultivationLevel
+                        char.cultivation = CultivationLevel(
+                            realm=update.cultivation_change,
+                            stage="",
+                            combat_power_estimate="未知"
+                        )
+                    await self.character_db.save_character(char)
                     continue
                 await self.character_db.apply_update(update, chapter=chapter_number)
         except Exception as e:

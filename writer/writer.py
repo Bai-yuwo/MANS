@@ -428,7 +428,8 @@ class Writer:
         """
         保存场景草稿到文件
 
-        防止丢失更新：保存前重读最新草稿，只更新当前场景。
+        使用 StoryDB 的原子性 update_scene_in_draft，全程 FileLockRegistry
+        加锁，彻底消除并发提取器或前端自动保存导致的竞态覆盖。
 
         Args:
             chapter_number: 章节编号
@@ -457,29 +458,20 @@ class Writer:
                 }
             }
 
-            # 重读最新草稿（防止并发写入导致丢失更新）
-            chapter_draft = await self.story_db.get_chapter_draft(chapter_number)
-            if chapter_draft and "scenes" in chapter_draft:
-                scenes = chapter_draft["scenes"]
-                # 查找并替换已有场景，或追加新场景
-                updated = False
-                for i, scene in enumerate(scenes):
-                    if scene.get("scene_index") == scene_index:
-                        scenes[i] = scene_data
-                        updated = True
-                        break
-                if not updated:
-                    scenes.append(scene_data)
-                chapter_draft["scenes"] = scenes
-            else:
-                chapter_draft = {
-                    "chapter_number": chapter_number,
-                    "scenes": [scene_data]
-                }
+            # 原子性更新：StoryDB 内部使用 FileLockRegistry 包裹 读-改-写
+            success = await self.story_db.update_scene_in_draft(
+                chapter_number=chapter_number,
+                scene_data=scene_data
+            )
+            if not success:
+                raise SaveError(
+                    "StoryDB 返回保存失败",
+                    stage="save_draft",
+                    details={"chapter": chapter_number, "scene": scene_index}
+                )
 
-            # 保存到 story_db（BaseDB 会自动深度合并，进一步防止丢失更新）
-            await self.story_db.save_chapter_draft(chapter_number, chapter_draft)
-
+        except SaveError:
+            raise
         except Exception as e:
             raise SaveError(
                 f"保存场景草稿失败: {str(e)}",

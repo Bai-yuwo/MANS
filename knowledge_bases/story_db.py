@@ -14,7 +14,7 @@ from pathlib import Path
 
 import aiofiles
 
-from knowledge_bases.base_db import BaseDB
+from knowledge_bases.base_db import BaseDB, FileLockRegistry
 from core.schemas import ChapterPlan, ChapterFinal
 from core.logging_config import get_logger, log_exception
 
@@ -310,12 +310,53 @@ class StoryDB(BaseDB):
     async def get_chapter_draft(self, chapter_number: int) -> dict | None:
         """
         获取章节草稿（异步）
-        
+
         Args:
             chapter_number: 章节号
-        
+
         Returns:
             草稿数据，不存在则返回 None
         """
         key = f"chapter_{chapter_number}_draft"
         return await self.load(key)
+
+    async def update_scene_in_draft(
+        self,
+        chapter_number: int,
+        scene_data: dict
+    ) -> bool:
+        """
+        原子性更新草稿中的特定场景（读取->修改->写入 全程加锁）
+
+        使用 FileLockRegistry 全局锁防止并发写入导致的数据丢失。
+
+        Args:
+            chapter_number: 章节号
+            scene_data: 单场景草稿数据（必须包含 scene_index）
+
+        Returns:
+            是否保存成功
+        """
+        key = f"chapter_{chapter_number}_draft"
+        file_path = self._get_file_path(key)
+        file_lock = await FileLockRegistry.acquire(str(file_path))
+
+        async with file_lock:
+            chapter_draft = await self._load_no_lock(key) or {}
+            scenes = chapter_draft.get("scenes", [])
+
+            scene_index = scene_data.get("scene_index")
+            updated = False
+            for i, scene in enumerate(scenes):
+                if scene.get("scene_index") == scene_index:
+                    scenes[i] = scene_data
+                    updated = True
+                    break
+            if not updated:
+                scenes.append(scene_data)
+
+            chapter_draft["scenes"] = scenes
+            if "chapter_number" not in chapter_draft:
+                chapter_draft["chapter_number"] = chapter_number
+
+            return await self._save_no_lock(key, chapter_draft)

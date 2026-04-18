@@ -341,6 +341,9 @@ class InjectionContext(BaseModel):
     total_tokens_used: int = 0
     token_budget_remaining: int = 0
     
+    # 下一场景锚点（用于控制剧情节奏）
+    next_scene_intent: str = ""
+
     # 扩展：注入元信息
     injection_metadata: dict = Field(default_factory=dict)
     

@@ -66,6 +66,7 @@ class InjectionEngine:
         self._bible_db = None
         self._foreshadowing_db = None
         self._story_db = None
+        self._style_db = None
         self._vector_store = None
     
     @property
@@ -107,6 +108,14 @@ class InjectionEngine:
             from vector_store.store import VectorStore
             self._vector_store = VectorStore(self.project_id)
         return self._vector_store
+
+    @property
+    def style_db(self):
+        """延迟初始化文风库"""
+        if self._style_db is None:
+            from knowledge_bases.style_db import StyleDB
+            self._style_db = StyleDB(self.project_id)
+        return self._style_db
     
     async def build_context(
         self,
@@ -147,14 +156,24 @@ class InjectionEngine:
                 context_data,
                 self.config.INJECTION_TOKEN_BUDGET
             )
-        
+
+        # 计算下一场景锚点（用于锁死剧情节奏）
+        next_scene_intent = ""
+        if hasattr(chapter_plan, 'scenes') and chapter_plan.scenes:
+            current_idx = scene_plan.scene_index
+            for s in chapter_plan.scenes:
+                if getattr(s, 'scene_index', None) == current_idx + 1:
+                    next_scene_intent = s.intent
+                    break
+
         # 组装最终上下文
-        injection_context = self._assemble_context(
+        injection_context = await self._assemble_context(
             context_data,
             used_tokens=used_tokens,
-            remaining_budget=remaining_budget
+            remaining_budget=remaining_budget,
+            next_scene_intent=next_scene_intent
         )
-        
+
         return injection_context
     
     async def _get_mandatory_context(
@@ -291,47 +310,47 @@ class InjectionEngine:
     ) -> dict:
         """
         第三层：裁剪层
-        当检索结果超出预算时，调用小模型压缩
+        当检索结果超出预算时，调用小模型决定保留哪些内容。
+        对于 WorldRule，只返回序号索引，代码层保留原始对象，绝不丢失元数据。
         """
-        # 构建裁剪提示词
+        rules = context.get('world_rules', [])
+
         trim_prompt = f"""
 当前写作场景：{context['scene_plan'].intent}
 情绪基调：{context['scene_plan'].emotional_tone}
 Token 预算：{budget_tokens}
 
-以下是候选背景信息（已超出预算），请按重要性选取并压缩：
+以下是候选背景信息（已超出预算），请按重要性选取：
 
-【世界规则】
-{self._format_world_rules(context.get('world_rules', []))}
+【世界规则】（仅返回需要保留的序号，不要改写内容）
+{self._format_world_rules_indexed(rules)}
 
-【相似历史场景】
+【相似历史场景】（可直接压缩/概括）
 {self._format_similar_scenes(context.get('similar_scenes', []))}
 
-【文风范例】
+【文风范例】（可直接压缩/概括）
 {self._format_style_examples(context.get('style_examples', []))}
 
-请输出压缩后的内容（JSON格式）：
+请输出选择结果（JSON格式）：
 {{
-    "world_rules": ["保留的规则1", "保留的规则2"],
+    "keep_rule_indices": [0, 2],
     "similar_scenes": ["保留的场景片段"],
     "style_reference": "文风描述"
 }}
 """
-        
+
         try:
-            # 调用 Trim 模型进行压缩
             from core.llm_client import LLMClient
             client = LLMClient()
-            
-            # 定义 JSON Schema
+
             trim_schema = {
                 "name": "trim_output",
                 "schema": {
                     "type": "object",
                     "properties": {
-                        "world_rules": {
+                        "keep_rule_indices": {
                             "type": "array",
-                            "items": {"type": "string"}
+                            "items": {"type": "integer"}
                         },
                         "similar_scenes": {
                             "type": "array",
@@ -339,56 +358,75 @@ Token 预算：{budget_tokens}
                         },
                         "style_reference": {"type": "string"}
                     },
-                    "required": ["world_rules", "similar_scenes", "style_reference"]
+                    "required": ["keep_rule_indices", "similar_scenes", "style_reference"]
                 }
             }
-            
+
             response_obj = await client.call_with_retry(
                 role="trim",
                 prompt=trim_prompt,
-                max_tokens=budget_tokens // 2,  # 压缩结果占用一半预算
+                max_tokens=budget_tokens // 2,
+                temperature=0.1,
                 response_format="json_schema",
                 json_schema=trim_schema
             )
-            
-            # 解析压缩结果
+
             trimmed = json.loads(response_obj.content)
 
-            # 将裁剪后的规则字符串转回 WorldRule 对象
-            trimmed_rules = trimmed.get("world_rules", [])
+            # 代码层根据索引保留原始 WorldRule 对象，绝不丢失 source_chapter / category / importance
+            keep_indices = set(trimmed.get("keep_rule_indices", []))
             context["world_rules"] = [
-                WorldRule(
-                    content=r,
-                    category=WorldRuleCategory.SPECIAL.value,
-                    source_chapter=0,
-                    importance=WorldRuleImportance.MAJOR.value
-                )
-                for r in trimmed_rules
+                rules[i] for i in keep_indices
+                if isinstance(i, int) and 0 <= i < len(rules)
             ]
             context["similar_scenes"] = trimmed.get("similar_scenes", [])
             context["style_reference"] = trimmed.get("style_reference", "")
 
         except Exception as e:
-            # 压缩失败，简单截断
-            logger.error(f"上下文裁剪失败: {e}，使用简单截断")
-            context["world_rules"] = context.get("world_rules", [])[:2]
+            logger.error(f"上下文裁剪失败: {e}，使用硬截断")
+            # 硬截断：按重要性保留前两条，绝不重写规则内容
+            sorted_rules = sorted(
+                context.get("world_rules", []),
+                key=lambda r: (
+                    0 if getattr(r, 'importance', '') == WorldRuleImportance.CRITICAL else
+                    1 if getattr(r, 'importance', '') == WorldRuleImportance.MAJOR else 2
+                )
+            )
+            context["world_rules"] = sorted_rules[:2]
             context["similar_scenes"] = context.get("similar_scenes", [])[:1]
             context["style_reference"] = ""
-        
+
         return context
-    
-    def _assemble_context(
+
+    async def _assemble_context(
         self,
         context: dict,
         used_tokens: int,
-        remaining_budget: int
+        remaining_budget: int,
+        next_scene_intent: str = ""
     ) -> InjectionContext:
         """组装最终的 InjectionContext"""
-        # 处理文风参考：优先使用 style_reference，否则从 style_examples 拼接
         style_reference = context.get("style_reference", "")
+
+        # 若未通过裁剪层获得 style_reference，尝试从 StyleDB 渲染 style_injection.j2
         if not style_reference:
-            style_examples = context.get("style_examples", [])
-            style_reference = "\n\n".join(style_examples[:2])
+            try:
+                style_config = await self.style_db.get_style_config()
+                if style_config:
+                    from jinja2 import Environment, FileSystemLoader
+                    env = Environment(
+                        loader=FileSystemLoader("writer/prompts"),
+                        trim_blocks=True,
+                        lstrip_blocks=True
+                    )
+                    template = env.get_template("style_injection.j2")
+                    style_reference = template.render(style_config=style_config)
+                else:
+                    style_examples = context.get("style_examples", [])
+                    style_reference = "\n\n".join(style_examples[:2])
+            except Exception:
+                style_examples = context.get("style_examples", [])
+                style_reference = "\n\n".join(style_examples[:2])
 
         return InjectionContext(
             scene_plan=context["scene_plan"],
@@ -399,6 +437,7 @@ Token 预算：{budget_tokens}
             active_foreshadowing=context.get("active_foreshadowing", []),
             similar_scenes_reference=context.get("similar_scenes", []),
             style_reference=style_reference,
+            next_scene_intent=next_scene_intent,
             total_tokens_used=used_tokens,
             token_budget_remaining=remaining_budget
         )
@@ -472,7 +511,22 @@ Token 预算：{budget_tokens}
             else:
                 formatted.append(f"- {rule}")
         return "\n".join(formatted)
-    
+
+    def _format_world_rules_indexed(self, rules: list) -> str:
+        """格式化世界规则（带序号索引，供裁剪层使用）"""
+        if not rules:
+            return "无"
+        formatted = []
+        for i, rule in enumerate(rules[:10]):
+            if isinstance(rule, WorldRule):
+                formatted.append(
+                    f"{i}: [{rule.importance}] {rule.content} "
+                    f"(来源:第{rule.source_chapter}章, 类别:{rule.category})"
+                )
+            else:
+                formatted.append(f"{i}: {rule}")
+        return "\n".join(formatted)
+
     def _format_similar_scenes(self, scenes: list) -> str:
         """格式化相似场景"""
         if not scenes:

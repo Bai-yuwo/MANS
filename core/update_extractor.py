@@ -13,7 +13,7 @@ core/update_extractor.py
 import asyncio
 import json
 import re
-from typing import Optional
+from typing import Optional, Any
 from pathlib import Path
 from datetime import datetime
 
@@ -34,7 +34,7 @@ logger = get_logger('core.update_extractor')
 
 
 # ============================================================
-# JSON 清洗工具函数
+# 辅助工具函数
 # ============================================================
 
 def clean_json_response(response: str) -> str:
@@ -85,6 +85,162 @@ def clean_json_response(response: str) -> str:
     text = text.rstrip().rstrip(',').rstrip()
 
     return text
+
+
+def find_key_in_dict(data: Any, target_keys: list[str]) -> Any:
+    """
+    递归在 JSON 树中查找任意匹配的目标键（不区分大小写）。
+
+    支持：
+    1. 任意嵌套深度搜索
+    2. 多目标键同时匹配（返回第一个命中的列表/非空值）
+    3. snake_case / camelCase / 小写 不敏感匹配
+
+    Returns:
+        找到的原始值（列表或标量），未找到返回 None
+    """
+    if not isinstance(data, (dict, list)):
+        return None
+
+    if isinstance(data, dict):
+        # 先在当前层级查找（不区分大小写）
+        lower_targets = [k.lower() for k in target_keys]
+        for key, value in data.items():
+            if key.lower() in lower_targets:
+                return value
+
+        # 递归到子节点
+        for value in data.values():
+            found = find_key_in_dict(value, target_keys)
+            if found is not None:
+                return found
+
+    elif isinstance(data, list):
+        for item in data:
+            found = find_key_in_dict(item, target_keys)
+            if found is not None:
+                return found
+
+    return None
+
+
+def _coerce_to_list(val: Any) -> list:
+    """
+    强制将标量值包装为列表。
+
+    场景：大模型在只有一条记录时直接返回字符串而非字符串列表。
+    """
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return val
+    if isinstance(val, str):
+        return [val]
+    # 其他标量类型（int, float, bool）也包装
+    return [val]
+
+
+# 枚举值模糊归一化映射表
+ENUM_NORMALIZATION_MAP: dict[str, dict[str, str]] = {
+    "importance": {
+        # 中文映射
+        "关键": "critical", "核心": "critical", "至关重要": "critical",
+        "重要": "major", "主要": "major", "重大": "major",
+        "次要": "minor", "一般": "minor", "轻微": "minor",
+        # 大小写容错
+        "critical": "critical", "critial": "critical",
+        "major": "major", "mojor": "major",
+        "minor": "minor", "minior": "minor",
+    },
+    "category": {
+        "修炼": "cultivation", "修行": "cultivation", "境界": "cultivation",
+        "地理": "geography", "地图": "geography", "位置": "geography",
+        "社会": "social", "势力": "social", "关系": "social",
+        "物理": "physics", "规则": "physics", "法则": "physics",
+        "特殊": "special", "其他": "special", "其他": "special",
+        # 英文容错
+        "cultivation": "cultivation", "cultivaiton": "cultivation",
+        "geography": "geography", "geograpy": "geography",
+        "social": "social", "socal": "social",
+        "physics": "physics", "phyiscs": "physics",
+        "special": "special", "specail": "special",
+    },
+    "fs_type": {
+        "剧情": "plot", "情节": "plot",
+        "人物": "character", "角色": "character",
+        "世界": "world", "世界观": "world",
+        "情感": "emotional", "感情": "emotional",
+        "plot": "plot", "charactor": "character",
+        "character": "character", "world": "world",
+        "emotional": "emotional", "emotion": "emotional",
+    },
+    "fs_status": {
+        "已埋下": "planted", "埋下": "planted", "种植": "planted",
+        "已暗示": "hinted", "暗示": "hinted", "提示": "hinted",
+        "已触发": "triggered", "触发": "triggered", "引爆": "triggered",
+        "已解决": "resolved", "解决": "resolved", "完成": "resolved",
+        "planted": "planted", "hinted": "hinted",
+        "triggered": "triggered", "trigered": "triggered",
+        "resolved": "resolved", "resloved": "resolved",
+    },
+    "urgency": {
+        "高": "high", "紧急": "high", "关键": "high",
+        "中": "medium", "普通": "medium", "一般": "medium",
+        "低": "low", "轻微": "low", "不急": "low",
+        "high": "high", "hight": "high",
+        "medium": "medium", "meduim": "medium",
+        "low": "low",
+    },
+}
+
+
+def _normalize_enum(raw_value: str, field: str, valid_values: set[str]) -> str:
+    """
+    枚举值模糊归一化。
+
+    策略：
+    1. 精确匹配（忽略大小写）
+    2. 查预定义映射表（中英文/常见拼写错误）
+    3. 无法匹配时降级为默认值，并输出 Warning
+    """
+    if not raw_value:
+        return _default_for_field(field)
+
+    # 1. 精确匹配（忽略大小写）
+    lowered = raw_value.strip().lower()
+    for v in valid_values:
+        if lowered == v.lower():
+            return v
+
+    # 2. 查映射表
+    mapping = ENUM_NORMALIZATION_MAP.get(field, {})
+    normalized = mapping.get(raw_value.strip())
+    if normalized and normalized in valid_values:
+        return normalized
+    # 再试试小写版本
+    normalized = mapping.get(lowered)
+    if normalized and normalized in valid_values:
+        return normalized
+
+    # 3. 降级为默认值并警告
+    default = _default_for_field(field)
+    logger.warning(
+        f"枚举值归一化失败: field={field}, raw_value='{raw_value}', "
+        f"降级为默认值 '{default}'"
+    )
+    return default
+
+
+def _default_for_field(field: str) -> str:
+    """返回字段的默认枚举值"""
+    defaults = {
+        "importance": "major",
+        "category": "special",
+        "fs_type": "plot",
+        "fs_status": "planted",
+        "urgency": "medium",
+    }
+    return defaults.get(field, "")
 
 
 class UpdateExtractor:
@@ -411,20 +567,52 @@ class UpdateExtractor:
             cleaned_content = clean_json_response(response_obj.content)
             data = json.loads(cleaned_content)
 
-            # 构建 ExtractedUpdates（带枚举值安全校验 + Pydantic 防御性验证）
+            # ============================================================
+            # 1. 扁平化模糊搜索：在 JSON 树任意深度查找目标字段
+            # ============================================================
+            raw_character_updates = _coerce_to_list(
+                find_key_in_dict(data, ["character_updates", "characters", "character_updates_list", "updates"])
+            )
+            raw_new_world_rules = _coerce_to_list(
+                find_key_in_dict(data, ["new_world_rules", "world_rules", "rules", "newRules", "worldRules"])
+            )
+            raw_foreshadowing_status_changes = _coerce_to_list(
+                find_key_in_dict(data, [
+                    "foreshadowing_status_changes", "foreshadowing_changes",
+                    "status_changes", "fs_changes", "foreshadowing_updates"
+                ])
+            )
+            raw_new_foreshadowing = _coerce_to_list(
+                find_key_in_dict(data, [
+                    "new_foreshadowing", "new_foreshadowing_items",
+                    "foreshadowing_items", "newFs", "fs_items"
+                ])
+            )
+            raw_implicit_issues = _coerce_to_list(
+                find_key_in_dict(data, [
+                    "implicit_issues", "issues", "problems",
+                    "potential_issues", "detected_issues"
+                ])
+            )
+
+            # ============================================================
+            # 2. 枚举值模糊归一化 + Pydantic 防御性验证
+            # ============================================================
             valid_categories = {e.value for e in WorldRuleCategory}
             valid_importances = {e.value for e in WorldRuleImportance}
             valid_fs_types = {e.value for e in ForeshadowingType}
             valid_fs_statuses = {e.value for e in ForeshadowingStatus}
 
             sanitized_world_rules = []
-            for wr in data.get("new_world_rules", []):
-                cat = wr.get("category", "special")
-                if cat not in valid_categories:
-                    cat = "special"
-                imp = wr.get("importance", "major")
-                if imp not in valid_importances:
-                    imp = "major"
+            for wr in raw_new_world_rules:
+                if not isinstance(wr, dict):
+                    continue
+                cat = _normalize_enum(
+                    wr.get("category", ""), "category", valid_categories
+                )
+                imp = _normalize_enum(
+                    wr.get("importance", ""), "importance", valid_importances
+                )
                 wr["category"] = cat
                 wr["importance"] = imp
                 try:
@@ -437,15 +625,21 @@ class UpdateExtractor:
                     logger.warning(f"跳过非法 world_rule: {e}")
 
             sanitized_foreshadowing = []
-            for nf in data.get("new_foreshadowing", []):
-                fs_type = nf.get("type", "plot")
-                if fs_type not in valid_fs_types:
-                    fs_type = "plot"
+            for nf in raw_new_foreshadowing:
+                if not isinstance(nf, dict):
+                    continue
+                fs_type = _normalize_enum(
+                    nf.get("type", ""), "fs_type", valid_fs_types
+                )
                 nf["type"] = fs_type
-                status = nf.get("status", "planted")
-                if status not in valid_fs_statuses:
-                    status = "planted"
+                status = _normalize_enum(
+                    nf.get("status", ""), "fs_status", valid_fs_statuses
+                )
                 nf["status"] = status
+                # urgency 也归一化
+                nf["urgency"] = _normalize_enum(
+                    nf.get("urgency", ""), "urgency", {"low", "medium", "high"}
+                )
                 try:
                     sanitized_foreshadowing.append(
                         ForeshadowingItem(planted_chapter=chapter_number, **nf)
@@ -455,22 +649,25 @@ class UpdateExtractor:
                 except Exception as e:
                     logger.warning(f"跳过非法 foreshadowing: {e}")
 
-            # 使用 Pydantic model_validate 做防御性校验
+            # 人物更新：先模糊搜索 + 再 Pydantic 校验
             valid_character_updates = []
-            for cu in data.get("character_updates", []):
+            for cu in raw_character_updates:
+                if not isinstance(cu, dict):
+                    continue
                 try:
                     valid_character_updates.append(CharacterStateUpdate.model_validate(cu))
                 except ValidationError as ve:
                     logger.warning(f"跳过非法 character_update: {ve}")
 
+            # 构建最终对象（Pydantic 的 AliasChoices 会自动兜底字段名别名）
             updates = ExtractedUpdates(
                 source_chapter=chapter_number,
                 source_scene_index=scene_index,
                 character_updates=valid_character_updates,
                 new_world_rules=sanitized_world_rules,
-                foreshadowing_status_changes=data.get("foreshadowing_status_changes", []),
+                foreshadowing_status_changes=raw_foreshadowing_status_changes,
                 new_foreshadowing=sanitized_foreshadowing,
-                implicit_issues=data.get("implicit_issues", [])
+                implicit_issues=raw_implicit_issues
             )
 
             return updates

@@ -69,6 +69,26 @@
       "json_schema": false,
       "tools": false,
       "json_object": false
+    },
+    "GLM-4.7": {
+      "json_schema": false,
+      "tools": true,
+      "json_object": true
+    },
+    "DeepSeek-V3.2": {
+      "json_schema": false,
+      "tools": true,
+      "json_object": true
+    },
+    "Doubao-Seed-2.0-Code": {
+      "json_schema": false,
+      "tools": true,
+      "json_object": true
+    },
+    "Doubao-Seed-2.0-mini": {
+      "json_schema": false,
+      "tools": true,
+      "json_object": true
     }
   }
 }

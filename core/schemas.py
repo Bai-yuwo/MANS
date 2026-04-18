@@ -10,7 +10,7 @@ core/schemas.py
 4. 所有时间戳使用 ISO 格式字符串，便于序列化
 """
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, AliasChoices, field_validator
 from typing import Literal, Optional, Any
 from datetime import datetime
 from enum import Enum
@@ -174,15 +174,15 @@ class CharacterStateUpdate(BaseModel):
     Update Extractor 提取出的人物状态变更
     用于异步更新知识库
     """
-    model_config = ConfigDict(extra="allow")
-    
-    character_id: str
-    character_name: str
-    location_change: Optional[str] = None
-    cultivation_change: Optional[str] = None
-    emotion_change: Optional[str] = None
-    goal_updates: list[str] = Field(default_factory=list)
-    relationship_updates: list[dict] = Field(default_factory=list)
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    character_id: str = Field(validation_alias=AliasChoices("character_id", "id", "char_id", "characterId"))
+    character_name: str = Field(validation_alias=AliasChoices("character_name", "name", "char_name", "characterName"))
+    location_change: Optional[str] = Field(default=None, validation_alias=AliasChoices("location_change", "location", "new_location", "locationChange"))
+    cultivation_change: Optional[str] = Field(default=None, validation_alias=AliasChoices("cultivation_change", "cultivation", "realm_change", "cultivationChange"))
+    emotion_change: Optional[str] = Field(default=None, validation_alias=AliasChoices("emotion_change", "emotion", "mood", "feeling", "emotionChange"))
+    goal_updates: list[str] = Field(default_factory=list, validation_alias=AliasChoices("goal_updates", "goals", "new_goals", "goalUpdates"))
+    relationship_updates: list[dict] = Field(default_factory=list, validation_alias=AliasChoices("relationship_updates", "relationships", "relation_updates", "relationshipChanges"))
 
 
 # ============================================================
@@ -364,15 +364,55 @@ class ExtractedUpdates(BaseModel):
     Update Extractor 从生成文本中提取的所有变更
     异步更新知识库的指令集合
     """
-    model_config = ConfigDict(extra="allow")
-    
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
     source_chapter: int
     source_scene_index: int
-    character_updates: list[CharacterStateUpdate] = Field(default_factory=list)
-    new_world_rules: list[WorldRule] = Field(default_factory=list)
-    foreshadowing_status_changes: list[dict] = Field(default_factory=list)
-    new_foreshadowing: list[ForeshadowingItem] = Field(default_factory=list)
-    implicit_issues: list[str] = Field(default_factory=list)
+    character_updates: list[CharacterStateUpdate] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices(
+            "character_updates", "characters", "characterUpdate",
+            "character_updates_list", "updates"
+        )
+    )
+    new_world_rules: list[WorldRule] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices(
+            "new_world_rules", "world_rules", "rules",
+            "newRules", "worldRules"
+        )
+    )
+    foreshadowing_status_changes: list[dict] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices(
+            "foreshadowing_status_changes", "foreshadowing_changes",
+            "status_changes", "fs_changes", "foreshadowing_updates"
+        )
+    )
+    new_foreshadowing: list[ForeshadowingItem] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices(
+            "new_foreshadowing", "new_foreshadowing_items",
+            "foreshadowing_items", "newFs", "fs_items"
+        )
+    )
+    implicit_issues: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices(
+            "implicit_issues", "issues", "problems",
+            "potential_issues", "detected_issues"
+        )
+    )
+
+    @field_validator("implicit_issues", mode="before")
+    @classmethod
+    def _coerce_implicit_issues(cls, v):
+        """标量强制包装为列表（应对大模型只返回单个字符串的情况）"""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 # ============================================================

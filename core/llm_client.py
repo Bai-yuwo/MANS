@@ -481,9 +481,10 @@ class LLMClient:
         清洗策略（按优先级）：
         1. 去除前后空白字符和 BOM
         2. 去除 Markdown 代码块包裹（```json ... ```）
-        3. 【强力截取】寻找文本中第一个 { 或 [ 到最后一个 } 或 ]，
+        3. 去除推理模型 <think> 标签（DeepSeek-R1 / Doubao-Seed-2.0 等）
+        4. 【强力截取】寻找文本中第一个 { 或 [ 到最后一个 } 或 ]，
            提取最可能的 JSON 主体（应对模型输出寒暄前缀/后缀）
-        4. 去除尾部可能的逗号等常见 JSON 语法污染
+        5. 去除尾部可能的逗号等常见 JSON 语法污染
 
         无论底层是否使用结构化参数，解析前都必须过此清洗。
         """
@@ -497,7 +498,10 @@ class LLMClient:
         if match:
             text = match.group(1).strip()
 
-        # 第2层：强力截取 JSON 主体
+        # 第2层：去除推理模型的 <think> 标签及其内容
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
+        # 第3层：强力截取 JSON 主体
         first_brace = text.find('{')
         first_bracket = text.find('[')
 
@@ -522,7 +526,7 @@ class LLMClient:
         if end != -1 and end > start:
             text = text[start:end + 1]
 
-        # 第3层：去除尾部可能污染 JSON 的逗号
+        # 第4层：去除尾部可能污染 JSON 的逗号
         text = text.rstrip().rstrip(',').rstrip()
 
         return text
@@ -655,6 +659,17 @@ class LLMClient:
             payload["response_format"] = {"type": "json_object"}
 
         return payload
+
+    def _should_disable_thinking(self, role: str, model: str) -> bool:
+        """
+        判断是否需要关闭深度思考。
+
+        Seed-2.0 系列默认开启 thinking，但 extract/trim 角色输出严格 JSON，
+        思考过程会污染解析，必须关闭。
+        """
+        is_seed_model = "seed" in model.lower() or "doubao-seed" in model.lower()
+        is_structured_role = role in ("extract", "trim")
+        return is_seed_model and is_structured_role
     
     def _parse_stream_line(self, line: str, provider_name: str) -> Optional[str]:
         """解析流式响应的一行数据"""
@@ -779,7 +794,12 @@ class LLMClient:
             response_format=response_format,
             json_schema=json_schema
         )
-        
+
+        # 对 Seed-2.0 系列的 extract/trim 角色关闭深度思考（避免 <think> 污染 JSON）
+        if self._should_disable_thinking(role, model):
+            payload["thinking"] = {"type": "disabled"}
+            logger.debug(f"已关闭 {model} 的深度思考（角色: {role}）")
+
         # 发送请求
         async with aiohttp.ClientSession() as session:
             try:

@@ -17,7 +17,8 @@ const AppState = {
     currentChapter: parseInt(localStorage.getItem('mans_current_chapter') || '1', 10),
     currentScene: 0,
     isGenerating: false,
-    projectInitialized: false
+    projectInitialized: false,
+    currentAbortController: null
 };
 
 // ============================================
@@ -985,10 +986,23 @@ async function generateAllScenes() {
         return;
     }
 
+    // 创建专用的 AbortController，用于一键生成全章的中断控制
+    if (AppState.currentAbortController) {
+        AppState.currentAbortController.abort();
+    }
+    AppState.currentAbortController = new AbortController();
+    const controller = AppState.currentAbortController;
+
     let successCount = 0;
     let failCount = 0;
+    let cancelled = false;
 
     for (const sceneIndex of sceneIndices) {
+        if (controller.signal.aborted) {
+            cancelled = true;
+            break;
+        }
+
         // 检查是否已有内容（避免覆盖已生成的场景）
         const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
         const hasContent = contentDiv && contentDiv.querySelector('.generated-text');
@@ -1001,6 +1015,10 @@ async function generateAllScenes() {
             await generateScene(sceneIndex);
             successCount++;
         } catch (error) {
+            if (error.name === 'AbortError' || controller.signal.aborted) {
+                cancelled = true;
+                break;
+            }
             failCount++;
             showMessage(`场景 ${sceneIndex + 1} 生成失败: ${error.message}`, 'error');
         }
@@ -1011,10 +1029,16 @@ async function generateAllScenes() {
         }
     }
 
-    showMessage(
-        `全章生成完成！成功: ${successCount}，失败: ${failCount}，跳过: ${sceneIndices.length - successCount - failCount}`,
-        failCount > 0 ? 'warning' : 'success'
-    );
+    AppState.currentAbortController = null;
+
+    if (cancelled) {
+        showMessage('全章生成已取消', 'warning');
+    } else {
+        showMessage(
+            `全章生成完成！成功: ${successCount}，失败: ${failCount}，跳过: ${sceneIndices.length - successCount - failCount}`,
+            failCount > 0 ? 'warning' : 'success'
+        );
+    }
 }
 
 async function generateScene(sceneIndex) {
@@ -1024,19 +1048,30 @@ async function generateScene(sceneIndex) {
     AppState.currentScene = sceneIndex;
     updateAllSceneButtons();
 
+    // 中断之前的流式请求（如果存在）
+    if (AppState.currentAbortController) {
+        AppState.currentAbortController.abort();
+    }
+    AppState.currentAbortController = new AbortController();
+
     const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
     contentDiv.classList.add('locked');
     contentDiv.innerHTML = '<div class="generating">正在生成...</div>';
 
     try {
-        // 直接连接 SSE 流开始生成
-        await connectStream(sceneIndex, contentDiv);
+        // 直接连接 SSE 流开始生成，传入 AbortController signal
+        await connectStream(sceneIndex, contentDiv, AppState.currentAbortController.signal);
         // 生成完成后检查异步知识库更新
         checkAsyncUpdates(AppState.currentChapter);
     } catch (error) {
-        contentDiv.innerHTML = `<div class="error">生成失败: ${escapeHtml(error.message)}</div>`;
+        if (error.name === 'AbortError') {
+            contentDiv.innerHTML = '<div class="error">生成已取消</div>';
+        } else {
+            contentDiv.innerHTML = `<div class="error">生成失败: ${escapeHtml(error.message)}</div>`;
+        }
     } finally {
         AppState.isGenerating = false;
+        AppState.currentAbortController = null;
         contentDiv.classList.remove('locked');
         updateAllSceneButtons();
     }
@@ -1046,7 +1081,7 @@ async function generateScene(sceneIndex) {
  * 连接流式生成（fetch + ReadableStream）
  * @returns {Promise<void>}
  */
-async function connectStream(sceneIndex, contentDiv) {
+async function connectStream(sceneIndex, contentDiv, signal = null) {
     const projectId = AppState.currentProject;
     const chapterNum = AppState.currentChapter;
 
@@ -1059,7 +1094,8 @@ async function connectStream(sceneIndex, contentDiv) {
     const response = await fetch(streamUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ temperature })
+        body: JSON.stringify({ temperature }),
+        signal
     });
 
     if (!response.ok) {
@@ -1173,16 +1209,38 @@ function rewriteScene(sceneIndex) {
     }
     const html = `
         <div>
+            <p style="margin-bottom: 12px; color: var(--warning); font-size: 13px;">
+                注意：重新生成不会自动撤销已更新的知识库设定（如人物状态、世界规则等）。
+                如需回滚，请在重写前使用「回滚知识库」按钮。
+            </p>
             <p style="margin-bottom: 12px; color: var(--text-secondary);">描述当前场景的问题或修改方向：</p>
             <textarea id="rewrite-feedback-${sceneIndex}" rows="4"
                 style="width: 100%; background: var(--bg-dark); border: 1px solid var(--bg-hover); border-radius: 6px; padding: 8px; color: var(--text-primary);"
                 placeholder="例如：节奏太快，缺少环境描写..."></textarea>
-            <div style="margin-top: 12px; text-align: right;">
+            <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+                <button class="mans-btn" onclick="rollbackSceneKnowledge(${sceneIndex})" title="回滚该场景产生的知识库更新">回滚知识库</button>
                 <button class="mans-btn primary" onclick="startRewrite(${sceneIndex})">开始重写</button>
             </div>
         </div>
     `;
     showModal('重写场景', html);
+}
+
+/**
+ * 回滚某场景产生的知识库更新
+ */
+async function rollbackSceneKnowledge(sceneIndex) {
+    if (!AppState.currentProject) return;
+    try {
+        const result = await apiRequest(
+            `/api/projects/${AppState.currentProject}/chapters/${AppState.currentChapter}/scenes/${sceneIndex}/rollback`,
+            { method: 'POST' }
+        );
+        showMessage(result.message || '知识库已回滚', 'success');
+        refreshIssueBadge();
+    } catch (error) {
+        showMessage('回滚失败: ' + error.message, 'error');
+    }
 }
 
 /**
@@ -1357,11 +1415,17 @@ function editScene(sceneIndex) {
         <div class="edit-actions">
             <button onclick="saveSceneEdit(${sceneIndex})">保存</button>
             <button onclick="cancelSceneEdit(${sceneIndex})">取消</button>
+            <button class="mans-btn" onclick="syncSceneKnowledge(${sceneIndex})" title="将当前修改同步到知识库">同步知识库</button>
         </div>
         <div class="save-status" id="save-status-${sceneIndex}"></div>
     `;
 
     const textarea = document.getElementById(`edit-scene-${sceneIndex}`);
+
+    // 闭包捕获：在设置定时器的那一刻冻结 projectId 和 chapterNum，
+    // 防止用户在防抖期间切换章节导致保存到错误位置。
+    const capturedProjectId = AppState.currentProject;
+    const capturedChapterNum = AppState.currentChapter;
 
     const triggerAutoSave = () => {
         const statusDiv = document.getElementById(`save-status-${sceneIndex}`);
@@ -1369,7 +1433,7 @@ function editScene(sceneIndex) {
             statusDiv.textContent = '正在保存...';
             statusDiv.className = 'save-status saving';
         }
-        saveSceneEdit(sceneIndex, { silent: true }).then(() => {
+        saveSceneEdit(sceneIndex, { silent: true, projectId: capturedProjectId, chapterNum: capturedChapterNum }).then(() => {
             if (statusDiv) {
                 statusDiv.textContent = '已自动保存';
                 statusDiv.className = 'save-status saved';
@@ -1402,7 +1466,7 @@ function editScene(sceneIndex) {
  * 保存场景编辑
  */
 async function saveSceneEdit(sceneIndex, options = {}) {
-    const { silent = false } = options;
+    const { silent = false, projectId = null, chapterNum = null } = options;
     const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
     if (contentDiv && contentDiv._autoSaveTimer) {
         clearTimeout(contentDiv._autoSaveTimer);
@@ -1413,9 +1477,13 @@ async function saveSceneEdit(sceneIndex, options = {}) {
     if (!textarea) return; // 编辑器已关闭，跳过
     const newText = textarea.value;
 
+    // 使用传入的参数或回退到全局状态（优先传入，防止闭包穿透）
+    const effectiveProjectId = projectId || AppState.currentProject;
+    const effectiveChapterNum = chapterNum || AppState.currentChapter;
+
     try {
         await apiRequest(
-            `/api/projects/${AppState.currentProject}/chapters/${AppState.currentChapter}/scenes/${sceneIndex}`,
+            `/api/projects/${effectiveProjectId}/chapters/${effectiveChapterNum}/scenes/${sceneIndex}`,
             {
                 method: 'PUT',
                 body: JSON.stringify({ text: newText })
@@ -1433,6 +1501,46 @@ async function saveSceneEdit(sceneIndex, options = {}) {
             showMessage('保存失败: ' + error.message, 'error');
         }
         throw error;
+    }
+}
+
+/**
+ * 手动同步场景修改到知识库（分析修改后的文本并提取状态更新）
+ */
+async function syncSceneKnowledge(sceneIndex) {
+    if (!AppState.currentProject) return;
+
+    const textarea = document.getElementById(`edit-scene-${sceneIndex}`);
+    if (!textarea) {
+        showMessage('编辑器已关闭，无法同步', 'warning');
+        return;
+    }
+
+    const statusDiv = document.getElementById(`save-status-${sceneIndex}`);
+    if (statusDiv) {
+        statusDiv.textContent = '正在分析文本并同步知识库...';
+        statusDiv.className = 'save-status saving';
+    }
+
+    try {
+        const result = await apiRequest(
+            `/api/projects/${AppState.currentProject}/chapters/${AppState.currentChapter}/scenes/${sceneIndex}/extract`,
+            { method: 'POST' }
+        );
+
+        if (statusDiv) {
+            statusDiv.textContent = '知识库同步完成';
+            statusDiv.className = 'save-status saved';
+            setTimeout(() => { if (statusDiv) statusDiv.textContent = ''; }, 3000);
+        }
+        showMessage('知识库已同步', 'success');
+        refreshIssueBadge();
+    } catch (error) {
+        if (statusDiv) {
+            statusDiv.textContent = '同步失败';
+            statusDiv.className = 'save-status error';
+        }
+        showMessage('同步知识库失败: ' + error.message, 'error');
     }
 }
 
@@ -1536,18 +1644,39 @@ function closeDynamicModal() {
 async function confirmChapter() {
     if (!AppState.currentProject) return;
 
-    // ── 强制保存所有活跃编辑器，防止防抖定时器内的修改丢失 ──
+    // ── 第1步：中止任何正在进行的生成，防止流式写入干扰 ──
+    if (AppState.currentAbortController) {
+        AppState.currentAbortController.abort();
+        AppState.currentAbortController = null;
+    }
+
+    // ── 第2步：强制保存所有活跃编辑器，防止防抖定时器内的修改丢失 ──
+    // 不仅清除定时器，还直接读取所有 textarea 的值并同步保存，
+    // 确保无论定时器处于什么状态，缓冲区内容都落盘。
     const pendingSaves = [];
     document.querySelectorAll('.scene-content').forEach(contentDiv => {
+        const sceneIndex = parseInt(contentDiv.id.replace('scene-content-', ''), 10);
+        if (isNaN(sceneIndex)) return;
+
+        // 清除自动保存定时器
         if (contentDiv._autoSaveTimer) {
             clearTimeout(contentDiv._autoSaveTimer);
             contentDiv._autoSaveTimer = null;
-            const sceneIndex = parseInt(contentDiv.id.replace('scene-content-', ''), 10);
-            if (!isNaN(sceneIndex)) {
-                pendingSaves.push(saveSceneEdit(sceneIndex, { silent: true }));
-            }
+        }
+
+        // 如果当前处于编辑模式（存在 textarea），直接读取并同步保存
+        const textarea = document.getElementById(`edit-scene-${sceneIndex}`);
+        if (textarea) {
+            pendingSaves.push(
+                saveSceneEdit(sceneIndex, { silent: true })
+                    .catch(err => {
+                        console.error(`强制保存场景 ${sceneIndex} 失败:`, err);
+                        throw err;
+                    })
+            );
         }
     });
+
     if (pendingSaves.length > 0) {
         try {
             await Promise.all(pendingSaves);
@@ -1558,6 +1687,7 @@ async function confirmChapter() {
         }
     }
 
+    // ── 第3步：再次确认，所有内容已落盘 ──
     if (!confirm('确认本章已完成？确认后将进入下一章。')) {
         return;
     }
@@ -1916,6 +2046,13 @@ document.addEventListener('DOMContentLoaded', () => {
         showPanel('works');
     }
 
+    // 页面卸载时中断所有 pending 的流式请求，防止僵尸进程
+    window.addEventListener('beforeunload', () => {
+        if (AppState.currentAbortController) {
+            AppState.currentAbortController.abort();
+        }
+    });
+
     // 温度滑块实时更新
     const tempSlider = document.getElementById('setting-temperature');
     const tempValue = document.getElementById('temperature-value');
@@ -2111,6 +2248,7 @@ window.generateAllScenes = generateAllScenes;
 window.editScene = editScene;
 window.saveSceneEdit = saveSceneEdit;
 window.cancelSceneEdit = cancelSceneEdit;
+window.syncSceneKnowledge = syncSceneKnowledge;
 window.toggleSidebar = toggleSidebar;
 window.connectLogStream = connectLogStream;
 window.disconnectLogStream = disconnectLogStream;
@@ -2642,6 +2780,7 @@ window.refreshMonitor = refreshMonitor;
 window.createArc = createArc;
 window.deleteArc = deleteArc;
 window.suggestNextArc = suggestNextArc;
+window.rollbackSceneKnowledge = rollbackSceneKnowledge;
 
 /**
  * 加载 Issues 到 Issue Pool 面板

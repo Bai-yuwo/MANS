@@ -1686,6 +1686,118 @@ async def edit_scene(project_id: str, chapter_num: int, scene_index: int, conten
         raise HTTPException(status_code=500, detail=f"编辑场景失败: {str(e)}")
 
 
+@app.post("/api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}/extract")
+async def manual_extract_scene(project_id: str, chapter_num: int, scene_index: int):
+    """
+    手动触发场景文本的状态提取与知识库同步
+
+    用于用户手动大幅修改正文后，主动对齐知识库。
+    """
+    try:
+        story_db = StoryDB(project_id)
+
+        # 读取当前草稿获取文本
+        draft = await story_db.get_chapter_draft(chapter_num)
+        if not draft:
+            raise HTTPException(status_code=404, detail="章节草稿不存在")
+
+        scenes = draft.get("scenes", [])
+        scene_data = None
+        for s in scenes:
+            if s.get("scene_index") == scene_index:
+                scene_data = s
+                break
+
+        if not scene_data:
+            raise HTTPException(status_code=404, detail="场景不存在")
+
+        # 读取章节规划获取 scene_plan
+        chapter_plan_raw = await story_db.get_chapter_plan(chapter_num)
+        if not chapter_plan_raw:
+            raise HTTPException(status_code=404, detail="章节规划不存在")
+
+        chapter_plan_data = (
+            chapter_plan_raw.model_dump()
+            if hasattr(chapter_plan_raw, 'model_dump')
+            else chapter_plan_raw
+        )
+
+        scene_plan_data = None
+        for scene in chapter_plan_data.get("scenes", []):
+            if scene.get("scene_index") == scene_index:
+                scene_plan_data = scene
+                break
+
+        if not scene_plan_data:
+            raise HTTPException(status_code=404, detail="场景规划不存在")
+
+        scene_plan = ScenePlan(**scene_plan_data)
+
+        # 调用 UpdateExtractor 同步提取
+        extractor = UpdateExtractor(project_id)
+        asyncio.create_task(
+            extractor.extract_and_update(
+                generated_text=scene_data.get("text", ""),
+                chapter_number=chapter_num,
+                scene_index=scene_index,
+                scene_plan=scene_plan,
+                sync=False
+            )
+        )
+
+        return {
+            "success": True,
+            "message": "已触发知识库同步，后台正在分析文本..."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"手动提取失败: {str(e)}")
+
+
+@app.post("/api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}/rollback")
+async def rollback_scene_updates_endpoint(
+    project_id: str, chapter_num: int, scene_index: int
+):
+    """
+    回滚指定场景产生的知识库更新
+
+    用于重新生成前清理旧状态，防止知识库污染。
+    """
+    try:
+        extractor = UpdateExtractor(project_id)
+        result = await extractor.rollback_scene_updates(
+            chapter_number=chapter_num,
+            scene_index=scene_index
+        )
+
+        message_parts = []
+        if result.get("characters_rolled_back", 0) > 0:
+            message_parts.append(f"回滚 {result['characters_rolled_back']} 个人物状态")
+        if result.get("rules_removed", 0) > 0:
+            message_parts.append(f"移除 {result['rules_removed']} 条世界规则")
+        if result.get("foreshadowing_reverted", 0) > 0:
+            message_parts.append(f"回退 {result['foreshadowing_reverted']} 个伏笔状态")
+        if result.get("foreshadowing_removed", 0) > 0:
+            message_parts.append(f"移除 {result['foreshadowing_removed']} 个新伏笔")
+
+        msg = result.get("message", "")
+        if message_parts:
+            msg = "；".join(message_parts)
+        elif not msg:
+            msg = "该场景无知识库更新记录，无需回滚"
+
+        return {
+            "success": True,
+            "message": msg,
+            "details": result
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"回滚失败: {str(e)}")
+
+
 @app.post("/api/projects/{project_id}/chapters/{chapter_num}/scenes/{scene_index}/regenerate")
 async def regenerate_scene_stream_endpoint(
     project_id: str, chapter_num: int, scene_index: int, request: Request

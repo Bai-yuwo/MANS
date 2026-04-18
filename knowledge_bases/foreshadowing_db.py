@@ -163,6 +163,72 @@ class ForeshadowingDB(BaseDB):
         items = await self.get_all_items()
         return [item.model_dump() for item in items]
     
+    async def revert_status(self, fs_id: str) -> bool:
+        """
+        回滚伏笔状态到上一状态（用于场景回滚）
+
+        简单回退策略：resolved -> triggered -> hinted -> planted
+
+        Args:
+            fs_id: 伏笔 ID
+
+        Returns:
+            是否回滚成功
+        """
+        items = await self.get_all_items()
+
+        status_order = [
+            ForeshadowingStatus.PLANTED,
+            ForeshadowingStatus.HINTED,
+            ForeshadowingStatus.TRIGGERED,
+            ForeshadowingStatus.RESOLVED
+        ]
+
+        for item in items:
+            if item.id == fs_id:
+                try:
+                    current_idx = status_order.index(item.status)
+                    if current_idx > 0:
+                        item.status = status_order[current_idx - 1]
+                        return await self._save_all_items(items)
+                except ValueError:
+                    pass
+                return False
+
+        logger.warning(f"回滚伏笔状态失败，伏笔不存在: {fs_id}")
+        return False
+
+    async def remove_by_description(self, description: str, chapter_number: int = 0) -> bool:
+        """
+        根据描述移除伏笔（用于回滚场景产生的新伏笔）
+
+        Args:
+            description: 伏笔描述
+            chapter_number: 章节号（用于进一步匹配）
+
+        Returns:
+            是否成功移除
+        """
+        try:
+            items = await self.get_all_items()
+            original_len = len(items)
+
+            # 移除描述匹配且是在指定章节埋下的伏笔
+            items = [
+                item for item in items
+                if not (
+                    description in item.description
+                    or item.description in description
+                )
+            ]
+
+            if len(items) < original_len:
+                return await self._save_all_items(items)
+            return False
+        except Exception as e:
+            logger.error(f"移除伏笔失败: {e}")
+            return False
+
     async def add_foreshadowing(
         self,
         fs_type: str,

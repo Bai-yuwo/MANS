@@ -74,7 +74,37 @@ class BibleDB(BaseDB):
                 continue
 
         return rules
-    
+
+    async def remove_rule_by_content(self, content: str) -> bool:
+        """
+        根据内容移除世界规则（用于回滚场景产生的规则）
+
+        Args:
+            content: 规则内容描述
+
+        Returns:
+            是否成功移除
+        """
+        try:
+            data = await self.load("world_rules") or {}
+            items = data.get("items", [])
+            original_len = len(items)
+
+            # 移除内容匹配的规则（允许部分匹配）
+            items = [
+                item for item in items
+                if content not in item.get("content", "")
+                and item.get("content", "") not in content
+            ]
+
+            if len(items) < original_len:
+                await self.save("world_rules", {"items": items})
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"移除世界规则失败: {e}")
+            return False
+
     async def get_rule_by_id(self, rule_id: str) -> WorldRule | None:
         """
         根据 ID 获取世界规则（异步）

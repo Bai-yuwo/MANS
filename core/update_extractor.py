@@ -601,8 +601,10 @@ class UpdateExtractor:
                         content = await f.read()
                         records = json.loads(content)
 
-                # 添加新记录
-                records.append(updates.model_dump())
+                # 添加新记录（绑定 scene_id 以便回滚）
+                record_data = updates.model_dump()
+                record_data["recorded_at"] = datetime.now().isoformat()
+                records.append(record_data)
 
                 # 保存
                 async with aiofiles.open(record_path, 'w', encoding='utf-8') as f:
@@ -611,6 +613,167 @@ class UpdateExtractor:
         except Exception as e:
             logger.error(f"保存更新记录失败: {e}")
             # 记录失败不影响主流程
+
+    async def rollback_scene_updates(
+        self,
+        chapter_number: int,
+        scene_index: int
+    ) -> dict:
+        """
+        回滚指定场景产生的知识库更新
+
+        通过读取更新记录，逆向撤销该场景对人物状态、世界规则、
+        伏笔等知识库的修改。
+
+        Returns:
+            回滚结果统计
+        """
+        from pathlib import Path
+
+        result = {
+            "characters_rolled_back": 0,
+            "rules_removed": 0,
+            "foreshadowing_reverted": 0,
+            "foreshadowing_removed": 0,
+            "errors": []
+        }
+
+        try:
+            record_path = (
+                self.project_path / "chapters" /
+                f"chapter_{chapter_number}_updates.json"
+            )
+            if not record_path.exists():
+                return {**result, "message": "该场景无更新记录，无需回滚"}
+
+            # 读取更新记录
+            async with aiofiles.open(record_path, 'r', encoding='utf-8') as f:
+                records = json.loads(await f.read())
+
+            # 找到对应场景的更新记录
+            scene_records = [
+                r for r in records
+                if r.get("source_scene_index") == scene_index
+            ]
+
+            if not scene_records:
+                return {**result, "message": "该场景无更新记录，无需回滚"}
+
+            # 取最新的一条记录进行回滚（通常只有一条）
+            latest_record = scene_records[-1]
+
+            # ── 1. 回滚人物状态 ──
+            for char_update in latest_record.get("character_updates", []):
+                char_name = char_update.get("character_name")
+                if not char_name:
+                    continue
+                try:
+                    char = await self.character_db.get_character(char_name)
+                    if not char:
+                        continue
+
+                    # 移除该章节添加的状态历史快照（按章节匹配，
+                    # 因为同一章节内场景顺序生成，回滚时安全清除本章全部快照）
+                    original_len = len(char.state_history)
+                    char.state_history = [
+                        s for s in char.state_history
+                        if s.get("chapter") != chapter_number
+                    ]
+
+                    # 如果移除了快照，需要重新计算当前状态
+                    if len(char.state_history) < original_len:
+                        # 从 state_history 重建当前状态
+                        self._rebuild_character_state(char)
+                        await self.character_db.save_character(char)
+                        result["characters_rolled_back"] += 1
+                except Exception as e:
+                    result["errors"].append(f"回滚人物 {char_name} 失败: {e}")
+
+            # ── 2. 回滚世界规则 ──
+            for rule_data in latest_record.get("new_world_rules", []):
+                try:
+                    rule_content = rule_data.get("content", "")
+                    if not rule_content:
+                        continue
+                    # 尝试从 bible 中移除匹配的规则
+                    removed = await self.bible_db.remove_rule_by_content(rule_content)
+                    if removed:
+                        result["rules_removed"] += 1
+                except Exception as e:
+                    result["errors"].append(f"回滚规则失败: {e}")
+
+            # ── 3. 回滚伏笔状态变更 ──
+            for fs_change in latest_record.get("foreshadowing_status_changes", []):
+                try:
+                    fs_id = fs_change.get("id")
+                    # 回退到上一状态（简单回退到 hinted/planted）
+                    if fs_id:
+                        await self.foreshadowing_db.revert_status(fs_id)
+                        result["foreshadowing_reverted"] += 1
+                except Exception as e:
+                    result["errors"].append(f"回滚伏笔状态失败: {e}")
+
+            # ── 4. 回滚新伏笔 ──
+            for fs_item in latest_record.get("new_foreshadowing", []):
+                try:
+                    fs_desc = fs_item.get("description", "")
+                    if fs_desc:
+                        removed = await self.foreshadowing_db.remove_by_description(
+                            fs_desc, chapter_number
+                        )
+                        if removed:
+                            result["foreshadowing_removed"] += 1
+                except Exception as e:
+                    result["errors"].append(f"移除新伏笔失败: {e}")
+
+            # ── 5. 标记该记录为已回滚 ──
+            for r in records:
+                if r.get("source_scene_index") == scene_index:
+                    r["rolled_back"] = True
+                    r["rolled_back_at"] = datetime.now().isoformat()
+
+            async with aiofiles.open(record_path, 'w', encoding='utf-8') as f:
+                await f.write(json.dumps(records, ensure_ascii=False, indent=2))
+
+            return result
+
+        except Exception as e:
+            logger.error(f"回滚场景更新失败: {e}")
+            return {**result, "message": f"回滚失败: {e}"}
+
+    @staticmethod
+    def _rebuild_character_state(char: CharacterCard) -> None:
+        """
+        从 state_history 重新构建人物的当前状态。
+        回滚时移除某条快照后，需要按顺序重放剩余快照。
+        """
+        # 重置为初始默认值
+        char.current_location = ""
+        char.current_emotion = ""
+        char.active_goals = []
+        char.cultivation = None
+
+        # 按顺序重放所有状态快照
+        for snapshot in char.state_history:
+            updates = snapshot.get("updates", {})
+            for key, value in updates.items():
+                if key == "location":
+                    char.current_location = value
+                elif key == "emotion":
+                    char.current_emotion = value
+                elif key == "goals":
+                    if isinstance(value, list):
+                        for g in value:
+                            if g not in char.active_goals:
+                                char.active_goals.append(g)
+                elif key == "cultivation":
+                    if char.cultivation is None:
+                        from core.schemas import CultivationLevel
+                        char.cultivation = CultivationLevel(
+                            realm=value, stage="", combat_power_estimate="未知"
+                        )
+                    else:
+                        char.cultivation.realm = value
 
 
 # ============================================================

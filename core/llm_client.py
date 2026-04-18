@@ -270,22 +270,151 @@ class LLMClient:
     # 类级共享：所有 LLMClient 实例共用同一组 RateLimiter
     _rate_limiters: dict[str, RateLimiter] = {}
 
+    # ============================================================
+    # 模型能力注册表：标记各模型对结构化输出参数的支持情况
+    # ============================================================
+    MODEL_CAPABILITIES: dict[str, dict[str, bool]] = {
+        # 豆包系列（火山方舟，官方支持 json_schema）
+        "doubao-pro-128k": {"json_schema": True, "json_object": True},
+        "doubao-pro-32k": {"json_schema": True, "json_object": True},
+        "doubao-lite-32k": {"json_schema": True, "json_object": True},
+        "doubao-embedding": {"json_schema": False, "json_object": False},
+        # 通义千问系列（阿里，仅部分模型支持 json_object，不支持 json_schema）
+        "qwen-max": {"json_schema": False, "json_object": True},
+        "qwen-plus": {"json_schema": False, "json_object": True},
+        "qwen-turbo": {"json_schema": False, "json_object": True},
+        "text-embedding-v3": {"json_schema": False, "json_object": False},
+        # 智谱 GLM 系列（仅部分支持 json_object，不支持 json_schema）
+        "glm-4": {"json_schema": False, "json_object": True},
+        "glm-4-flash": {"json_schema": False, "json_object": False},
+        "glm-4-air": {"json_schema": False, "json_object": True},
+        "embedding-3": {"json_schema": False, "json_object": False},
+        # OpenAI 系列（全面支持）
+        "gpt-4o": {"json_schema": True, "json_object": True},
+        "gpt-4o-mini": {"json_schema": True, "json_object": True},
+        "text-embedding-3-small": {"json_schema": False, "json_object": False},
+    }
+
+    # 降级时追加到 prompt 尾部的 JSON 约束指令
+    JSON_CONSTRAINT_SUFFIX = (
+        "\n\n【重要】请严格输出纯净的JSON字符串，"
+        "不要输出任何Markdown代码块（如```json）、"
+        "不要输出任何解释性文字或思考过程、"
+        "不要添加任何寒暄语句，只返回纯JSON内容。"
+    )
+
+    @classmethod
+    def _check_capability(cls, model: str, capability: str) -> bool:
+        """检查指定模型是否支持某项能力"""
+        caps = cls.MODEL_CAPABILITIES.get(model, {})
+        return caps.get(capability, False)
+
+    @classmethod
+    def _apply_format_fallback(
+        cls,
+        model: str,
+        prompt: str,
+        kwargs: dict
+    ) -> str:
+        """
+        预先检查模型能力，必要时降级为纯文本 + Prompt 约束
+
+        根据 MODEL_CAPABILITIES 注册表，在发起请求前主动剔除
+        当前模型不支持的 response_format / json_schema 参数，
+        并向 prompt 追加严格的 JSON 输出约束指令。
+
+        Returns:
+            可能已被追加约束的 prompt
+        """
+        requested_format = kwargs.get("response_format")
+        if not requested_format:
+            return prompt
+
+        if requested_format == "json_schema":
+            if not cls._check_capability(model, "json_schema"):
+                # 尝试降级到 json_object
+                if cls._check_capability(model, "json_object"):
+                    logger.info(
+                        f"模型 {model} 不支持 json_schema，"
+                        f"预先降级为 json_object"
+                    )
+                    kwargs["response_format"] = "json"
+                    kwargs.pop("json_schema", None)
+                    return prompt
+                else:
+                    # 完全降级为纯文本 + Prompt 约束
+                    logger.info(
+                        f"模型 {model} 不支持结构化输出，"
+                        f"预先降级为纯文本+Prompt约束"
+                    )
+                    kwargs.pop("response_format", None)
+                    kwargs.pop("json_schema", None)
+                    return prompt.rstrip() + cls.JSON_CONSTRAINT_SUFFIX
+
+        elif requested_format == "json":
+            if not cls._check_capability(model, "json_object"):
+                logger.info(
+                    f"模型 {model} 不支持 json_object，"
+                    f"预先降级为纯文本+Prompt约束"
+                )
+                kwargs.pop("response_format", None)
+                kwargs.pop("json_schema", None)
+                return prompt.rstrip() + cls.JSON_CONSTRAINT_SUFFIX
+
+        return prompt
+
     @staticmethod
     def _clean_json_content(content: str) -> str:
         """
-        清洗 LLM 返回的 JSON 内容
+        终极 JSON 清洗（多级防御）
 
-        去除 Markdown 代码块包裹（```json ... ```）、前后空白和 BOM 字符。
-        当 LLM 降级为纯文本输出时，返回的内容可能包含 markdown 包裹，
-        此函数确保调用方拿到的是纯 JSON 字符串。
+        清洗策略（按优先级）：
+        1. 去除前后空白字符和 BOM
+        2. 去除 Markdown 代码块包裹（```json ... ```）
+        3. 【强力截取】寻找文本中第一个 { 或 [ 到最后一个 } 或 ]，
+           提取最可能的 JSON 主体（应对模型输出寒暄前缀/后缀）
+        4. 去除尾部可能的逗号等常见 JSON 语法污染
+
+        无论底层是否使用结构化参数，解析前都必须过此清洗。
         """
         import re
         text = content.strip()
         text = text.lstrip('\ufeff')
+
+        # 第1层：去除 Markdown 代码块
         pattern = r'^```(?:json)?\s*\n?(.*?)\n?```\s*$'
         match = re.match(pattern, text, re.DOTALL)
         if match:
             text = match.group(1).strip()
+
+        # 第2层：强力截取 JSON 主体
+        first_brace = text.find('{')
+        first_bracket = text.find('[')
+
+        if first_brace == -1 and first_bracket == -1:
+            # 文本中没有任何 JSON 标记，直接返回（让上层解析时报错）
+            return text
+
+        # 取最先出现的起始符号
+        if first_brace == -1:
+            start = first_bracket
+        elif first_bracket == -1:
+            start = first_brace
+        else:
+            start = min(first_brace, first_bracket)
+
+        # 取最后出现的对应闭合符号
+        if text[start] == '{':
+            end = text.rfind('}')
+        else:
+            end = text.rfind(']')
+
+        if end != -1 and end > start:
+            text = text[start:end + 1]
+
+        # 第3层：去除尾部可能污染 JSON 的逗号
+        text = text.rstrip().rstrip(',').rstrip()
+
         return text
 
     def __init__(self,
@@ -435,10 +564,19 @@ class LLMClient:
             LLMResponse 对象
         """
         model, provider = self.config.get_model_for_role(role)
-        
+
+        # 模型能力预检：若当前模型不支持请求的 response_format，预先降级
+        format_kwargs = {
+            "response_format": response_format,
+            "json_schema": json_schema,
+        }
+        prompt = self._apply_format_fallback(model, prompt, format_kwargs)
+        response_format = format_kwargs.get("response_format")
+        json_schema = format_kwargs.get("json_schema")
+
         # 获取速率限制器和并发限制器
         rate_limiter = self._get_rate_limiter(provider.name)
-        
+
         # 应用速率限制和并发控制
         async with rate_limiter:
             async with self.concurrency_limiter:
@@ -832,8 +970,7 @@ class LLMClient:
                     logger.warning(f"模型 {kwargs.get('model', role)} 不支持 json_object，降级为纯文本+Prompt约束")
                     kwargs.pop("response_format", None)
                     kwargs.pop("json_schema", None)
-                    # 追加严格的 JSON 输出约束到 prompt
-                    prompt = prompt.rstrip() + "\n\n【重要】请严格输出 JSON 格式，不要输出 Markdown 代码块、不要输出任何解释性文字，只返回纯 JSON。"
+                    prompt = prompt.rstrip() + self.JSON_CONSTRAINT_SUFFIX
                     continue
 
                 # 网络/超时错误，指数退避重试

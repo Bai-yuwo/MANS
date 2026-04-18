@@ -18,6 +18,7 @@ from pathlib import Path
 from datetime import datetime
 
 import aiofiles
+from pydantic import ValidationError
 
 from core.config import get_config
 from core.schemas import (
@@ -38,32 +39,51 @@ logger = get_logger('core.update_extractor')
 
 def clean_json_response(response: str) -> str:
     """
-    清洗 LLM 返回的 JSON 字符串
-    
-    处理以下常见问题：
-    1. Markdown 代码块包裹：```json { ... } ```
-    2. 前后空白字符
-    3. BOM 字符
-    
-    Args:
-        response: LLM 原始响应
-    
-    Returns:
-        清洗后的纯 JSON 字符串
+    终极 JSON 清洗（多级防御）
+
+    清洗策略（按优先级）：
+    1. 去除前后空白字符和 BOM
+    2. 去除 Markdown 代码块包裹（```json ... ```）
+    3. 【强力截取】寻找文本中第一个 { 或 [ 到最后一个 } 或 ]，
+       提取最可能的 JSON 主体（应对模型输出寒暄前缀/后缀）
+    4. 去除尾部可能的逗号等常见 JSON 语法污染
+
+    无论底层是否使用结构化参数，解析前都必须过此清洗。
     """
-    # 去除前后空白
     text = response.strip()
-    
-    # 去除 BOM 字符
     text = text.lstrip('\ufeff')
-    
-    # 去除 Markdown 代码块包裹
-    # 匹配 ```json 或 ``` 开头，到 ``` 结尾
+
+    # 第1层：去除 Markdown 代码块
     pattern = r'^```(?:json)?\s*\n?(.*?)\n?```\s*$'
     match = re.match(pattern, text, re.DOTALL)
     if match:
         text = match.group(1).strip()
-    
+
+    # 第2层：强力截取 JSON 主体
+    first_brace = text.find('{')
+    first_bracket = text.find('[')
+
+    if first_brace == -1 and first_bracket == -1:
+        return text
+
+    if first_brace == -1:
+        start = first_bracket
+    elif first_bracket == -1:
+        start = first_brace
+    else:
+        start = min(first_brace, first_bracket)
+
+    if text[start] == '{':
+        end = text.rfind('}')
+    else:
+        end = text.rfind(']')
+
+    if end != -1 and end > start:
+        text = text[start:end + 1]
+
+    # 第3层：去除尾部可能污染 JSON 的逗号
+    text = text.rstrip().rstrip(',').rstrip()
+
     return text
 
 
@@ -387,10 +407,11 @@ class UpdateExtractor:
                 json_schema=extraction_schema
             )
             
-            # 解析 JSON 响应
-            data = json.loads(response_obj.content)
-            
-            # 构建 ExtractedUpdates（带枚举值安全校验）
+            # 无条件 JSON 清洗 + 解析
+            cleaned_content = clean_json_response(response_obj.content)
+            data = json.loads(cleaned_content)
+
+            # 构建 ExtractedUpdates（带枚举值安全校验 + Pydantic 防御性验证）
             valid_categories = {e.value for e in WorldRuleCategory}
             valid_importances = {e.value for e in WorldRuleImportance}
             valid_fs_types = {e.value for e in ForeshadowingType}
@@ -410,6 +431,8 @@ class UpdateExtractor:
                     sanitized_world_rules.append(
                         WorldRule(source_chapter=chapter_number, **wr)
                     )
+                except ValidationError as ve:
+                    logger.warning(f"跳过非法 world_rule: {ve}")
                 except Exception as e:
                     logger.warning(f"跳过非法 world_rule: {e}")
 
@@ -427,27 +450,39 @@ class UpdateExtractor:
                     sanitized_foreshadowing.append(
                         ForeshadowingItem(planted_chapter=chapter_number, **nf)
                     )
+                except ValidationError as ve:
+                    logger.warning(f"跳过非法 foreshadowing: {ve}")
                 except Exception as e:
                     logger.warning(f"跳过非法 foreshadowing: {e}")
+
+            # 使用 Pydantic model_validate 做防御性校验
+            valid_character_updates = []
+            for cu in data.get("character_updates", []):
+                try:
+                    valid_character_updates.append(CharacterStateUpdate.model_validate(cu))
+                except ValidationError as ve:
+                    logger.warning(f"跳过非法 character_update: {ve}")
 
             updates = ExtractedUpdates(
                 source_chapter=chapter_number,
                 source_scene_index=scene_index,
-                character_updates=[
-                    CharacterStateUpdate(**cu)
-                    for cu in data.get("character_updates", [])
-                ],
+                character_updates=valid_character_updates,
                 new_world_rules=sanitized_world_rules,
                 foreshadowing_status_changes=data.get("foreshadowing_status_changes", []),
                 new_foreshadowing=sanitized_foreshadowing,
                 implicit_issues=data.get("implicit_issues", [])
             )
-            
+
             return updates
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"提取结果解析失败: {e}")
-            # 返回空更新
+            return ExtractedUpdates(
+                source_chapter=chapter_number,
+                source_scene_index=scene_index
+            )
+        except ValidationError as ve:
+            logger.error(f"提取结果 Pydantic 校验失败: {ve}")
             return ExtractedUpdates(
                 source_chapter=chapter_number,
                 source_scene_index=scene_index

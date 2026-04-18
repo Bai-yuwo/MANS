@@ -371,7 +371,9 @@ Token 预算：{budget_tokens}
                 json_schema=trim_schema
             )
 
-            trimmed = json.loads(response_obj.content)
+            # 无条件 JSON 清洗
+            cleaned = clean_json_response(response_obj.content)
+            trimmed = json.loads(cleaned)
 
             # 代码层根据索引保留原始 WorldRule 对象，绝不丢失 source_chapter / category / importance
             keep_indices = set(trimmed.get("keep_rule_indices", []))

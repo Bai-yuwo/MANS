@@ -1,9 +1,36 @@
 """
 generators/character_generator.py
+
 人物设定生成器
 
-职责：基于 Bible 和 protagonist_seed 生成主角和主要配角的人物卡
-输出：符合 schemas.CharacterCard 结构的人物数据
+职责边界：
+    - 基于 Bible（世界观设定）和 protagonist_seed（主角起点描述）生成完整的人物卡。
+    - 输出包含主角、主要配角的人物卡，以及人物之间的关系网。
+    - 生成结果符合 core/schemas.py 中 CharacterCard 和 Relationship 的数据结构。
+    - 通过 CharacterDB 持久化，同时向量化存储到向量库。
+
+生成内容：
+    1. 主角完整人物卡（外貌、性格核心、声线关键词、背景、修为、情绪、目标、矛盾、弱点）。
+    2. 3-5 个主要配角人物卡（字段结构与主角一致，但描述可适当精简）。
+    3. 人物关系网（source → target 的有向关系，包含关系类型、当前态度、描述）。
+
+设计原则：
+    - 角色一致性：主角的初始修为必须与 Bible 中的最低/次低境界匹配。
+    - 关系张力：人物关系避免非黑即白，预留发展空间。
+    - 声线可执行：voice_keywords 必须是具体可操作的写作指导（如"愤怒时沉默"）。
+    - 核心矛盾：每个角色设计 3 个"核心矛盾"（对立特质间的张力），这是角色深度的来源。
+
+验证逻辑：
+    - 主角必须有 name, appearance, personality_core, background, current_location, cultivation。
+    - 配角至少 2 个，每个配角必须有 name。
+    - 关系网不能为空，且 source/target 必须是已知人物。
+
+典型用法：
+    generator = CharacterGenerator(project_id="xxx")
+    characters = await generator.generate(
+        project_meta=project_meta,
+        bible_data=bible_data
+    )
 """
 
 import uuid
@@ -18,25 +45,37 @@ from knowledge_bases.bible_db import BibleDB
 class CharacterGenerator(BaseGenerator):
     """
     人物设定生成器
-    
-    生成内容：
-    - 主角完整人物卡（外貌、性格、背景、初始状态）
-    - 3-5 个主要配角人物卡
-    - 人物关系网
-    
-    使用示例：
-        generator = CharacterGenerator(project_id="xxx")
-        characters = await generator.generate(
-            project_meta=project_meta,
-            bible_data=bible_data
-        )
+
+    人物卡是 Writer 生成正文时的核心上下文之一。InjectionEngine 会根据场景规划中
+    的 present_characters 字段，检索对应的人物卡并注入 Writer 的 prompt 中。
+    人物卡的质量（尤其是 voice_keywords 和 personality_core）直接影响角色在
+    正文中的表现一致性。
+
+    生成策略：
+        1. 从 Bible 中提取战力体系信息，引导 LLM 为主角分配合理的初始境界。
+        2. 从 Bible 中提取主要势力，引导 LLM 设计有势力背景的人物。
+        3. 提供详细的 JSON Schema 和字段说明，确保输出可解析。
+        4. Prompt 中明确区分"主角设计原则"和"配角设计原则"，确保主角更详细。
+
+    保存策略：
+        1. 为主角和每个配角分配唯一的 UUID（前8位）。
+        2. 构建 CharacterCard Pydantic 对象，通过 CharacterDB.save_character() 持久化。
+        3. 关系网通过 CharacterDB.add_relationship() 逐条保存。
     """
-    
+
     def _get_generator_name(self) -> str:
+        """返回生成器名称，用于日志和进度报告中标识当前环节。"""
         return "CharacterGenerator"
-    
+
     def get_output_schema(self) -> dict:
-        """返回人物生成的 JSON Schema"""
+        """
+        返回人物生成的 JSON Schema 定义。
+
+        Schema 结构：
+            - protagonist: 主角对象，包含完整人物卡字段。
+            - supporting_characters: 配角数组，结构与主角一致，但不含 core_contradictions 和 weaknesses_and_fears。
+            - relationships: 关系数组，每项包含 source/target/relation_type/current_sentiment/description。
+        """
         return {
             "name": "character_output",
             "schema": {
@@ -136,27 +175,35 @@ class CharacterGenerator(BaseGenerator):
                 "required": ["protagonist", "supporting_characters", "relationships"]
             }
         }
-    
+
     def _build_prompt(self, project_meta: ProjectMeta, bible_data: dict, **kwargs) -> str:
         """
-        构建人物生成 prompt
-        
+        构建人物生成 prompt。
+
+        Prompt 设计要点：
+            1. 提取 Bible 中的战力体系信息，确保主角初始境界与最低境界匹配。
+            2. 提取 Bible 中的主要势力，引导 LLM 设计有势力归属的人物。
+            3. 主角种子信息（protagonist_seed）是人物性格设计的核心输入。
+            4. 详细说明主角与配角的设计原则差异（主角更详细，配角功能性更强）。
+            5. 声线关键词的设计原则：必须是具体可操作的写作指导。
+
         Args:
-            project_meta: 项目元信息
-            bible_data: Bible 数据（包含世界观、战力体系等）
-            
+            project_meta: 项目元信息，包含 protagonist_seed。
+            bible_data: Bible 数据，包含世界观、战力体系、势力等。
+            **kwargs: 预留扩展参数。
+
         Returns:
-            完整的 prompt 字符串
+            完整的 prompt 字符串。
         """
         # 提取战力体系信息
         combat_system = bible_data.get("combat_system", {})
         realms = combat_system.get("realms", [])
         lowest_realm = realms[0] if realms else "入门"
-        
+
         # 提取势力信息
         factions = bible_data.get("factions", [])
         faction_names = [f["name"] for f in factions[:3]] if factions else ["主要势力"]
-        
+
         prompt = f"""基于以下世界观设定，为小说《{project_meta.name}》生成人物设定。
 
 ## 世界观信息
@@ -260,28 +307,42 @@ class CharacterGenerator(BaseGenerator):
 - 主角必须比配角描述更详细
 """
         return prompt
-    
+
     def _parse_response(self, response: str) -> dict:
         """
-        解析人物生成响应
-        
+        解析人物生成响应。
+
+        使用基类提供的 _safe_json_parse() 方法进行安全 JSON 解析。
+        若解析失败，基类会自动构造修正提示词并重试。
+
         Args:
-            response: LLM 返回的 JSON 字符串
-            
+            response: LLM 返回的原始 JSON 字符串。
+
         Returns:
-            解析后的人物数据字典
+            解析后的人物数据字典，包含 protagonist, supporting_characters, relationships 三个顶层字段。
         """
         return self._safe_json_parse(response)
-    
+
     def _validate_result(self, result: dict) -> bool:
         """
-        验证人物数据完整性
-        
+        验证人物数据完整性。
+
+        验证项：
+            1. 主角存在性：必须有 protagonist 字段且非空。
+            2. 主角必需字段：name, appearance, personality_core, background, current_location, cultivation。
+            3. 配角数量：至少 2 个配角（过少会导致故事缺乏互动）。
+            4. 配角名称：每个配角必须有 name 字段。
+            5. 关系网非空：relationships 不能为空列表。
+            6. 关系端点有效性：每条关系的 source 和 target 必须是已知人物名。
+
         Args:
-            result: 解析后的人物数据
-            
+            result: 解析后的人物数据字典。
+
         Returns:
-            验证是否通过
+            True 表示验证通过。
+
+        Raises:
+            ValidationError: 验证失败时抛出，包含具体错误信息。
         """
         # 验证主角
         protagonist = result.get("protagonist")
@@ -290,7 +351,7 @@ class CharacterGenerator(BaseGenerator):
                 "缺少主角信息",
                 stage="validation"
             )
-        
+
         protagonist_required = [
             "name", "appearance", "personality_core",
             "background", "current_location", "cultivation"
@@ -301,7 +362,7 @@ class CharacterGenerator(BaseGenerator):
                     f"主角缺少必需字段: {field}",
                     stage="validation"
                 )
-        
+
         # 验证配角
         supporting = result.get("supporting_characters", [])
         if len(supporting) < 2:
@@ -309,14 +370,14 @@ class CharacterGenerator(BaseGenerator):
                 f"配角数量不足: 只有 {len(supporting)} 个，至少需要 2 个",
                 stage="validation"
             )
-        
+
         for i, char in enumerate(supporting):
             if "name" not in char:
                 raise ValidationError(
                     f"第 {i+1} 个配角缺少 name 字段",
                     stage="validation"
                 )
-        
+
         # 验证关系网
         relationships = result.get("relationships", [])
         if not relationships:
@@ -324,11 +385,11 @@ class CharacterGenerator(BaseGenerator):
                 "人物关系网不能为空",
                 stage="validation"
             )
-        
+
         # 验证关系涉及的人物都存在
         all_names = {protagonist["name"]}
         all_names.update(char["name"] for char in supporting)
-        
+
         for i, rel in enumerate(relationships):
             source = rel.get("source")
             target = rel.get("target")
@@ -342,22 +403,32 @@ class CharacterGenerator(BaseGenerator):
                     f"第 {i+1} 个关系的 target '{target}' 不是已知人物",
                     stage="validation"
                 )
-        
+
         return True
-    
+
     async def _save_result(self, result: dict) -> None:
         """
-        保存人物设定到知识库
-        
+        保存人物设定到知识库。
+
+        保存流程：
+            1. 为主角分配 UUID，构建 CharacterCard 对象，保存到 CharacterDB。
+            2. 为每个配角分配 UUID，构建 CharacterCard 对象，保存到 CharacterDB。
+            3. 构建 name → id 映射表，用于关系网保存。
+            4. 逐条解析 relationships，构建 Relationship 对象，通过 CharacterDB.add_relationship() 保存。
+
+        注意：
+            主角和配角初始的 first_appeared_chapter 和 last_updated_chapter 均设为 0，
+            待正文生成后由 UpdateExtractor 更新为实际章节号。
+
         Args:
-            result: 验证通过的人物数据
+            result: 验证通过的人物数据字典。
         """
         character_db = CharacterDB(self.project_id)
-        
+
         # 保存主角
         protagonist_data = result["protagonist"]
         protagonist_id = str(uuid.uuid4())[:8]
-        
+
         # 构建主角 CharacterCard
         cultivation = protagonist_data.get("cultivation", {})
         protagonist_card = CharacterCard(
@@ -380,17 +451,17 @@ class CharacterGenerator(BaseGenerator):
             first_appeared_chapter=0,
             last_updated_chapter=0
         )
-        
+
         await character_db.save_character(protagonist_card)
-        
+
         # 保存配角
         supporting_chars = result.get("supporting_characters", [])
         char_id_map = {protagonist_data["name"]: protagonist_id}
-        
+
         for char_data in supporting_chars:
             char_id = str(uuid.uuid4())[:8]
             char_id_map[char_data["name"]] = char_id
-            
+
             cultivation = char_data.get("cultivation", {})
             char_card = CharacterCard(
                 id=char_id,
@@ -412,16 +483,16 @@ class CharacterGenerator(BaseGenerator):
                 first_appeared_chapter=0,
                 last_updated_chapter=0
             )
-            
+
             await character_db.save_character(char_card)
-        
+
         # 保存关系网
         relationships = result.get("relationships", [])
         for rel_data in relationships:
             source_name = rel_data["source"]
             target_name = rel_data["target"]
             source_id = char_id_map.get(source_name)
-            
+
             if source_id:
                 relationship = Relationship(
                     target_character_id=char_id_map.get(target_name, ""),
@@ -431,18 +502,29 @@ class CharacterGenerator(BaseGenerator):
                     history_notes=[rel_data.get("description", "")]
                 )
                 await character_db.add_relationship(source_id, relationship)
-    
+
     async def _vectorize_result(self, result: dict) -> None:
         """
-        将人物设定向量化存储
-        
+        将人物设定向量化存储，供后续语义检索。
+
+        向量化策略：
+            1. 主角：将 name, appearance, personality_core, background 组合为文本，
+               存入 character_cards collection，type=protagonist。
+            2. 配角：同样组合关键信息，额外包含 relationship_to_protagonist，
+               存入同一 collection，type=supporting。
+
+        检索场景示例：
+            - "主角的性格特点" → 检索到主角的人物卡向量。
+            - "与主角有师徒关系的角色" → 检索到配角的向量（因为文本中包含"与主角关系"）。
+            - "会炼丹的角色" → 检索到包含"炼丹"关键词的人物卡。
+
         Args:
-            result: 已保存的人物数据
+            result: 已保存的人物数据字典。
         """
         from vector_store.store import VectorStore
-        
+
         vector_store = VectorStore(self.project_id)
-        
+
         # 向量化主角
         protagonist = result.get("protagonist", {})
         protagonist_text = f"""{protagonist.get('name', '')}
@@ -460,7 +542,7 @@ class CharacterGenerator(BaseGenerator):
                 "source": "character_generation"
             }
         )
-        
+
         # 向量化配角
         supporting = result.get("supporting_characters", [])
         for i, char in enumerate(supporting):

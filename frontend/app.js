@@ -1,17 +1,39 @@
 /**
- * MANS Frontend - 前端交互逻辑
+ * MANS Frontend —— 前端交互逻辑主文件
  *
- * 功能：
- * 1. 项目管理（创建、列表、删除）
- * 2. 初始化流程（Bible、人物、大纲生成）
- * 3. 写作界面（场景生成、流式显示、编辑）
- * 4. 知识库查看
+ * 本文件是 MANS 单页应用（SPA）的前端核心，负责：
+ *     1. 全局状态管理：当前项目、章节、场景、生成状态等。
+ *     2. 项目生命周期：创建、列表展示、打开、删除。
+ *     3. 初始化流程向导：Bible → 人物 → 大纲，三步骤顺序解锁。
+ *     4. 弧线与章节规划：弧线列表、创建、智能推荐、章节规划生成。
+ *     5. 写作界面：场景生成（含一键全章）、流式输出、编辑、重写、确认完稿。
+ *     6. 知识库查看：Bible、人物、大纲、伏笔的可视化展示。
+ *     7. 实时监控：SSE 日志流连接、过滤、自动滚动。
+ *     8. Issue Pool：异步更新通知、悬浮角标、面板展示。
+ *
+ * 架构说明：
+ *     - 所有函数直接挂载到 window 对象，供 HTML 内联事件调用。
+ *     - API 通信统一通过 apiRequest() 封装，支持动态 API_BASE 与指数退避重试。
+ *     - SSE 流式输出通过原生 fetch + ReadableStream 解析，不依赖 EventSource API
+ *       （因需支持自定义请求头与 POST 方法）。
+ *     - 状态持久化使用 localStorage，支持页面刷新后恢复项目与面板状态。
  */
 
-// ============================================
-// 全局状态
-// ============================================
+// ============================================================
+// 全局状态 (AppState)
+// ============================================================
 
+/**
+ * AppState —— 前端运行时全局状态对象。
+ *
+ * 字段说明：
+ *     currentProject: 当前选中项目的 UUID，从 localStorage 恢复或 null。
+ *     currentChapter: 当前正在写作的章节编号，默认 1，持久化到 localStorage。
+ *     currentScene:   当前正在生成的场景序号（0-based）。
+ *     isGenerating:   是否正在进行 LLM 生成，用于禁用/启用按钮。
+ *     projectInitialized: 当前项目是否已完成初始化（Bible + 人物 + 大纲）。
+ *     currentAbortController: 当前活跃生成任务的 AbortController，用于中断流式请求。
+ */
 const AppState = {
     currentProject: localStorage.getItem('mans_current_project') || null,
     currentChapter: parseInt(localStorage.getItem('mans_current_chapter') || '1', 10),
@@ -21,26 +43,51 @@ const AppState = {
     currentAbortController: null
 };
 
-// ============================================
-// 设置读取
-// ============================================
+// ============================================================
+// 设置管理
+// ============================================================
 
+/**
+ * 从 localStorage 读取用户设置项。
+ *
+ * @param {string} key - 设置键名。
+ * @param {*} defaultValue - 键不存在时的默认值。
+ * @returns {*} 设置值或默认值。
+ */
 function getSetting(key, defaultValue) {
     const stored = localStorage.getItem('mans_settings');
     const settings = stored ? JSON.parse(stored) : {};
     return settings[key] !== undefined ? settings[key] : defaultValue;
 }
 
+/**
+ * 获取 API 基础地址。
+ *
+ * 用户可通过设置面板配置反向代理地址。若未配置，使用相对路径（同域）。
+ *
+ * @returns {string} API 基础 URL，不含尾部斜杠。
+ */
 function getApiBase() {
     return getSetting('apiBase', '');
 }
 
-// ============================================
-// 工具函数
-// ============================================
+// ============================================================
+// 网络请求与工具函数
+// ============================================================
 
 /**
- * 发送API请求（支持动态 API_BASE 和重试）
+ * 统一 API 请求封装（支持动态 API_BASE 与指数退避重试）。
+ *
+ * 重试策略：
+ *     - 最大重试次数：由设置项 retries 控制（默认 3 次）。
+ *     - 4xx 客户端错误（除 429 限流外）立即失败，不再重试。
+ *     - 每次重试间隔递增：1s、2s、3s...
+ *     - 自动附加 Content-Type: application/json 请求头。
+ *
+ * @param {string} url - API 路径（如 "/api/projects"）。
+ * @param {object} options - fetch 选项对象（method、body、headers 等）。
+ * @returns {Promise<object>} 解析后的 JSON 响应体。
+ * @throws {Error} 所有重试耗尽后抛出最后一次错误。
  */
 async function apiRequest(url, options = {}) {
     const base = getApiBase();
@@ -83,12 +130,17 @@ async function apiRequest(url, options = {}) {
 }
 
 /**
- * 显示消息（Toast通知）
+ * 显示 Toast 通知消息。
+ *
+ * 在屏幕右上角弹出彩色提示框，3 秒后自动滑出消失。
+ * 同时向 console 输出日志，便于调试。
+ *
+ * @param {string} message - 通知文本。
+ * @param {string} type - 类型：success（绿）/ error（红）/ warning（黄）/ info（蓝）。
  */
 function showMessage(message, type = 'info') {
     console.log(`[${type}] ${message}`);
 
-    // 创建Toast通知
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
@@ -108,7 +160,6 @@ function showMessage(message, type = 'info') {
         word-wrap: break-word;
     `;
 
-    // 根据类型设置背景色
     const colors = {
         'success': '#10b981',
         'error': '#ef4444',
@@ -119,7 +170,6 @@ function showMessage(message, type = 'info') {
 
     document.body.appendChild(toast);
 
-    // 3秒后自动消失
     setTimeout(() => {
         toast.style.animation = 'slideOut 0.3s ease';
         setTimeout(() => toast.remove(), 300);
@@ -127,7 +177,12 @@ function showMessage(message, type = 'info') {
 }
 
 /**
- * 检查异步知识库更新（生成/重写后调用）
+ * 检查异步知识库更新状态（场景生成/重写完成后调用）。
+ *
+ * 轮询 /api/projects/.../chapters/{chapterNum}/updates 接口，
+ * 若检测到新的 implicit_issues，弹出警告通知并刷新 Issue 角标。
+ *
+ * @param {number} chapterNum - 章节编号。
  */
 async function checkAsyncUpdates(chapterNum) {
     if (!AppState.currentProject) return;
@@ -145,12 +200,17 @@ async function checkAsyncUpdates(chapterNum) {
         }
         refreshIssueBadge();
     } catch (e) {
-        // 静默忽略轮询错误
+        // 静默忽略轮询错误，避免干扰用户正常写作
     }
 }
 
 /**
- * 渲染 Issue Pool 悬浮角标
+ * 渲染或复用 Issue Pool 悬浮角标 DOM 元素。
+ *
+ * 角标固定在屏幕右下角，点击可跳转到 Issue Pool 面板。
+ * 仅在项目打开且存在待处理 Issues 时显示。
+ *
+ * @returns {HTMLElement} 角标 DOM 元素。
  */
 function renderIssueBadge() {
     let badge = document.getElementById('issue-badge');
@@ -191,7 +251,10 @@ function renderIssueBadge() {
 }
 
 /**
- * 刷新 Issue Pool 角标计数
+ * 刷新 Issue Pool 角标的数字计数。
+ *
+ * 从后端获取 issue 总数，更新角标显示；若数量为 0 则隐藏角标。
+ * 数字上限为 99+。
  */
 async function refreshIssueBadge() {
     if (!AppState.currentProject) {
@@ -206,11 +269,11 @@ async function refreshIssueBadge() {
         badge.textContent = count > 99 ? '99+' : String(count);
         badge.style.display = count > 0 ? 'flex' : 'none';
     } catch (e) {
-        // ignore
+        // 忽略，避免网络波动时角标闪烁
     }
 }
 
-// 添加CSS动画
+// 注入 Toast 所需的 CSS 动画（若尚未存在）
 if (!document.getElementById('toast-styles')) {
     const style = document.createElement('style');
     style.id = 'toast-styles';
@@ -228,7 +291,7 @@ if (!document.getElementById('toast-styles')) {
 }
 
 /**
- * 打开创建项目模态框
+ * 打开"创建项目"模态框。
  */
 function openCreateModal() {
     const modal = document.getElementById('create-project-modal');
@@ -238,7 +301,7 @@ function openCreateModal() {
 }
 
 /**
- * 关闭创建项目模态框
+ * 关闭"创建项目"模态框。
  */
 function closeCreateModal() {
     const modal = document.getElementById('create-project-modal');
@@ -248,7 +311,12 @@ function closeCreateModal() {
 }
 
 /**
- * 格式化字数
+ * 格式化字数显示（中文习惯）。
+ *
+ * 超过 10000 字时以"万"为单位显示一位小数，否则显示原始数字。
+ *
+ * @param {number} count - 字数。
+ * @returns {string} 格式化后的字符串。
  */
 function formatWordCount(count) {
     if (count >= 10000) {
@@ -257,16 +325,31 @@ function formatWordCount(count) {
     return count.toString();
 }
 
-// ============================================
+// ============================================================
 // 状态持久化与导航
-// ============================================
+// ============================================================
 
+/**
+ * 更新侧边栏的项目依赖状态。
+ *
+ * 带有 data-requires-project="true" 的菜单项，在没有选中项目时置为 disabled。
+ *
+ * @param {boolean} hasProject - 是否已选中项目。
+ */
 function updateSidebarState(hasProject) {
     document.querySelectorAll('.sidebar-item[data-requires-project="true"]').forEach(item => {
         item.classList.toggle('disabled', !hasProject);
     });
 }
 
+/**
+ * 更新顶部导航栏的项目名称显示。
+ *
+ * 从后端获取项目详情，将 name 显示在顶栏中央；
+ * 若获取失败则回退到显示 projectId。
+ *
+ * @param {string|null} projectId - 项目 UUID。
+ */
 function updateTopBarProject(projectId) {
     const bar = document.getElementById('top-bar-project');
     const nameEl = document.getElementById('current-project-name');
@@ -288,7 +371,12 @@ function updateTopBarProject(projectId) {
 }
 
 /**
- * 渲染弧线列表
+ * 渲染弧线列表到弧线规划面板。
+ *
+ * 按弧线序号升序排列，区分"已生成"（is_placeholder=false）与"占位符"状态，
+ * 分别显示"重新生成"和"生成规划"按钮。
+ *
+ * @param {Array} arcs - 弧线数据数组。
  */
 function renderArcList(arcs) {
     const container = document.getElementById('arc-list-dynamic');
@@ -301,7 +389,6 @@ function renderArcList(arcs) {
         return;
     }
 
-    // 按弧线序号排序
     arcs.sort((a, b) => (a.arc_number || 0) - (b.arc_number || 0));
 
     container.innerHTML = arcs.map(arc => {
@@ -326,7 +413,9 @@ function renderArcList(arcs) {
 }
 
 /**
- * 检查弧线生成状态（动态列表）
+ * 检查并刷新弧线列表状态（从后端拉取最新数据）。
+ *
+ * @param {string} projectId - 项目 UUID。
  */
 async function checkArcStatus(projectId) {
     try {
@@ -338,6 +427,11 @@ async function checkArcStatus(projectId) {
     }
 }
 
+/**
+ * 更新各面板的空状态显示。
+ *
+ * 无项目时显示空状态插画与提示文本；有项目时显示实际内容区域。
+ */
 function updatePanelEmptyStates() {
     const hasProject = !!AppState.currentProject;
     const pairs = [
@@ -357,6 +451,11 @@ function updatePanelEmptyStates() {
     });
 }
 
+/**
+ * 返回作品列表视图，清理当前项目状态。
+ *
+ * 清除 localStorage 中的项目相关键，重置 UI 到初始状态。
+ */
 function backToWorks() {
     AppState.currentProject = null;
     AppState.currentChapter = 1;
@@ -370,12 +469,14 @@ function backToWorks() {
     loadProjects();
 }
 
-// ============================================
+// ============================================================
 // 项目管理
-// ============================================
+// ============================================================
 
 /**
- * 加载项目列表
+ * 加载项目列表（带加载动画）。
+ *
+ * 调用 /api/projects 获取全部项目，通过 updateProjectList() 渲染到 DOM。
  */
 async function loadProjects() {
     const container = document.getElementById('project-list');
@@ -396,7 +497,11 @@ async function loadProjects() {
 }
 
 /**
- * 更新项目列表UI
+ * 渲染项目列表卡片到 DOM。
+ *
+ * 每个项目卡片展示：名称、题材标签、状态（带颜色）、当前章节、操作按钮（打开/删除）。
+ *
+ * @param {Array} projects - 项目元数据数组。
  */
 function updateProjectList(projects) {
     const container = document.getElementById('project-list');
@@ -419,8 +524,8 @@ function updateProjectList(projects) {
                 <span class="chapter">当前章节: ${escapeHtml(String(project.current_chapter))}</span>
             </div>
             <div class="actions">
-                <button onclick="openProject('${escapeHtml(project.id)}')" class="mans-btn primary">打开</button>
-                <button onclick="deleteProject('${escapeHtml(project.id)}')" class="mans-btn danger">删除</button>
+                <button onclick="openProject('${escapeJsString(project.id)}')" class="mans-btn primary">打开</button>
+                <button onclick="deleteProject('${escapeJsString(project.id)}')" class="mans-btn danger">删除</button>
             </div>
         </div>
     `;
@@ -428,7 +533,10 @@ function updateProjectList(projects) {
 }
 
 /**
- * 获取状态文本
+ * 将项目状态码转换为中文可读文本。
+ *
+ * @param {string} status - 状态码：initializing / writing / paused / completed。
+ * @returns {string} 中文状态文本。
  */
 function getStatusText(status) {
     const statusMap = {
@@ -441,11 +549,17 @@ function getStatusText(status) {
 }
 
 /**
- * 创建项目
+ * 创建新项目。
+ *
+ * 提交表单数据到 /api/projects，成功后刷新项目列表。
+ * 提交期间禁用提交按钮并将文本改为"创建中..."，防止重复提交。
+ *
+ * @param {object} projectData - 项目数据字典。
+ * @returns {Promise<string>} 新项目的 project_id。
+ * @throws {Error} 创建失败时抛出。
  */
 async function createProject(projectData) {
     try {
-        // 防止重复提交：禁用创建按钮
         const submitBtn = document.querySelector('#create-project-form button[type="submit"]');
         if (submitBtn) {
             submitBtn.disabled = true;
@@ -465,7 +579,6 @@ async function createProject(projectData) {
         showMessage('创建项目失败: ' + error.message, 'error');
         throw error;
     } finally {
-        // 恢复按钮状态
         const submitBtn = document.querySelector('#create-project-form button[type="submit"]');
         if (submitBtn) {
             submitBtn.disabled = false;
@@ -475,7 +588,11 @@ async function createProject(projectData) {
 }
 
 /**
- * 删除项目
+ * 删除项目（需用户二次确认）。
+ *
+ * 若删除的是当前打开项目，自动返回作品列表；否则仅刷新列表。
+ *
+ * @param {string} projectId - 项目 UUID。
  */
 async function deleteProject(projectId) {
     if (!confirm('确定要删除这个项目吗？此操作不可恢复。')) {
@@ -487,7 +604,7 @@ async function deleteProject(projectId) {
             method: 'DELETE'
         });
 
-        showMessage('项目已删除');
+        showMessage('项目已删除', 'success');
         if (AppState.currentProject === projectId) {
             backToWorks();
         } else {
@@ -500,7 +617,17 @@ async function deleteProject(projectId) {
 }
 
 /**
- * 打开项目
+ * 打开项目并进入对应界面。
+ *
+ * 流程：
+ *     1. 更新全局状态与 localStorage。
+ *     2. 启用侧边栏项目相关菜单。
+ *     3. 查询项目初始化状态。
+ *     4. 未初始化 → 进入初始化向导面板；已初始化 → 进入写作面板。
+ *     5. 刷新 Issue Pool 角标。
+ *
+ * @param {string} projectId - 项目 UUID。
+ * @param {object} options - 可选参数，skipPanelSwitch=true 时不自动切换面板（用于页面恢复）。
  */
 async function openProject(projectId, options = {}) {
     AppState.currentProject = projectId;
@@ -510,7 +637,6 @@ async function openProject(projectId, options = {}) {
     updatePanelEmptyStates();
 
     try {
-        // 获取项目状态
         const status = await apiRequest(`/api/projects/${projectId}/status`);
         AppState.projectInitialized = status.initialized;
 
@@ -531,12 +657,18 @@ async function openProject(projectId, options = {}) {
     }
 }
 
-// ============================================
+// ============================================================
 // 初始化流程
-// ============================================
+// ============================================================
 
 /**
- * 检查初始化状态
+ * 检查并更新初始化向导的各步骤状态。
+ *
+ * 从后端获取 has_bible / has_characters / has_outline / initialized，
+ * 更新三个步骤（bible-step / character-step / outline-step）的完成标记与按钮禁用状态。
+ * 若全部完成且用户仍在向导页，自动进入写作界面。
+ *
+ * @param {string} projectId - 项目 UUID。
  */
 async function checkInitializationStatus(projectId) {
     const steps = ['bible-step', 'character-step', 'outline-step'];
@@ -544,12 +676,12 @@ async function checkInitializationStatus(projectId) {
     try {
         const status = await apiRequest(`/api/projects/${projectId}/status`);
 
-        // 更新UI状态 - 步骤完成标记
+        // 更新步骤完成标记
         updateInitStepStatus('bible-step', status.has_bible);
         updateInitStepStatus('character-step', status.has_characters);
         updateInitStepStatus('outline-step', status.has_outline);
 
-        // 移除加载指示器
+        // 移除所有步骤中的加载动画
         steps.forEach(stepId => {
             const step = document.getElementById(stepId);
             if (step) {
@@ -558,13 +690,12 @@ async function checkInitializationStatus(projectId) {
             }
         });
 
-        // 获取按钮
+        // 根据完成状态禁用/启用按钮（必须按顺序完成）
         const bibleBtn = document.getElementById('generate-bible-btn');
         const charBtn = document.getElementById('generate-characters-btn');
         const outlineBtn = document.getElementById('generate-outline-btn');
         const enterWritingBtn = document.getElementById('enter-writing-btn');
 
-        // 更新按钮状态
         if (bibleBtn) {
             bibleBtn.disabled = status.has_bible;
         }
@@ -577,7 +708,7 @@ async function checkInitializationStatus(projectId) {
             outlineBtn.disabled = !status.has_characters || status.has_outline;
         }
 
-        // 如果全部完成，显示进入写作按钮
+        // 全部完成时显示"进入写作"按钮
         if (status.initialized && enterWritingBtn) {
             enterWritingBtn.style.display = 'inline-flex';
         } else if (enterWritingBtn) {
@@ -586,7 +717,7 @@ async function checkInitializationStatus(projectId) {
 
         AppState.projectInitialized = status.initialized;
 
-        // 如果初始化刚完成且用户仍在向导页，自动进入写作界面
+        // 若初始化刚完成且用户仍在向导页，自动跳转写作界面
         const initPanel = document.getElementById('initialization-panel');
         if (status.initialized && initPanel && initPanel.classList.contains('active')) {
             showPanel('writing-panel');
@@ -613,7 +744,10 @@ async function checkInitializationStatus(projectId) {
 }
 
 /**
- * 更新初始化步骤状态
+ * 更新单个初始化步骤的 UI 状态。
+ *
+ * @param {string} stepId - 步骤元素 ID。
+ * @param {boolean} completed - 是否已完成。
  */
 function updateInitStepStatus(stepId, completed) {
     const step = document.getElementById(stepId);
@@ -624,7 +758,10 @@ function updateInitStepStatus(stepId, completed) {
 }
 
 /**
- * 生成 Bible（流式版本）
+ * 触发 Bible 生成。
+ *
+ * 若存在流式生成面板（startStreamingGeneration），使用 SSE 流式版本；
+ * 否则回退到传统 POST 接口。生成完成后刷新初始化状态。
  */
 async function generateBible() {
     if (!AppState.currentProject) {
@@ -647,7 +784,7 @@ async function generateBible() {
                 `/api/projects/${AppState.currentProject}/generate/bible`,
                 { method: 'POST' }
             );
-            showMessage('Bible 生成成功！');
+            showMessage('Bible 生成成功！', 'success');
             displayBible(result.data);
         }
 
@@ -664,7 +801,7 @@ async function generateBible() {
 }
 
 /**
- * 加载并显示Bible
+ * 从后端加载 Bible 数据并展示。
  */
 async function loadAndDisplayBible() {
     try {
@@ -678,7 +815,9 @@ async function loadAndDisplayBible() {
 }
 
 /**
- * 显示 Bible
+ * 将 Bible 数据渲染为可折叠的 HTML 展示。
+ *
+ * @param {object} bibleData - Bible 字典数据。
  */
 function displayBible(bibleData) {
     const container = document.getElementById('bible-display');
@@ -709,7 +848,9 @@ function displayBible(bibleData) {
 }
 
 /**
- * 生成人物
+ * 触发人物设定生成。
+ *
+ * 前置条件：Bible 已生成。生成完成后刷新初始化状态。
  */
 async function generateCharacters() {
     if (!AppState.currentProject) {
@@ -732,7 +873,7 @@ async function generateCharacters() {
                 `/api/projects/${AppState.currentProject}/generate/characters`,
                 { method: 'POST' }
             );
-            showMessage('人物生成成功！');
+            showMessage('人物生成成功！', 'success');
         }
     } catch (error) {
         showMessage('生成人物失败: ' + error.message, 'error');
@@ -746,7 +887,9 @@ async function generateCharacters() {
 }
 
 /**
- * 生成大纲（流式版本）
+ * 触发全局大纲生成。
+ *
+ * 前置条件：Bible 和人物设定已生成。生成完成后刷新初始化状态。
  */
 async function generateOutline() {
     if (!AppState.currentProject) {
@@ -769,7 +912,7 @@ async function generateOutline() {
                 `/api/projects/${AppState.currentProject}/generate/outline`,
                 { method: 'POST' }
             );
-            showMessage('大纲生成成功！');
+            showMessage('大纲生成成功！', 'success');
         }
     } catch (error) {
         showMessage('生成大纲失败: ' + error.message, 'error');
@@ -782,12 +925,16 @@ async function generateOutline() {
     }
 }
 
-// ============================================
+// ============================================================
 // 写作界面
-// ============================================
+// ============================================================
 
 /**
- * 加载写作界面
+ * 加载写作界面数据。
+ *
+ * 获取项目当前章节号，加载章节规划与导出列表。
+ *
+ * @param {string} projectId - 项目 UUID。
  */
 async function loadWritingInterface(projectId) {
     try {
@@ -802,7 +949,12 @@ async function loadWritingInterface(projectId) {
 }
 
 /**
- * 加载章节规划
+ * 加载指定章节的规划并展示。
+ *
+ * 规划加载成功后，自动尝试加载已保存的草稿正文填充到场景卡片。
+ *
+ * @param {string} projectId - 项目 UUID。
+ * @param {number} chapterNum - 章节编号。
  */
 async function loadChapterPlan(projectId, chapterNum) {
     try {
@@ -810,7 +962,7 @@ async function loadChapterPlan(projectId, chapterNum) {
             `/api/projects/${projectId}/chapters/${chapterNum}/plan`
         );
         displayChapterPlan(plan);
-        // 规划加载后，尝试加载已保存的草稿正文
+        // 加载已保存的草稿正文（若存在）
         await loadChapterDraft(projectId, chapterNum);
     } catch (error) {
         console.log('章节规划不存在:', error);
@@ -826,7 +978,13 @@ async function loadChapterPlan(projectId, chapterNum) {
 }
 
 /**
- * 加载章节草稿正文并填充到场景卡片
+ * 加载章节草稿正文并填充到各场景卡片。
+ *
+ * 遍历草稿中的 scenes 数组，将每个 scene.text 写入对应 scene-content-{index} 元素。
+ * 404 表示草稿尚未生成，属于正常情况，静默处理。
+ *
+ * @param {string} projectId - 项目 UUID。
+ * @param {number} chapterNum - 章节编号。
  */
 async function loadChapterDraft(projectId, chapterNum) {
     try {
@@ -837,11 +995,11 @@ async function loadChapterDraft(projectId, chapterNum) {
         for (const scene of scenes) {
             const contentDiv = document.getElementById(`scene-content-${scene.scene_index}`);
             if (contentDiv && scene.text) {
-                contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(scene.text)}</div>`;
+                contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(formatNovelText(scene.text))}</div>`;
             }
         }
     } catch (error) {
-        // 404 表示草稿不存在，属于正常情况，无需提示
+        // 404 表示草稿不存在，属于正常情况
         if (error.status !== 404) {
             console.error('加载章节草稿失败:', error);
         }
@@ -849,7 +1007,9 @@ async function loadChapterDraft(projectId, chapterNum) {
 }
 
 /**
- * 显示章节规划
+ * 渲染章节规划到写作面板。
+ *
+ * @param {object} plan - 章节规划数据。
  */
 function displayChapterPlan(plan) {
     const container = document.getElementById('chapter-plan-display');
@@ -859,7 +1019,11 @@ function displayChapterPlan(plan) {
 }
 
 /**
- * 构建章节规划 HTML（复用）
+ * 构建章节规划的 HTML 字符串（写作面板与章节规划面板复用）。
+ *
+ * @param {object} plan - 章节规划数据。
+ * @param {boolean} showWritingActions - 是否显示生成/编辑/探针/重写按钮（写作面板需要）。
+ * @returns {string} HTML 字符串。
  */
 function buildChapterPlanHtml(plan, showWritingActions = false) {
     const scenes = plan.scenes || [];
@@ -914,7 +1078,10 @@ function buildChapterPlanHtml(plan, showWritingActions = false) {
 }
 
 /**
- * 加载章节规划到章节规划面板
+ * 加载章节规划到独立的"章节规划"面板（非写作面板）。
+ *
+ * @param {string} projectId - 项目 UUID。
+ * @param {number} chapterNum - 章节编号。
  */
 async function loadChapterPlanForPanel(projectId, chapterNum) {
     const container = document.getElementById('chapter-plan-result');
@@ -937,7 +1104,9 @@ async function loadChapterPlanForPanel(projectId, chapterNum) {
 }
 
 /**
- * 显示章节规划到章节规划面板
+ * 渲染章节规划到章节规划面板（只读展示，无操作按钮）。
+ *
+ * @param {object} plan - 章节规划数据。
  */
 function displayChapterPlanResult(plan) {
     const container = document.getElementById('chapter-plan-result');
@@ -947,10 +1116,9 @@ function displayChapterPlanResult(plan) {
 }
 
 /**
- * 生成场景
- */
-/**
- * 同步所有场景生成按钮状态
+ * 同步所有场景生成按钮的禁用状态与文本。
+ *
+ * 在生成开始/结束时统一更新，避免各个按钮状态不一致。
  */
 function updateAllSceneButtons() {
     document.querySelectorAll('.scene-actions button').forEach(btn => {
@@ -965,12 +1133,20 @@ function updateAllSceneButtons() {
 }
 
 /**
- * 一键生成全章所有场景（无人值守，顺序执行）
+ * 一键生成全章所有场景（无人值守，顺序执行）。
+ *
+ * 流程：
+ *     1. 从 DOM 中读取当前章节的所有场景索引。
+ *     2. 跳过已有内容的场景（避免覆盖）。
+ *     3. 逐个调用 generateScene()，场景间间隔 500ms 让系统喘息。
+ *     4. 支持 AbortController 中断：用户可在任意时刻取消后续生成。
+ *
+ * 注意：每个场景的生成失败不会阻断后续场景，最终报告成功/失败/跳过数量。
  */
 async function generateAllScenes() {
     if (!AppState.currentProject || AppState.isGenerating) return;
 
-    // 获取当前章节所有场景索引
+    // 提取当前章节所有场景索引
     const sceneCards = document.querySelectorAll('.scene-card');
     const sceneIndices = Array.from(sceneCards).map(card => {
         const idxAttr = card.getAttribute('data-index');
@@ -1003,7 +1179,7 @@ async function generateAllScenes() {
             break;
         }
 
-        // 检查是否已有内容（避免覆盖已生成的场景）
+        // 跳过已有内容的场景（避免覆盖已生成的内容）
         const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
         const hasContent = contentDiv && contentDiv.querySelector('.generated-text');
         if (hasContent) {
@@ -1023,7 +1199,7 @@ async function generateAllScenes() {
             showMessage(`场景 ${sceneIndex + 1} 生成失败: ${error.message}`, 'error');
         }
 
-        // 每个场景之间短暂停顿，让系统喘息
+        // 每个场景之间短暂停顿，降低对后端的同时压力
         if (sceneIndex !== sceneIndices[sceneIndices.length - 1]) {
             await new Promise(r => setTimeout(r, 500));
         }
@@ -1041,6 +1217,18 @@ async function generateAllScenes() {
     }
 }
 
+/**
+ * 生成单个场景（流式输出）。
+ *
+ * 流程：
+ *     1. 设置全局生成状态，禁用相关按钮。
+ *     2. 创建 AbortController 供用户中断。
+ *     3. 调用 connectStream() 建立 SSE 连接并逐 token 渲染。
+ *     4. 生成完成后检查异步知识库更新。
+ *     5. 清理状态，恢复按钮。
+ *
+ * @param {number} sceneIndex - 场景序号（0-based）。
+ */
 async function generateScene(sceneIndex) {
     if (!AppState.currentProject || AppState.isGenerating) return;
 
@@ -1059,7 +1247,7 @@ async function generateScene(sceneIndex) {
     contentDiv.innerHTML = '<div class="generating">正在生成...</div>';
 
     try {
-        // 直接连接 SSE 流开始生成，传入 AbortController signal
+        // 直接连接 SSE 流，传入 AbortController signal 支持中断
         await connectStream(sceneIndex, contentDiv, AppState.currentAbortController.signal);
         // 生成完成后检查异步知识库更新
         checkAsyncUpdates(AppState.currentChapter);
@@ -1078,7 +1266,30 @@ async function generateScene(sceneIndex) {
 }
 
 /**
- * 连接流式生成（fetch + ReadableStream）
+ * 连接场景生成的 SSE 流（fetch + ReadableStream 手动解析）。
+ *
+ * 不使用浏览器原生 EventSource，原因：
+ *     1. 需要 POST 请求（EventSource 仅支持 GET）。
+ *     2. 需要自定义请求头（如 Content-Type: application/json）。
+ *     3. 需要 AbortController 支持主动中断。
+ *
+ * SSE 协议解析：
+ *     数据以 "event: xxx\ndata: {...}\n\n" 格式传输。
+ *     本函数维护 buffer，按行分割，解析 event 与 data 字段，空行触发事件分发。
+ *
+ * 事件处理：
+ *     start          —— 显示场景意图与目标字数
+ *     token          —— 追加文本并实时渲染（调用 formatNovelText 清洗 Markdown）
+ *     progress       —— 预留，当前仅忽略
+ *     scene_complete —— Toast 通知生成完成
+ *     error          —— 拒绝 Promise，触发错误处理
+ *     done           —— 解析正常结束
+ *
+ * 智能滚动：仅在用户处于内容区底部 50px 内时自动下拉，避免打断阅读。
+ *
+ * @param {number} sceneIndex - 场景序号。
+ * @param {HTMLElement} contentDiv - 内容渲染容器。
+ * @param {AbortSignal|null} signal - 可选的 AbortController signal。
  * @returns {Promise<void>}
  */
 async function connectStream(sceneIndex, contentDiv, signal = null) {
@@ -1112,6 +1323,9 @@ async function connectStream(sceneIndex, contentDiv, signal = null) {
     return new Promise((resolve, reject) => {
         let currentEvent = { event: 'message', data: '' };
 
+        /**
+         * 分发已解析完成的 SSE 事件。
+         */
         const dispatchEvent = () => {
             try {
                 switch (currentEvent.event) {
@@ -1127,19 +1341,19 @@ async function connectStream(sceneIndex, contentDiv, signal = null) {
                         const isNearBottom = (
                             contentDiv.scrollHeight - contentDiv.scrollTop - contentDiv.clientHeight
                         ) < 50;
-                        contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(generatedText)}</div>`;
+                        contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(formatNovelText(generatedText))}</div>`;
                         if (isNearBottom) {
                             contentDiv.scrollTop = contentDiv.scrollHeight;
                         }
                         break;
                     }
                     case 'progress': {
-                        // 可选：在UI中显示进度
+                        // 预留：可在 UI 中显示进度条或 token 计数
                         break;
                     }
                     case 'scene_complete': {
                         const data = JSON.parse(currentEvent.data);
-                        showMessage(`场景生成完成！字数: ${data.word_count}`);
+                        showMessage(`场景生成完成！字数: ${data.word_count}`, 'success');
                         break;
                     }
                     case 'error': {
@@ -1158,7 +1372,7 @@ async function connectStream(sceneIndex, contentDiv, signal = null) {
                         break;
                     }
                     default:
-                        // ping 等忽略
+                        // ping 等无需处理的事件
                         break;
                 }
             } catch (e) {
@@ -1167,6 +1381,9 @@ async function connectStream(sceneIndex, contentDiv, signal = null) {
             currentEvent = { event: 'message', data: '' };
         };
 
+        /**
+         * 递归读取响应流数据块并解析 SSE 事件。
+         */
         const processChunk = () => {
             reader.read().then(({ done, value }) => {
                 if (done) {
@@ -1176,7 +1393,7 @@ async function connectStream(sceneIndex, contentDiv, signal = null) {
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
-                buffer = lines.pop(); // 保留不完整的行
+                buffer = lines.pop(); // 保留不完整的最后一行
 
                 for (const line of lines) {
                     if (line.startsWith('event:')) {
@@ -1200,7 +1417,11 @@ async function connectStream(sceneIndex, contentDiv, signal = null) {
 }
 
 /**
- * 打开重写反馈模态框
+ * 打开场景重写反馈模态框。
+ *
+ * 显示警告提示：重新生成不会自动撤销知识库更新；如需回滚请先使用"回滚知识库"按钮。
+ *
+ * @param {number} sceneIndex - 场景序号。
  */
 function rewriteScene(sceneIndex) {
     if (AppState.isGenerating) {
@@ -1227,7 +1448,11 @@ function rewriteScene(sceneIndex) {
 }
 
 /**
- * 回滚某场景产生的知识库更新
+ * 回滚某场景产生的知识库更新。
+ *
+ * 调用后端 /rollback 接口，清理该场景上次引入的所有状态变更。
+ *
+ * @param {number} sceneIndex - 场景序号。
  */
 async function rollbackSceneKnowledge(sceneIndex) {
     if (!AppState.currentProject) return;
@@ -1244,7 +1469,11 @@ async function rollbackSceneKnowledge(sceneIndex) {
 }
 
 /**
- * 开始流式重写
+ * 开始流式重写场景。
+ *
+ * 读取反馈文本，关闭模态框，进入生成状态并连接重写 SSE 流。
+ *
+ * @param {number} sceneIndex - 场景序号。
  */
 async function startRewrite(sceneIndex) {
     const feedback = document.getElementById(`rewrite-feedback-${sceneIndex}`)?.value.trim();
@@ -1275,7 +1504,15 @@ async function startRewrite(sceneIndex) {
 }
 
 /**
- * 连接重写流
+ * 连接场景重写的 SSE 流。
+ *
+ * 与 connectStream 逻辑基本一致，但请求 endpoint 为 regenerate，
+ * 并额外提交 feedback 参数。
+ *
+ * @param {number} sceneIndex - 场景序号。
+ * @param {string} feedback - 用户反馈文本。
+ * @param {HTMLElement} contentDiv - 内容渲染容器。
+ * @returns {Promise<void>}
  */
 async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
     const projectId = AppState.currentProject;
@@ -1318,11 +1555,10 @@ async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
                     case 'token': {
                         const data = JSON.parse(currentEvent.data);
                         generatedText += data.content;
-                        // 智能滚动：仅在用户处于底部时自动下拉
                         const isNearBottom = (
                             contentDiv.scrollHeight - contentDiv.scrollTop - contentDiv.clientHeight
                         ) < 50;
-                        contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(generatedText)}</div>`;
+                        contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(formatNovelText(generatedText))}</div>`;
                         if (isNearBottom) {
                             contentDiv.scrollTop = contentDiv.scrollHeight;
                         }
@@ -1331,7 +1567,7 @@ async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
                     case 'progress': break;
                     case 'scene_complete': {
                         const data = JSON.parse(currentEvent.data);
-                        showMessage(`场景重写完成！字数: ${data.word_count}`);
+                        showMessage(`场景重写完成！字数: ${data.word_count}`, 'success');
                         break;
                     }
                     case 'error': {
@@ -1387,7 +1623,38 @@ async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
 }
 
 /**
- * HTML转义
+ * 网文排版格式化：清洗 Markdown 标记并规范换行。
+ *
+ * 格式化规则：
+ *     1. 去除 **加粗** 标记。
+ *     2. 去除 # 标题标记。
+ *     3. 去除 - / * 列表标记。
+ *     4. 折叠三个及以上连续换行为双换行（保持段落分隔但不空洞）。
+ *     5. 去除行首行尾多余空白。
+ *
+ * 与 CSS text-indent: 2em 配合，营造沉浸式中文小说阅读体验。
+ *
+ * @param {string} text - 原始文本（可能含 Markdown 污染）。
+ * @returns {string} 格式化后的干净文本。
+ */
+function formatNovelText(text) {
+    if (!text) return '';
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/^[-*+]\s+/gm, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+/**
+ * HTML 实体转义（防止 XSS）。
+ *
+ * 通过创建临时 DOM 元素利用浏览器的原生转义能力，
+ * 比字符串替换更可靠（覆盖所有 HTML 特殊字符）。
+ *
+ * @param {string} text - 原始文本。
+ * @returns {string} 转义后的安全 HTML 字符串。
  */
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -1396,7 +1663,30 @@ function escapeHtml(text) {
 }
 
 /**
- * 编辑场景
+ * 转义字符串中的 JavaScript 特殊字符（用于内联事件处理器）。
+ *
+ * 将单引号转义为 \\'，反斜杠转义为 \\\\，防止 onclick="func('...')" 中的引号冲突。
+ *
+ * @param {string} text - 原始文本。
+ * @returns {string} 转义后的安全字符串。
+ */
+function escapeJsString(text) {
+    return String(text).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+/**
+ * 进入场景编辑模式。
+ *
+ * 将场景内容区替换为 textarea，支持：
+ *     1. 手动保存（保存按钮）。
+ *     2. 自动保存（输入停止 2 秒后触发，带防抖）。
+ *     3. 取消编辑（恢复原内容）。
+ *     4. 同步知识库（将修改后的文本提交给 UpdateExtractor 分析）。
+ *
+ * 自动保存的闭包捕获：在设置定时器的那一刻冻结 projectId 和 chapterNum，
+ * 防止用户在防抖期间切换章节导致保存到错误位置。
+ *
+ * @param {number} sceneIndex - 场景序号。
  */
 function editScene(sceneIndex) {
     if (AppState.isGenerating) {
@@ -1422,8 +1712,7 @@ function editScene(sceneIndex) {
 
     const textarea = document.getElementById(`edit-scene-${sceneIndex}`);
 
-    // 闭包捕获：在设置定时器的那一刻冻结 projectId 和 chapterNum，
-    // 防止用户在防抖期间切换章节导致保存到错误位置。
+    // 闭包捕获：冻结当前 projectId 与 chapterNum，防止防抖期间切换上下文
     const capturedProjectId = AppState.currentProject;
     const capturedChapterNum = AppState.currentChapter;
 
@@ -1463,7 +1752,14 @@ function editScene(sceneIndex) {
 }
 
 /**
- * 保存场景编辑
+ * 保存场景编辑内容。
+ *
+ * @param {number} sceneIndex - 场景序号。
+ * @param {object} options - 可选参数：
+ *     silent: 是否静默（不弹 Toast）。
+ *     projectId / chapterNum: 用于闭包穿透防护，优先于全局状态。
+ *
+ * @throws {Error} 保存失败时抛出（silent 模式下仍抛出，供自动保存捕获）。
  */
 async function saveSceneEdit(sceneIndex, options = {}) {
     const { silent = false, projectId = null, chapterNum = null } = options;
@@ -1477,7 +1773,7 @@ async function saveSceneEdit(sceneIndex, options = {}) {
     if (!textarea) return; // 编辑器已关闭，跳过
     const newText = textarea.value;
 
-    // 使用传入的参数或回退到全局状态（优先传入，防止闭包穿透）
+    // 优先使用传入的参数，防止闭包期间用户切换章节导致保存到错误位置
     const effectiveProjectId = projectId || AppState.currentProject;
     const effectiveChapterNum = chapterNum || AppState.currentChapter;
 
@@ -1491,10 +1787,10 @@ async function saveSceneEdit(sceneIndex, options = {}) {
         );
 
         if (!silent) {
-            showMessage('场景已保存');
+            showMessage('场景已保存', 'success');
         }
         if (contentDiv) {
-            contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(newText)}</div>`;
+            contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(formatNovelText(newText))}</div>`;
         }
     } catch (error) {
         if (!silent) {
@@ -1505,7 +1801,12 @@ async function saveSceneEdit(sceneIndex, options = {}) {
 }
 
 /**
- * 手动同步场景修改到知识库（分析修改后的文本并提取状态更新）
+ * 手动同步场景修改到知识库。
+ *
+ * 调用后端的 /extract 接口，触发 UpdateExtractor 分析当前编辑器中的文本，
+ * 提取人物状态变化、新伏笔等信息并更新知识库。
+ *
+ * @param {number} sceneIndex - 场景序号。
  */
 async function syncSceneKnowledge(sceneIndex) {
     if (!AppState.currentProject) return;
@@ -1545,7 +1846,9 @@ async function syncSceneKnowledge(sceneIndex) {
 }
 
 /**
- * 取消场景编辑
+ * 取消场景编辑，恢复原内容。
+ *
+ * @param {number} sceneIndex - 场景序号。
  */
 function cancelSceneEdit(sceneIndex) {
     const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
@@ -1554,12 +1857,18 @@ function cancelSceneEdit(sceneIndex) {
         contentDiv._autoSaveTimer = null;
     }
     const originalContent = contentDiv.dataset.originalContent || '';
-    contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(originalContent)}</div>`;
+    contentDiv.innerHTML = `<div class="generated-text">${escapeHtml(formatNovelText(originalContent))}</div>`;
     delete contentDiv.dataset.originalContent;
 }
 
 /**
- * 上下文探针：查看当前场景注入上下文摘要
+ * 上下文探针：查看当前场景注入上下文的摘要信息。
+ *
+ * 调用后端 /context 接口，展示 Writer 实际接收到的上下文组成：
+ * 场景意图、本章目标、前文预览、出场人物、世界规则数量、
+ * 活跃伏笔数量、风格参考、Token 使用情况等。
+ *
+ * @param {number} sceneIndex - 场景序号。
  */
 async function probeContext(sceneIndex) {
     if (!AppState.currentProject) return;
@@ -1609,7 +1918,13 @@ async function probeContext(sceneIndex) {
 }
 
 /**
- * 显示通用模态框
+ * 显示通用模态框（动态创建 DOM）。
+ *
+ * 每次调用会移除已存在的动态模态框并创建新的，
+ * 确保内容始终最新且不存在 z-index 冲突。
+ *
+ * @param {string} title - 模态框标题。
+ * @param {string} htmlContent - 模态框主体 HTML。
  */
 function showModal(title, htmlContent) {
     const existing = document.getElementById('dynamic-modal');
@@ -1633,38 +1948,44 @@ function showModal(title, htmlContent) {
     document.body.appendChild(modal);
 }
 
+/**
+ * 关闭动态模态框。
+ */
 function closeDynamicModal() {
     const modal = document.getElementById('dynamic-modal');
     if (modal) modal.remove();
 }
 
 /**
- * 确认章节完稿
+ * 确认章节完稿，进入下一章。
+ *
+ * 完稿前安全流程：
+ *     1. 中止任何正在进行的生成，防止流式写入干扰。
+ *     2. 强制保存所有活跃编辑器中的内容（清除防抖定时器并同步写入）。
+ *     3. 用户二次确认。
+ *     4. 调用后端 /confirm 接口完成合并、导出、向量同步。
+ *     5. 加载下一章规划。
  */
 async function confirmChapter() {
     if (!AppState.currentProject) return;
 
-    // ── 第1步：中止任何正在进行的生成，防止流式写入干扰 ──
+    // 第1步：中止任何正在进行的生成
     if (AppState.currentAbortController) {
         AppState.currentAbortController.abort();
         AppState.currentAbortController = null;
     }
 
-    // ── 第2步：强制保存所有活跃编辑器，防止防抖定时器内的修改丢失 ──
-    // 不仅清除定时器，还直接读取所有 textarea 的值并同步保存，
-    // 确保无论定时器处于什么状态，缓冲区内容都落盘。
+    // 第2步：强制保存所有活跃编辑器
     const pendingSaves = [];
     document.querySelectorAll('.scene-content').forEach(contentDiv => {
         const sceneIndex = parseInt(contentDiv.id.replace('scene-content-', ''), 10);
         if (isNaN(sceneIndex)) return;
 
-        // 清除自动保存定时器
         if (contentDiv._autoSaveTimer) {
             clearTimeout(contentDiv._autoSaveTimer);
             contentDiv._autoSaveTimer = null;
         }
 
-        // 如果当前处于编辑模式（存在 textarea），直接读取并同步保存
         const textarea = document.getElementById(`edit-scene-${sceneIndex}`);
         if (textarea) {
             pendingSaves.push(
@@ -1687,7 +2008,7 @@ async function confirmChapter() {
         }
     }
 
-    // ── 第3步：再次确认，所有内容已落盘 ──
+    // 第3步：用户二次确认
     if (!confirm('确认本章已完成？确认后将进入下一章。')) {
         return;
     }
@@ -1698,8 +2019,7 @@ async function confirmChapter() {
             { method: 'POST' }
         );
 
-        showMessage(`第${AppState.currentChapter}章已确认！字数: ${result.word_count}`);
-        // 刷新导出列表（完稿后会在 exports/ 生成只读 md）
+        showMessage(`第${AppState.currentChapter}章已确认！字数: ${result.word_count}`, 'success');
         await loadExports();
 
         AppState.currentChapter++;
@@ -1712,7 +2032,9 @@ async function confirmChapter() {
 }
 
 /**
- * 加载已导出的文件列表
+ * 加载已导出完稿文件列表。
+ *
+ * 扫描后端 exports/ 目录，展示文件名、大小、点击可预览。
  */
 async function loadExports() {
     if (!AppState.currentProject) return;
@@ -1731,17 +2053,20 @@ async function loadExports() {
             `;
             return;
         }
-        const rows = data.exports.map(exp => `
-            <div class="export-item" onclick="viewExport('${escapeHtml(exp.filename)}')"
+        const rows = data.exports.map(exp => {
+            const sizeBytes = exp.size || 0;
+            const sizeText = sizeBytes < 1024 ? `${sizeBytes} B` : `${(sizeBytes / 1024).toFixed(1)} KB`;
+            return `
+            <div class="export-item" onclick="viewExport('${escapeJsString(exp.filename)}')"
                  style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;
                         border-bottom:1px solid var(--bg-hover);cursor:pointer;"
                  onmouseenter="this.style.background='var(--bg-hover)';"
                  onmouseleave="this.style.background='transparent';"
             >
                 <span>📄 ${escapeHtml(exp.filename)}</span>
-                <span style="color:var(--text-secondary);font-size:12px;">${exp.size} 字</span>
+                <span style="color:var(--text-secondary);font-size:12px;">${sizeText}</span>
             </div>
-        `).join('');
+        `}).join('');
         panel.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                 <strong style="font-size:14px;">已导出完稿</strong>
@@ -1755,7 +2080,9 @@ async function loadExports() {
 }
 
 /**
- * 查看导出的只读文件内容
+ * 查看导出的只读文件内容。
+ *
+ * @param {string} filename - 导出文件名。
  */
 async function viewExport(filename) {
     if (!AppState.currentProject) return;
@@ -1776,12 +2103,16 @@ async function viewExport(filename) {
     }
 }
 
-// ============================================
+// ============================================================
 // 知识库查看
-// ============================================
+// ============================================================
 
 /**
- * 加载知识库
+ * 加载并展示项目知识库。
+ *
+ * 并行请求 Bible、人物、大纲、伏笔四个接口，全部完成后调用 displayKnowledgeBase() 渲染。
+ *
+ * @param {string} projectId - 项目 UUID。
  */
 async function loadKnowledgeBase(projectId) {
     try {
@@ -1800,7 +2131,18 @@ async function loadKnowledgeBase(projectId) {
 }
 
 /**
- * 格式化大纲为可读 HTML
+ * 将大纲数据格式化为可读的 HTML。
+ *
+ * 渲染结构：
+ *     - 四幕卡片网格（第一幕 / 第二幕上 / 第二幕下 / 第三幕）
+ *     - 核心冲突
+ *     - 剧情风格
+ *     - 关键转折点（时间线样式）
+ *     - 结局
+ *     - 全局伏笔列表（带类型标签与重要性标签）
+ *
+ * @param {object} outline - 大纲字典数据。
+ * @returns {string} HTML 字符串。
  */
 function formatOutlineHtml(outline) {
     if (!outline) return '<p>未生成</p>';
@@ -1908,7 +2250,12 @@ function formatOutlineHtml(outline) {
 }
 
 /**
- * 显示知识库
+ * 渲染知识库面板内容。
+ *
+ * 使用 details/summary 实现可折叠的四大知识库区块：
+ * Bible、人物、大纲、伏笔。已生成的区块默认展开。
+ *
+ * @param {object} data - 包含 bible、characters、outline、foreshadowing 的对象。
  */
 function displayKnowledgeBase(data) {
     const container = document.getElementById('knowledge-display');
@@ -1962,12 +2309,17 @@ function displayKnowledgeBase(data) {
     `;
 }
 
-// ============================================
-// UI 控制
-// ============================================
+// ============================================================
+// UI 面板控制
+// ============================================================
 
 /**
- * 显示面板
+ * 显示指定面板，隐藏其他面板。
+ *
+ * 同时更新侧边栏激活状态与 localStorage 持久化，
+ * 支持页面刷新后恢复到上次所在面板。
+ *
+ * @param {string} panelId - 面板元素 ID。
  */
 function showPanel(panelId) {
     document.querySelectorAll('.content-panel').forEach(panel => {
@@ -1990,7 +2342,7 @@ function showPanel(panelId) {
 }
 
 /**
- * 切换侧边栏
+ * 切换侧边栏展开/收起状态。
  */
 function toggleSidebar() {
     const sidebar = document.querySelector('.sidebar');
@@ -1999,12 +2351,12 @@ function toggleSidebar() {
     }
 }
 
-// ============================================
-// 初始化
-// ============================================
+// ============================================================
+// 应用初始化与事件绑定
+// ============================================================
 
 document.addEventListener('DOMContentLoaded', () => {
-    // 恢复 sidebar 激活状态
+    // 恢复上次激活的面板状态
     const savedPanel = localStorage.getItem('mans_current_panel') || 'works';
     document.querySelectorAll('.sidebar-item').forEach(item => {
         item.classList.remove('active');
@@ -2023,10 +2375,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // 加载项目列表
     loadProjects();
 
-    // 加载设置
+    // 加载用户设置
     loadSettings();
 
-    // 自动恢复项目状态
+    // 自动恢复项目状态（页面刷新后）
     if (AppState.currentProject) {
         openProject(AppState.currentProject, { skipPanelSwitch: true }).then(() => {
             showPanel(savedPanel);
@@ -2046,14 +2398,14 @@ document.addEventListener('DOMContentLoaded', () => {
         showPanel('works');
     }
 
-    // 页面卸载时中断所有 pending 的流式请求，防止僵尸进程
+    // 页面卸载时中断所有 pending 的流式请求，防止僵尸连接
     window.addEventListener('beforeunload', () => {
         if (AppState.currentAbortController) {
             AppState.currentAbortController.abort();
         }
     });
 
-    // 温度滑块实时更新
+    // 温度滑块实时更新显示值
     const tempSlider = document.getElementById('setting-temperature');
     const tempValue = document.getElementById('temperature-value');
     if (tempSlider && tempValue) {
@@ -2062,7 +2414,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 绑定顶部菜单按钮
+    // 绑定顶部汉堡菜单（切换侧边栏）
     const topBarIcon = document.querySelector('.top-bar-icon');
     if (topBarIcon) {
         topBarIcon.addEventListener('click', (e) => {
@@ -2089,7 +2441,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 绑定创建项目表单
+    // 绑定创建项目表单提交
     const createForm = document.getElementById('create-project-form');
     if (createForm) {
         createForm.addEventListener('submit', async (e) => {
@@ -2117,7 +2469,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 绑定创建弧线表单
+    // 绑定创建弧线表单提交
     const createArcForm = document.getElementById('create-arc-form');
     if (createArcForm) {
         createArcForm.addEventListener('submit', async (e) => {
@@ -2145,7 +2497,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 绑定初始化按钮
+    // 绑定初始化向导按钮
     const bibleBtn = document.getElementById('generate-bible-btn');
     if (bibleBtn) {
         bibleBtn.addEventListener('click', (e) => {
@@ -2201,7 +2553,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 绑定侧边栏导航
+    // 绑定侧边栏导航点击
     document.querySelectorAll('.sidebar-item').forEach(item => {
         item.addEventListener('click', (e) => {
             e.preventDefault();
@@ -2238,7 +2590,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// 导出全局函数（供HTML内联事件使用）
+// ============================================================
+// 全局函数导出（供 HTML 内联事件处理器调用）
+// ============================================================
+
 window.openProject = openProject;
 window.deleteProject = deleteProject;
 window.openCreateModal = openCreateModal;
@@ -2264,15 +2619,20 @@ window.rewriteScene = rewriteScene;
 window.loadExports = loadExports;
 window.viewExport = viewExport;
 
-// ============================================
+// ============================================================
 // 弧线/章节规划 UI
-// ============================================
+// ============================================================
 
+/**
+ * 打开创建弧线模态框。
+ *
+ * 自动计算建议章节范围：接续已有弧线末尾 +1，默认长度 50 章。
+ */
 async function openCreateArcModal() {
     const modal = document.getElementById('create-arc-modal');
     if (!modal) return;
 
-    // 获取已有弧线列表以计算建议章节范围
+    // 获取已有弧线列表计算建议范围
     let lastEnd = 0;
     try {
         const data = await apiRequest(`/api/projects/${AppState.currentProject}/arcs`);
@@ -2296,6 +2656,9 @@ async function openCreateArcModal() {
     modal.style.display = 'flex';
 }
 
+/**
+ * 关闭创建弧线模态框并重置表单。
+ */
 function closeCreateArcModal() {
     const modal = document.getElementById('create-arc-modal');
     if (modal) modal.style.display = 'none';
@@ -2303,6 +2666,11 @@ function closeCreateArcModal() {
     if (form) form.reset();
 }
 
+/**
+ * 智能提示：基于已有大纲和弧线，为当前弧线推荐名称与描述。
+ *
+ * 调用后端 /arcs/suggest 接口，自动填充到创建弧线模态框。
+ */
 async function suggestArcDetail() {
     if (!AppState.currentProject) return;
     const btn = document.getElementById('arc-suggest-detail-btn');
@@ -2340,6 +2708,16 @@ async function suggestArcDetail() {
     }
 }
 
+/**
+ * 创建弧线并立即生成规划。
+ *
+ * 先创建占位符弧线，成功后调用 generateArc() 触发 LLM 生成完整规划。
+ *
+ * @param {string} title - 弧线名称。
+ * @param {string|number} startChapter - 起始章节。
+ * @param {string|number} endChapter - 结束章节。
+ * @param {string} description - 弧线描述。
+ */
 async function createArc(title, startChapter, endChapter, description) {
     if (!AppState.currentProject) return;
     let arcNumber;
@@ -2355,13 +2733,17 @@ async function createArc(title, startChapter, endChapter, description) {
         arcNumber = result.arc_number;
         showMessage(`弧线 ${arcNumber} 创建成功，开始生成规划...`, 'success');
         await checkArcStatus(AppState.currentProject);
-        // 直接生成完整弧线规划
         await generateArc(arcNumber);
     } catch (error) {
         showMessage('创建弧线失败: ' + error.message, 'error');
     }
 }
 
+/**
+ * 删除弧线（需用户二次确认）。
+ *
+ * @param {number} arcNumber - 弧线序号。
+ */
 async function deleteArc(arcNumber) {
     if (!AppState.currentProject) return;
     if (!confirm(`确定要删除弧线 ${arcNumber} 吗？`)) return;
@@ -2376,6 +2758,12 @@ async function deleteArc(arcNumber) {
     }
 }
 
+/**
+ * 智能推荐下一条弧线。
+ *
+ * 调用后端 /arcs/suggest 接口（无 chapter_range 约束），
+ * 在弧线面板展示推荐卡片，用户可选择"采纳并创建"或"忽略"。
+ */
 async function suggestNextArc() {
     if (!AppState.currentProject) return;
     const btn = document.getElementById('suggest-arc-btn');
@@ -2418,7 +2806,11 @@ async function suggestNextArc() {
 }
 
 /**
- * 生成弧线规划
+ * 生成指定弧线的完整规划。
+ *
+ * 调用后端 /generate/arc 接口，生成完成后刷新弧线列表。
+ *
+ * @param {number} arcNumber - 弧线序号。
  */
 async function generateArc(arcNumber) {
     if (!AppState.currentProject) return;
@@ -2456,7 +2848,11 @@ async function generateArc(arcNumber) {
 }
 
 /**
- * 生成章节规划
+ * 生成指定章节的规划。
+ *
+ * 调用后端 /generate/chapter 接口，成功后刷新写作面板与章节规划面板。
+ *
+ * @param {number} chapterNumber - 章节编号。
  */
 async function generateChapterPlan(chapterNumber) {
     if (!AppState.currentProject) return;
@@ -2487,12 +2883,14 @@ async function generateChapterPlan(chapterNumber) {
     }
 }
 
-// ============================================
+// ============================================================
 // 系统设置
-// ============================================
+// ============================================================
 
 /**
- * 保存设置
+ * 保存用户设置到 localStorage。
+ *
+ * 设置项：apiBase（服务地址）、temperature（生成温度）、retries（最大重试次数）、logLevel（日志级别）。
  */
 function saveSettings() {
     const settings = {
@@ -2506,7 +2904,7 @@ function saveSettings() {
 }
 
 /**
- * 重置设置
+ * 重置所有设置为默认值。
  */
 function resetSettings() {
     const defaults = { apiBase: '', temperature: 0.7, retries: 3, logLevel: 'INFO' };
@@ -2516,7 +2914,7 @@ function resetSettings() {
 }
 
 /**
- * 加载设置
+ * 从 localStorage 加载设置并填充到设置面板表单。
  */
 function loadSettings() {
     const stored = localStorage.getItem('mans_settings');
@@ -2535,10 +2933,20 @@ function loadSettings() {
     if (logLevel) logLevel.value = settings.logLevel || 'INFO';
 }
 
-// ============================================
-// 实时监控（控制台日志）
-// ============================================
+// ============================================================
+// 实时监控（控制台日志 SSE）
+// ============================================================
 
+/**
+ * 控制台状态对象。
+ *
+ * 字段说明：
+ *     logs: 本地缓存的日志条目数组。
+ *     filterLevel: 当前过滤级别（DEBUG/INFO/WARNING/ERROR）。
+ *     connected: 是否已连接到后端 SSE 日志流。
+ *     eventSource: 当前 EventSource 实例。
+ *     autoScroll: 是否自动滚动到底部。
+ */
 const ConsoleState = {
     logs: [],
     filterLevel: 'INFO',
@@ -2547,10 +2955,20 @@ const ConsoleState = {
     autoScroll: true
 };
 
+/**
+ * 日志级别优先级映射（用于过滤判断）。
+ */
 const LOG_LEVEL_ORDER = { 'DEBUG': 0, 'INFO': 1, 'WARNING': 2, 'ERROR': 3 };
 
 /**
- * 向控制台添加日志
+ * 向监控控制台追加一条日志。
+ *
+ * 根据当前过滤级别决定是否隐藏低优先级日志。
+ * 若用户勾选了"自动滚动"，追加后自动滚动到底部。
+ *
+ * @param {string} level - 日志级别。
+ * @param {string} message - 日志消息。
+ * @param {string|null} time - 时间戳（可选，默认当前时间）。
  */
 function appendConsoleLog(level, message, time = null) {
     const timestamp = time || new Date().toLocaleTimeString('zh-CN');
@@ -2584,7 +3002,7 @@ function appendConsoleLog(level, message, time = null) {
 }
 
 /**
- * 清空控制台
+ * 清空监控控制台所有日志。
  */
 function clearConsoleLog() {
     const container = document.getElementById('console-output');
@@ -2593,7 +3011,11 @@ function clearConsoleLog() {
 }
 
 /**
- * 设置日志过滤级别
+ * 设置控制台日志过滤级别。
+ *
+ * 更新 ConsoleState.filterLevel，并遍历现有日志行显示/隐藏。
+ *
+ * @param {string} level - 目标过滤级别（DEBUG/INFO/WARNING/ERROR）。
  */
 function setConsoleFilter(level) {
     ConsoleState.filterLevel = level;
@@ -2611,7 +3033,10 @@ function setConsoleFilter(level) {
 }
 
 /**
- * 更新连接状态UI
+ * 更新控制台连接状态 UI。
+ *
+ * @param {string|null} status - CSS 类名：connected / connecting / error。
+ * @param {string} text - 状态文本。
  */
 function updateConsoleConnection(status, text) {
     const el = document.getElementById('console-connection-status');
@@ -2628,10 +3053,21 @@ function updateConsoleConnection(status, text) {
 }
 
 /**
- * 连接日志流（SSE）
- * 接口: /api/projects/{project_id}/stream/logs
+ * 连接后端日志 SSE 流。
+ *
+ * 首次连接时安装全局错误捕获代理：
+ *     1. 代理 console.error，将前端 JS 错误也显示在监控面板。
+ *     2. 捕获 window.onerror 同步错误。
+ *     3. 捕获 unhandledrejection Promise 拒绝。
+ *
+ * SSE 连接特性：
+ *     - 使用浏览器原生 EventSource（GET 请求，适合只读日志流）。
+ *     - 连接错误时仅报告一次，让浏览器自动重连（EventSource 内置机制）。
+ *     - 心跳由后端通过 ping 事件维持。
+ *
+ * @param {string} level - 初始日志过滤级别，默认 INFO。
  */
-function connectLogStream() {
+function connectLogStream(level = 'INFO') {
     if (!AppState.currentProject) {
         showMessage('请先选择项目', 'warning');
         return;
@@ -2642,7 +3078,7 @@ function connectLogStream() {
         return;
     }
 
-    // 安装全局错误捕获（仅一次）
+    // 首次连接时安装全局错误捕获（仅一次）
     if (!ConsoleState._errorHandlersInstalled) {
         ConsoleState._errorHandlersInstalled = true;
 
@@ -2675,7 +3111,6 @@ function connectLogStream() {
     try {
         updateConsoleConnection('connecting', '连接中...');
 
-        const level = document.getElementById('console-log-level')?.value || 'INFO';
         const base = getApiBase().replace(/\/$/, '');
         const url = base
             ? `${base}/api/projects/${AppState.currentProject}/stream/logs?level=${encodeURIComponent(level)}`
@@ -2702,7 +3137,6 @@ function connectLogStream() {
                     appendConsoleLog('INFO', data.message, data.time);
                 }
             } catch (e) {
-                // 非 JSON 数据直接显示
                 appendConsoleLog('INFO', event.data);
             }
         };
@@ -2740,7 +3174,7 @@ function connectLogStream() {
 }
 
 /**
- * 断开日志流
+ * 断开日志 SSE 流连接。
  */
 function disconnectLogStream() {
     if (ConsoleState.eventSource) {
@@ -2757,14 +3191,15 @@ function disconnectLogStream() {
 }
 
 /**
- * 刷新监控面板（兼容旧调用）
+ * 刷新监控面板（兼容旧调用）。
+ *
+ * 若尚未连接日志流，自动尝试连接；否则追加一条手动刷新标记。
  */
 async function refreshMonitor() {
     if (!AppState.currentProject) {
         showMessage('请先选择项目', 'warning');
         return;
     }
-    // 若尚未连接，自动尝试连接
     if (!ConsoleState.connected) {
         connectLogStream();
     } else {
@@ -2772,6 +3207,7 @@ async function refreshMonitor() {
     }
 }
 
+// 补充导出监控相关函数到 window
 window.generateArc = generateArc;
 window.generateChapterPlan = generateChapterPlan;
 window.saveSettings = saveSettings;
@@ -2781,9 +3217,12 @@ window.createArc = createArc;
 window.deleteArc = deleteArc;
 window.suggestNextArc = suggestNextArc;
 window.rollbackSceneKnowledge = rollbackSceneKnowledge;
+window.startRewrite = startRewrite;
 
 /**
- * 加载 Issues 到 Issue Pool 面板
+ * 加载 Issues 到 Issue Pool 面板。
+ *
+ * 从后端 /issues 接口获取全部 issues，按紧急程度渲染为带颜色边框的卡片列表。
  */
 async function loadIssuesForPanel() {
     if (!AppState.currentProject) {

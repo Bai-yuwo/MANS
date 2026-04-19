@@ -1,16 +1,53 @@
 """
 core/llm_client.py
-LLM 统一调用封装（Ark SDK 版本：使用 OpenAI 兼容的 responses API）
+
+LLM 统一调用封装（Ark SDK 版本：使用 OpenAI 兼容的 responses API）。
+
+职责边界：
+    - 为所有模块提供统一的 LLM 调用接口，外部不直接调用 API。
+    - 当前仅支持 doubao（Ark 平台），通过 OpenAI 兼容的 responses.create() API 调用。
+    - 支持非流式调用（call）和流式调用（stream）两种模式。
+    - 实现速率限制（Token 桶算法）和并发控制（asyncio.Semaphore）。
+    - 提供带重试机制的便捷方法（call_with_retry, stream_with_retry）。
+    - 支持结构化输出（json_schema）和深度思考（thinking 模式）。
+    - 统一异常体系，便于调用方按错误类型处理。
 
 设计原则：
-1. 统一接口：所有 LLM 调用通过此类，外部不直接调用 API
-2. 单一 Provider：当前仅支持 doubao（Ark 平台），其他 Provider 留空
-3. 流式输出：支持 SSE 流式返回，实时推送生成内容
-4. 错误处理：统一异常体系，自动重试机制
-5. 角色化调用：根据角色(writer/generator/trim/extract)自动选择对应模型
-6. 速率限制：Token 桶算法控制并发和速率
-7. 结构化输出：非 writer 角色统一使用 json_schema，writer 角色纯文本输出
-8. 深度思考：所有模型默认开启 thinking（extra_body），不调节 reasoning
+    1. 单一 Provider：当前仅支持 doubao，其他 Provider 留空待扩展。
+    2. 角色化调用：根据角色（writer/generator/trim/extract）自动选择对应模型。
+    3. 结构化输出：非 writer 角色统一使用 json_schema，writer 角色纯文本输出。
+    4. 深度思考：所有模型默认开启 thinking（extra_body），不调节 reasoning 参数。
+    5. 降级策略移除：不再使用模型降级，直接使用 .env 中配置的模型。
+    6. JSON 清洗：多级防御策略清洗 LLM 输出中的 Markdown 代码块、think 标签等污染。
+
+速率限制与并发控制：
+    - RateLimiter: Token 桶算法控制每秒请求数，防止触发厂商限流。
+    - ConcurrencyLimiter: 全局单例信号量限制同时进行的 LLM 调用数量，
+      防止内存/连接池耗尽和网络拥塞。
+
+异常体系：
+    - LLMError: 基类异常，包含 provider 和 model 信息。
+    - LLMAPIError: API 调用异常（网络错误、认证失败等），包含 status_code。
+    - LLMTimeoutError: 调用超时异常。
+    - LLMRateLimitError: 限流异常，包含 retry_after 字段指导重试等待时间。
+
+典型用法：
+    client = LLMClient()
+
+    # 非流式调用（自动重试）
+    response = await client.call_with_retry(
+        role="writer",
+        prompt="生成一段小说开头...",
+        max_tokens=2000,
+        max_retries=3
+    )
+
+    # 流式调用（逐 token 输出）
+    async for token in client.stream(
+        role="writer",
+        prompt="生成一段小说开头..."
+    ):
+        print(token, end="")
 """
 
 import asyncio
@@ -34,14 +71,23 @@ logger = get_logger('core.llm_client')
 
 class RateLimiter:
     """
-    Token 桶速率限制器
+    Token 桶速率限制器。
 
-    用于控制 API 调用速率，防止触发厂商限流
+    用于控制 API 调用速率，防止短时间内过多请求触发厂商限流。
+    令牌桶算法相比固定窗口更平滑，允许一定程度的突发请求。
 
-    使用示例：
-        limiter = RateLimiter(max_requests=10, time_window=1.0)  # 每秒10请求
+    工作原理：
+        - 桶容量 = max_requests，初始满。
+        - 每 time_window 秒 refill max_requests 个令牌。
+        - 每次 acquire() 消耗 1 个令牌，无令牌时计算等待时间。
+
+    使用方式：
         async with limiter:
             await api_call()
+
+    Attributes:
+        max_requests: 时间窗口内最大请求数。
+        time_window: 时间窗口长度（秒）。
     """
 
     def __init__(self, max_requests: int = 10, time_window: float = 1.0):
@@ -52,6 +98,12 @@ class RateLimiter:
         self._lock = asyncio.Lock()
 
     async def acquire(self):
+        """
+        获取一个令牌。若无可用令牌，返回需要等待的时间（秒）。
+
+        Returns:
+            0 表示成功获取令牌；正数表示需要等待的秒数。
+        """
         async with self._lock:
             now = time.time()
             elapsed = now - self.last_update
@@ -70,12 +122,14 @@ class RateLimiter:
                 return 0
 
     async def __aenter__(self):
+        """异步上下文管理器入口：获取令牌，必要时等待。"""
         wait_time = await self.acquire()
         if wait_time > 0:
             await asyncio.sleep(wait_time)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器出口：无需释放令牌（令牌桶已自动管理）。"""
         pass
 
 
@@ -85,12 +139,24 @@ class RateLimiter:
 
 class ConcurrencyLimiter:
     """
-    全局并发限制器（单例模式）
+    全局并发限制器（单例模式）。
 
     限制同时进行的 LLM 调用数量，防止：
-    1. 触发 API 厂商并发限制
-    2. 内存/连接池耗尽
-    3. 网络拥塞
+        1. 触发 API 厂商并发限制。
+        2. 内存/连接池耗尽。
+        3. 网络拥塞。
+
+    单例实现：
+        使用 __new__ 确保全局只有一个实例，即使在多模块导入时。
+        首次初始化后 _initialized 标志防止重复初始化。
+
+    使用方式：
+        async with limiter:
+            await api_call()
+
+    Attributes:
+        max_concurrent: 最大并发数。
+        current_count: 当前并发数（只读属性）。
     """
 
     _instance = None
@@ -113,14 +179,17 @@ class ConcurrencyLimiter:
         logger.info(f"并发限制器初始化：最大并发 {max_concurrent}")
 
     async def __aenter__(self):
+        """获取信号量，进入并发保护区域。"""
         await self.semaphore.acquire()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """释放信号量，退出并发保护区域。"""
         self.semaphore.release()
 
     @property
     def current_count(self) -> int:
+        """当前正在进行的 LLM 调用数量。"""
         return self.max_concurrent - self.semaphore._value
 
 
@@ -129,7 +198,13 @@ class ConcurrencyLimiter:
 # ============================================================
 
 class LLMError(Exception):
-    """LLM 调用基础异常"""
+    """
+    LLM 调用基础异常。
+
+    Attributes:
+        provider: 发生异常的 Provider 名称。
+        model: 发生异常的模型名称。
+    """
     def __init__(self, message: str, provider: str = "", model: str = ""):
         super().__init__(message)
         self.provider = provider
@@ -137,19 +212,29 @@ class LLMError(Exception):
 
 
 class LLMAPIError(LLMError):
-    """API 调用异常（网络/认证/限流等）"""
+    """
+    API 调用异常（网络错误、认证失败、服务器错误等）。
+
+    Attributes:
+        status_code: HTTP 状态码（如 401/429/500）。
+    """
     def __init__(self, message: str, status_code: int = 0, **kwargs):
         super().__init__(message, **kwargs)
         self.status_code = status_code
 
 
 class LLMTimeoutError(LLMError):
-    """调用超时异常"""
+    """调用超时异常（连接超时或读取超时）。"""
     pass
 
 
 class LLMRateLimitError(LLMError):
-    """限流异常"""
+    """
+    限流异常（API 返回 429 状态码）。
+
+    Attributes:
+        retry_after: 建议等待秒数后再重试。
+    """
     def __init__(self, message: str, retry_after: int = 60, **kwargs):
         super().__init__(message, **kwargs)
         self.retry_after = retry_after
@@ -161,7 +246,18 @@ class LLMRateLimitError(LLMError):
 
 @dataclass
 class LLMResponse:
-    """LLM 响应封装"""
+    """
+    LLM 响应封装。
+
+    统一所有 LLM 调用的返回格式，便于调用方统一处理。
+
+    Attributes:
+        content: 生成的文本内容（已清洗 JSON 污染）。
+        model: 实际使用的模型名称。
+        provider: 使用的 Provider 名称。
+        usage: Token 使用统计字典（prompt_tokens/completion_tokens/total_tokens）。
+        finish_reason: 生成结束原因（如"stop"/"length"，部分 Provider 可能为空）。
+    """
     content: str                        # 生成的文本内容
     model: str                          # 实际使用的模型
     provider: str                       # 使用的 Provider
@@ -174,7 +270,16 @@ class LLMResponse:
 # ============================================================
 
 class TokenCounter:
-    """Token 计数工具"""
+    """
+    Token 计数工具。
+
+    基于 tiktoken 库实现，使用 cl100k_base 编码器（与 GPT-4/Claude 兼容）。
+    注意：不同 Provider 的 tokenizer 可能不同，cl100k_base 只是近似估计。
+
+    使用方式：
+        counter = TokenCounter()
+        token_count = counter.count("这是一段中文文本")
+    """
 
     ENCODER_MAP = {
         "doubao": "cl100k_base",
@@ -193,11 +298,31 @@ class TokenCounter:
             self.encoder = tiktoken.get_encoding("cl100k_base")
 
     def count(self, text: str) -> int:
+        """
+        计算文本的 token 数量。
+
+        Args:
+            text: 输入文本。
+
+        Returns:
+            Token 数量整数。空文本返回 0。
+        """
         if not text:
             return 0
         return len(self.encoder.encode(text))
 
     def count_messages(self, messages: list[dict]) -> int:
+        """
+        计算消息列表的总 token 数量。
+
+        每条消息额外加 4 个 token（OpenAI 的消息格式开销）。
+
+        Args:
+            messages: OpenAI 格式的消息列表（{"role": "...", "content": "..."}）。
+
+        Returns:
+            总 token 数量。
+        """
         total = 0
         for msg in messages:
             content = msg.get("content", "")
@@ -212,25 +337,23 @@ class TokenCounter:
 
 class LLMClient:
     """
-    LLM 统一调用客户端（Ark SDK 版本）
+    LLM 统一调用客户端（Ark SDK 版本）。
 
-    使用示例：
+    核心能力：
+        1. 角色化模型选择：根据 role 自动从配置中选取对应模型。
+        2. 速率限制：通过 RateLimiter 控制每秒请求数。
+        3. 并发控制：通过 ConcurrencyLimiter 限制同时调用数。
+        4. JSON 清洗：多级防御清洗 LLM 输出中的格式污染。
+        5. 结构化输出：非 writer 角色自动使用 json_schema。
+        6. 深度思考：所有调用默认开启 thinking 模式。
+
+    Provider 支持：
+        当前仅支持 doubao（Ark 平台），通过 OpenAI 兼容接口调用。
+        初始化时检查 ACTIVE_PROVIDER，非 doubao 时抛出 NotImplementedError。
+
+    使用方式：
         client = LLMClient()
-
-        # 非流式调用（自动重试）
-        response = await client.call_with_retry(
-            role="writer",
-            prompt="生成一段小说开头...",
-            max_tokens=2000,
-            max_retries=3
-        )
-
-        # 流式调用（自动重试）
-        async for token in client.stream_with_retry(
-            role="writer",
-            prompt="生成一段小说开头..."
-        ):
-            print(token, end="")
+        response = await client.call_with_retry(role="writer", prompt="...")
     """
 
     DEFAULT_RATE_LIMIT = 10
@@ -243,14 +366,22 @@ class LLMClient:
     @staticmethod
     def _clean_json_content(content: str) -> str:
         """
-        JSON 清洗（多级防御）
+        JSON 清洗（多级防御）。
 
-        清洗策略：
-        1. 去除前后空白字符和 BOM
-        2. 去除 Markdown 代码块包裹
-        3. 去除推理模型 <think> 标签
-        4. 强力截取 JSON 主体
-        5. 去除尾部可能污染 JSON 的逗号
+        清洗策略（按优先级）：
+            1. 去除前后空白字符和 UTF-8 BOM。
+            2. 去除 Markdown 代码块包裹（```json ... ```）。
+            3. 去除推理模型 <think> 标签内容。
+            4. 强力截取：寻找文本中第一个 { 或 [ 到最后一个 } 或 ]，提取 JSON 主体。
+            5. 去除尾部可能污染 JSON 的逗号。
+
+        无论底层是否使用结构化参数，解析前都建议过此清洗。
+
+        Args:
+            content: LLM 返回的原始文本。
+
+        Returns:
+            清洗后的字符串，更适合 json.loads() 解析。
         """
         text = content.strip()
         text = text.lstrip('\ufeff')
@@ -289,6 +420,16 @@ class LLMClient:
     def __init__(self,
                  rate_limit: Optional[int] = None,
                  concurrent_limit: Optional[int] = None):
+        """
+        初始化 LLMClient。
+
+        Args:
+            rate_limit: 每秒最大请求数（覆盖默认值 10）。
+            concurrent_limit: 最大并发数（覆盖默认值 5）。
+
+        Raises:
+            NotImplementedError: 当 ACTIVE_PROVIDER 不是 doubao 时抛出。
+        """
         self.config = get_config()
         self.token_counters: dict[str, TokenCounter] = {}
 
@@ -318,6 +459,11 @@ class LLMClient:
         )
 
     def _get_rate_limiter(self, provider_name: str) -> RateLimiter:
+        """
+        获取指定 Provider 的 RateLimiter（懒加载）。
+
+        每个 Provider 有独立的 RateLimiter，避免不同 Provider 的限流策略互相影响。
+        """
         if provider_name not in self.__class__._rate_limiters:
             self.__class__._rate_limiters[provider_name] = RateLimiter(
                 max_requests=self.rate_limit,
@@ -326,12 +472,13 @@ class LLMClient:
         return self.__class__._rate_limiters[provider_name]
 
     def _get_token_counter(self, provider: str) -> TokenCounter:
+        """获取指定 Provider 的 TokenCounter（懒加载）。"""
         if provider not in self.token_counters:
             self.token_counters[provider] = TokenCounter(provider)
         return self.token_counters[provider]
 
     def _build_input(self, system_prompt: str, prompt: str) -> list[dict]:
-        """构建 input 数组，所有模型都使用 system 角色"""
+        """构建 input 数组，所有模型都使用 system + user 角色。"""
         messages = [{"role": "system", "content": system_prompt}]
         messages.append({"role": "user", "content": prompt})
         return messages
@@ -346,7 +493,14 @@ class LLMClient:
         temperature: float,
         json_schema: Optional[dict] = None,
     ) -> dict:
-        """构建 responses.create 的 kwargs"""
+        """
+        构建 responses.create 的 kwargs 字典。
+
+        核心逻辑：
+            - 所有调用默认开启 thinking 模式（extra_body={"thinking": {"type": "enabled"}}）。
+            - 非 writer 角色且传入 json_schema 时，启用结构化输出（text.format.type="json_schema"）。
+            - writer 角色不使用结构化输出，返回纯文本。
+        """
         kwargs = {
             "model": model,
             "input": self._build_input(system_prompt, prompt),
@@ -382,22 +536,28 @@ class LLMClient:
         total_timeout: int = 600,
     ) -> LLMResponse:
         """
-        非流式调用 LLM（带速率限制和并发控制）
+        非流式调用 LLM（带速率限制和并发控制）。
+
+        调用流程：
+            1. 根据 role 从配置获取对应模型。
+            2. 若 response_format="json_schema" 但没传 schema，忽略结构化输出。
+            3. 获取 RateLimiter 和 ConcurrencyLimiter。
+            4. 在双重保护下执行实际调用（_call_impl）。
 
         Args:
-            role: 角色（writer/generator/trim/extract/embed）
-            prompt: 用户提示词
-            system_prompt: 系统提示词
-            max_tokens: 最大生成 token 数
-            temperature: 温度参数
-            response_format: 响应格式（保留参数但不再用于降级，仅作为 json_schema 开关）
-            json_schema: JSON Schema 定义
-            connect_timeout: 连接超时（保留参数，由 SDK 内部处理）
-            sock_read_timeout: 读取超时（保留参数，由 SDK 内部处理）
-            total_timeout: 总超时（保留参数，由 SDK 内部处理）
+            role: 角色（writer/generator/trim/extract/embed）。
+            prompt: 用户提示词。
+            system_prompt: 系统提示词。
+            max_tokens: 最大生成 token 数。
+            temperature: 温度参数（0-1）。
+            response_format: 响应格式（保留参数，仅作为 json_schema 开关）。
+            json_schema: JSON Schema 定义（非 writer 角色使用）。
+            connect_timeout: 连接超时（保留参数，由 SDK 内部处理）。
+            sock_read_timeout: 读取超时（保留参数，由 SDK 内部处理）。
+            total_timeout: 总超时（保留参数，由 SDK 内部处理）。
 
         Returns:
-            LLMResponse 对象
+            LLMResponse 对象，包含清洗后的 content。
         """
         model, provider = self.config.get_model_for_role(role)
 
@@ -431,7 +591,12 @@ class LLMClient:
         temperature: float = 0.7,
         json_schema: Optional[dict] = None,
     ) -> LLMResponse:
-        """实际的 LLM 调用实现（非流式）"""
+        """
+        实际的 LLM 调用实现（非流式）。
+
+        直接调用 Ark SDK 的 responses.create() 方法，处理响应并清洗内容。
+        所有异常被转换为 LLMError 子类，便于调用方统一处理。
+        """
         kwargs = self._build_call_kwargs(
             role=role,
             model=model,
@@ -527,21 +692,30 @@ class LLMClient:
         total_timeout: int = 600,
     ) -> AsyncIterator[str]:
         """
-        流式调用 LLM
+        流式调用 LLM。
+
+        与 call() 的区别：
+            - 通过 stream=True 启用 SSE 流式输出。
+            - 逐 token yield 给调用方，便于实时展示生成进度。
+            - 生成完成后不返回完整响应，仅 yield token。
+
+        事件处理：
+            只处理 type="response.output_text.delta" 的事件，提取 delta 字段 yield。
+            其他事件（如 thinking 进度）被忽略。
 
         Args:
-            role: 角色（writer/generator/trim/extract/embed）
-            prompt: 用户提示词
-            system_prompt: 系统提示词
-            max_tokens: 最大生成 token 数
-            temperature: 温度参数
-            json_schema: JSON Schema 定义（非 writer 角色使用结构化输出）
-            connect_timeout: 连接超时（保留参数）
-            sock_read_timeout: 读取超时（保留参数）
-            total_timeout: 总超时（保留参数）
+            role: 角色。
+            prompt: 用户提示词。
+            system_prompt: 系统提示词。
+            max_tokens: 最大生成 token 数。
+            temperature: 温度参数。
+            json_schema: JSON Schema 定义（非 writer 角色使用结构化输出）。
+            connect_timeout: 连接超时（保留参数）。
+            sock_read_timeout: 读取超时（保留参数）。
+            total_timeout: 总超时（保留参数）。
 
         Yields:
-            生成的文本片段
+            生成的文本片段（token）。
         """
         model, provider = self.config.get_model_for_role(role)
 
@@ -572,7 +746,12 @@ class LLMClient:
         temperature: float = 0.7,
         json_schema: Optional[dict] = None,
     ) -> AsyncIterator[str]:
-        """实际的流式 LLM 调用实现"""
+        """
+        实际的流式 LLM 调用实现。
+
+        通过 responses.create(stream=True) 获取事件流，
+        逐事件处理并 yield text delta。
+        """
         kwargs = self._build_call_kwargs(
             role=role,
             model=model,
@@ -663,17 +842,25 @@ class LLMClient:
         **kwargs
     ) -> LLMResponse:
         """
-        带重试机制的 LLM 调用
+        带重试机制的 LLM 调用。
+
+        重试策略：
+            - LLMRateLimitError: 等待服务端建议的 retry_after 秒，然后重试。
+            - LLMAPIError / LLMTimeoutError: 指数退避（retry_delay * 2^attempt），然后重试。
+            - 其他异常: 不重试，直接抛出。
 
         Args:
-            role: 角色
-            prompt: 提示词
-            max_retries: 最大重试次数
-            retry_delay: 重试间隔（秒）
-            **kwargs: 其他参数传递给 call()
+            role: 角色。
+            prompt: 提示词。
+            max_retries: 最大重试次数（默认 3）。
+            retry_delay: 基础重试间隔（默认 1.0 秒）。
+            **kwargs: 其他参数传递给 call()。
 
         Returns:
-            LLMResponse 对象
+            LLMResponse 对象。
+
+        Raises:
+            LLMError: 重试耗尽后抛出最后一次异常。
         """
         last_error = None
 
@@ -714,17 +901,20 @@ class LLMClient:
         **kwargs
     ) -> AsyncIterator[str]:
         """
-        带重试机制的流式 LLM 调用
+        带重试机制的流式 LLM 调用。
+
+        重试策略与 call_with_retry() 相同，但针对流式调用优化：
+            流式调用失败后，下一次重试从头开始生成，调用方需要处理重复内容。
 
         Args:
-            role: 角色
-            prompt: 提示词
-            max_retries: 最大重试次数
-            retry_delay: 重试间隔（秒）
-            **kwargs: 其他参数传递给 stream()
+            role: 角色。
+            prompt: 提示词。
+            max_retries: 最大重试次数。
+            retry_delay: 基础重试间隔。
+            **kwargs: 其他参数传递给 stream()。
 
         Yields:
-            生成的文本片段
+            生成的文本片段。
         """
         last_error = None
 
@@ -761,14 +951,14 @@ class LLMClient:
 
     def count_tokens(self, text: str, provider_name: Optional[str] = None) -> int:
         """
-        计算文本的 token 数量
+        计算文本的 token 数量。
 
         Args:
-            text: 要计算的文本
-            provider_name: Provider 名称（为空则使用当前激活的 Provider）
+            text: 要计算的文本。
+            provider_name: Provider 名称（为空则使用当前激活的 Provider）。
 
         Returns:
-            Token 数量
+            Token 数量。
         """
         if provider_name is None:
             provider_name = self.config.ACTIVE_PROVIDER
@@ -788,16 +978,18 @@ async def quick_call(
     **kwargs
 ) -> str:
     """
-    快速调用 LLM（带自动重试），返回文本内容
+    快速调用 LLM（带自动重试），返回文本内容。
+
+    便捷函数，无需手动创建 LLMClient 实例，直接调用并返回 content 字符串。
 
     Args:
-        role: 角色
-        prompt: 提示词
-        max_retries: 最大重试次数，默认 3
-        **kwargs: 其他参数
+        role: 角色。
+        prompt: 提示词。
+        max_retries: 最大重试次数，默认 3。
+        **kwargs: 其他参数传递给 call_with_retry()。
 
     Returns:
-        生成的文本
+        生成的文本字符串。
     """
     client = LLMClient()
     response = await client.call_with_retry(role, prompt, max_retries=max_retries, **kwargs)
@@ -811,16 +1003,18 @@ async def quick_stream(
     **kwargs
 ) -> AsyncIterator[str]:
     """
-    快速流式调用 LLM（带自动重试）
+    快速流式调用 LLM（带自动重试）。
+
+    便捷函数，无需手动创建 LLMClient 实例，直接调用并 yield token。
 
     Args:
-        role: 角色
-        prompt: 提示词
-        max_retries: 最大重试次数，默认 3
-        **kwargs: 其他参数
+        role: 角色。
+        prompt: 提示词。
+        max_retries: 最大重试次数，默认 3。
+        **kwargs: 其他参数传递给 stream_with_retry()。
 
     Yields:
-        生成的文本片段
+        生成的文本片段。
     """
     client = LLMClient()
     async for token in client.stream_with_retry(role, prompt, max_retries=max_retries, **kwargs):

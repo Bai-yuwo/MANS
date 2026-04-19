@@ -2,14 +2,17 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
+    <!-- 视口设置：确保在移动设备上正确缩放 -->
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
     <title>MANS</title>
     <link href="/frontend/styles.css" rel="stylesheet">
 </head>
 <body>
-    <!-- 上边栏 -->
+    <!-- ================= 顶部导航栏 ================= -->
+    <!-- 固定定位，高度 60px，包含菜单按钮、系统标题、当前项目名称和返回按钮 -->
     <div class="top-bar">
         <div class="top-bar-left">
+            <!-- 菜单切换按钮：控制侧边栏展开/折叠 -->
             <div class="top-bar-icon" title="菜单">
                 <svg viewBox="0 0 24 24">
                     <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
@@ -18,9 +21,11 @@
             <div class="top-bar-title">MANS 创作助手</div>
         </div>
         <div class="top-bar-center">
+            <!-- 当前选中项目的名称，超长时省略号截断 -->
             <span class="top-bar-project-name" id="current-project-name"></span>
         </div>
         <div class="top-bar-right" id="top-bar-project">
+            <!-- 返回作品列表按钮：仅在进入项目后显示 -->
             <button class="mans-btn sm" id="back-to-works-btn" title="返回作品列表">
                 <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;">
                     <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
@@ -30,9 +35,10 @@
         </div>
     </div>
 
-    <!-- 主容器 -->
+    <!-- ================= 主容器 ================= -->
     <div class="main-container">
-        <!-- 左侧边栏 -->
+        <!-- 左侧边栏导航 -->
+        <!-- data-panel 属性对应内容面板的 ID，data-requires-project 表示需要选中项目才能访问 -->
         <div class="sidebar">
             <ul class="sidebar-menu">
                 <li class="sidebar-item active" data-panel="works">
@@ -80,9 +86,10 @@
             </ul>
         </div>
 
-        <!-- 内容区域 -->
+        <!-- ================= 内容区域 ================= -->
+        <!-- 所有面板默认隐藏，通过 JavaScript 切换 .active 类显示对应面板 -->
         <div class="content-area">
-            <!-- 作品创作面板 -->
+            <!-- 作品创作面板：项目列表 + 创建模态框 -->
             <div class="content-panel active" id="works-panel">
                 <div class="works-toolbar">
                     <h2>我的作品</h2>
@@ -95,12 +102,12 @@
                 </div>
                 <div id="works-content">
                     <div id="project-list" class="project-grid">
-                        <!-- 项目列表将动态加载 -->
+                        <!-- 项目列表由 JavaScript 动态加载渲染 -->
                     </div>
                 </div>
             </div>
 
-            <!-- 创建项目模态框 -->
+            <!-- 创建项目模态框：包含完整的作品信息表单 -->
             <div id="create-project-modal" class="modal" style="display: none;">
                 <div class="modal-content">
                     <div class="modal-header">
@@ -161,7 +168,7 @@
                 </div>
             </div>
 
-            <!-- 初始化流程面板 -->
+            <!-- 初始化流程面板：三步向导（Bible → 人物 → 大纲） -->
             <div class="content-panel" id="initialization-panel">
                 <h3 class="panel-title">初始化流程</h3>
                 <div class="init-steps">
@@ -200,7 +207,7 @@
                 <button id="enter-writing-btn" class="mans-btn primary" style="display: none; margin-top: 20px;">进入写作</button>
             </div>
 
-            <!-- 弧线规划面板 -->
+            <!-- 弧线规划面板：弧线列表 + 创建模态框 -->
             <div class="content-panel" id="arc-panel">
                 <h3 class="panel-title">弧线规划</h3>
                 <div class="panel-content">
@@ -227,7 +234,7 @@
                         </div>
                         <div id="arc-suggest-result" style="display:none;margin-bottom:16px;"></div>
                         <div class="arc-grid" id="arc-list-dynamic">
-                            <!-- 动态加载弧线列表 -->
+                            <!-- 弧线列表由 JavaScript 动态加载 -->
                         </div>
                     </div>
                 </div>
@@ -272,7 +279,7 @@
                 </div>
             </div>
 
-            <!-- 章节规划面板 -->
+            <!-- 章节规划面板：章节编号输入 + 规划结果展示 -->
             <div class="content-panel" id="chapter-plan-panel">
                 <h3 class="panel-title">章节规划</h3>
                 <div class="panel-content">
@@ -289,13 +296,13 @@
                             <button class="mans-btn primary" onclick="generateChapterPlan(parseInt(document.getElementById('chapter-plan-number').value))">生成章节规划</button>
                         </div>
                         <div id="chapter-plan-result" class="chapter-plan-result">
-                            <!-- 章节规划结果将动态显示 -->
+                            <!-- 章节规划结果由 JavaScript 动态渲染 -->
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Issue Pool 面板 -->
+            <!-- Issue Pool 面板：问题追踪与审查 -->
             <div class="content-panel" id="issues-panel">
                 <h3 class="panel-title">Issue Pool</h3>
                 <div class="panel-content">
@@ -310,13 +317,13 @@
                             <button class="mans-btn" onclick="loadIssuesForPanel()">刷新</button>
                         </div>
                         <div id="issues-panel-list" class="monitor-section-content">
-                            <!-- Issues 动态加载 -->
+                            <!-- Issues 列表由 JavaScript 动态加载 -->
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 写作面板 -->
+            <!-- 写作面板：场景生成、编辑、确认的核心工作区 -->
             <div class="content-panel" id="writing-panel">
                 <div id="writing-empty" class="panel-empty">
                     <svg class="panel-empty-icon" viewBox="0 0 24 24" fill="currentColor">
@@ -335,12 +342,12 @@
                     </div>
                     <div id="exports-panel" class="exports-panel" style="display:none;"></div>
                     <div id="chapter-plan-display" class="chapter-content">
-                        <!-- 章节规划将动态加载 -->
+                        <!-- 章节规划和场景内容由 JavaScript 动态加载 -->
                     </div>
                 </div>
             </div>
 
-            <!-- 知识库面板 -->
+            <!-- 知识库面板：世界观、人物、伏笔等数据的只读展示 -->
             <div class="content-panel" id="knowledge-panel">
                 <h3 class="panel-title">知识库</h3>
                 <div class="panel-content">
@@ -352,13 +359,13 @@
                     </div>
                     <div id="knowledge-content" style="display: none;">
                         <div id="knowledge-display">
-                            <!-- 知识库内容将动态加载 -->
+                            <!-- 知识库内容由 JavaScript 动态加载 -->
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 系统设置面板 -->
+            <!-- 系统设置面板：API 地址、温度、重试次数等配置 -->
             <div class="content-panel" id="settings-panel">
                 <h3 class="panel-title">系统设置</h3>
                 <div class="panel-content">
@@ -393,7 +400,7 @@
                 </div>
             </div>
 
-            <!-- 实时监控面板 -->
+            <!-- 实时监控面板：SSE 日志流展示 -->
             <div class="content-panel" id="monitor-panel">
                 <h3 class="panel-title">实时监控</h3>
                 <div class="panel-content">
@@ -436,293 +443,298 @@
         </div>
     </div>
 
-<!-- 流式输出面板组件 -->
-<style>
-/* 流式输出面板样式 - 独立配色，玻璃拟态风格 */
-.streaming-panel {
-    position: fixed;
-    right: 20px;
-    bottom: 20px;
-    width: 580px;
-    max-height: 520px;
-    background: rgba(15, 23, 42, 0.95);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    border-radius: 12px;
-    box-shadow:
-        0 0 0 1px rgba(99, 102, 241, 0.1),
-        0 8px 32px rgba(0, 0, 0, 0.4),
-        0 2px 8px rgba(0, 0, 0, 0.2),
-        inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    z-index: 9999;
-    display: none;
-    flex-direction: column;
-    overflow: hidden;
-}
-
-.streaming-panel.active {
-    display: flex;
-    animation: panelSlideIn 0.3s ease;
-}
-
-@keyframes panelSlideIn {
-    from {
-        opacity: 0;
-        transform: translateY(20px) scale(0.95);
+    <!-- ================= 流式输出浮层组件 ================= -->
+    <!-- 固定定位在右下角，玻璃拟态风格，用于展示 AI 生成过程的实时流式输出 -->
+    <style>
+    /* 流式输出面板样式 - 独立配色，玻璃拟态风格 */
+    .streaming-panel {
+        position: fixed;
+        right: 20px;
+        bottom: 20px;
+        width: 580px;
+        max-height: 520px;
+        background: rgba(15, 23, 42, 0.95);
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        border-radius: 12px;
+        box-shadow:
+            0 0 0 1px rgba(99, 102, 241, 0.1),
+            0 8px 32px rgba(0, 0, 0, 0.4),
+            0 2px 8px rgba(0, 0, 0, 0.2),
+            inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        z-index: 9999;
+        display: none;
+        flex-direction: column;
+        overflow: hidden;
     }
-    to {
-        opacity: 1;
-        transform: translateY(0) scale(1);
+
+    .streaming-panel.active {
+        display: flex;
+        animation: panelSlideIn 0.3s ease;
     }
-}
 
-.streaming-panel-header {
-    padding: 14px 16px;
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(79, 70, 229, 0.2) 100%);
-    border-bottom: 1px solid rgba(99, 102, 241, 0.2);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
+    @keyframes panelSlideIn {
+        from {
+            opacity: 0;
+            transform: translateY(20px) scale(0.95);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+    }
 
-.streaming-panel-title {
-    font-weight: 600;
-    font-size: 14px;
-    color: #e2e8f0;
-    letter-spacing: 0.3px;
-}
+    .streaming-panel-header {
+        padding: 14px 16px;
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(79, 70, 229, 0.2) 100%);
+        border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
 
-.streaming-panel-close {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
-    cursor: pointer;
-    font-size: 18px;
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    transition: all 0.2s;
-    line-height: 1;
-}
+    .streaming-panel-title {
+        font-weight: 600;
+        font-size: 14px;
+        color: #e2e8f0;
+        letter-spacing: 0.3px;
+    }
 
-.streaming-panel-close:hover {
-    background: rgba(239, 68, 68, 0.3);
-    border-color: rgba(239, 68, 68, 0.5);
-    color: #fecaca;
-}
+    .streaming-panel-close {
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        color: #fca5a5;
+        cursor: pointer;
+        font-size: 18px;
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        transition: all 0.2s;
+        line-height: 1;
+    }
 
-.streaming-panel-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
-    background: rgba(15, 23, 42, 0.6);
-    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-    font-size: 13px;
-    line-height: 1.7;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(99, 102, 241, 0.4) transparent;
-}
+    .streaming-panel-close:hover {
+        background: rgba(239, 68, 68, 0.3);
+        border-color: rgba(239, 68, 68, 0.5);
+        color: #fecaca;
+    }
 
-.streaming-panel-body::-webkit-scrollbar {
-    width: 6px;
-}
+    .streaming-panel-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+        background: rgba(15, 23, 42, 0.6);
+        font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+        font-size: 13px;
+        line-height: 1.7;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(99, 102, 241, 0.4) transparent;
+    }
 
-.streaming-panel-body::-webkit-scrollbar-track {
-    background: transparent;
-}
+    .streaming-panel-body::-webkit-scrollbar {
+        width: 6px;
+    }
 
-.streaming-panel-body::-webkit-scrollbar-thumb {
-    background: rgba(99, 102, 241, 0.4);
-    border-radius: 3px;
-}
+    .streaming-panel-body::-webkit-scrollbar-track {
+        background: transparent;
+    }
 
-.streaming-panel-body::-webkit-scrollbar-thumb:hover {
-    background: rgba(99, 102, 241, 0.6);
-}
+    .streaming-panel-body::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.4);
+        border-radius: 3px;
+    }
 
-.streaming-panel-footer {
-    padding: 12px 16px;
-    border-top: 1px solid rgba(99, 102, 241, 0.15);
-    background: rgba(15, 23, 42, 0.8);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
+    .streaming-panel-body::-webkit-scrollbar-thumb:hover {
+        background: rgba(99, 102, 241, 0.6);
+    }
 
-.streaming-status {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    color: #94a3b8;
-}
+    .streaming-panel-footer {
+        padding: 12px 16px;
+        border-top: 1px solid rgba(99, 102, 241, 0.15);
+        background: rgba(15, 23, 42, 0.8);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
 
-.streaming-status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #22c55e;
-    box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
-    animation: statusPulse 2s ease-in-out infinite;
-}
+    .streaming-status {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        color: #94a3b8;
+    }
 
-@keyframes statusPulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.7; transform: scale(0.9); }
-}
+    /* 状态指示圆点：生成中脉冲动画，错误/完成时静态变色 */
+    .streaming-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+        animation: statusPulse 2s ease-in-out infinite;
+    }
 
-.streaming-status-dot.error {
-    background: #ef4444;
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
-    animation: none;
-}
+    @keyframes statusPulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.7; transform: scale(0.9); }
+    }
 
-.streaming-status-dot.complete {
-    background: #3b82f6;
-    box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
-    animation: none;
-}
+    .streaming-status-dot.error {
+        background: #ef4444;
+        box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+        animation: none;
+    }
 
-.streaming-actions {
-    display: flex;
-    gap: 10px;
-}
+    .streaming-status-dot.complete {
+        background: #3b82f6;
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+        animation: none;
+    }
 
-.btn-streaming {
-    padding: 8px 16px;
-    border: 1px solid rgba(99, 102, 241, 0.4);
-    border-radius: 6px;
-    background: rgba(99, 102, 241, 0.15);
-    color: #c7d2fe;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.2s;
-    min-width: 80px;
-}
+    .streaming-actions {
+        display: flex;
+        gap: 10px;
+    }
 
-.btn-streaming:hover {
-    background: rgba(99, 102, 241, 0.25);
-    border-color: rgba(99, 102, 241, 0.6);
-    color: #e0e7ff;
-}
+    .btn-streaming {
+        padding: 8px 16px;
+        border: 1px solid rgba(99, 102, 241, 0.4);
+        border-radius: 6px;
+        background: rgba(99, 102, 241, 0.15);
+        color: #c7d2fe;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        transition: all 0.2s;
+        min-width: 80px;
+    }
 
-.btn-streaming:active {
-    transform: scale(0.97);
-}
+    .btn-streaming:hover {
+        background: rgba(99, 102, 241, 0.25);
+        border-color: rgba(99, 102, 241, 0.6);
+        color: #e0e7ff;
+    }
 
-.btn-streaming:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-    transform: none;
-}
+    .btn-streaming:active {
+        transform: scale(0.97);
+    }
 
-.btn-streaming.close-btn {
-    background: rgba(100, 116, 139, 0.15);
-    border-color: rgba(100, 116, 139, 0.4);
-    color: #94a3b8;
-}
+    .btn-streaming:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+        transform: none;
+    }
 
-.btn-streaming.close-btn:hover {
-    background: rgba(100, 116, 139, 0.25);
-    border-color: rgba(100, 116, 139, 0.6);
-    color: #cbd5e1;
-}
+    .btn-streaming.close-btn {
+        background: rgba(100, 116, 139, 0.15);
+        border-color: rgba(100, 116, 139, 0.4);
+        color: #94a3b8;
+    }
 
-.streaming-log {
-    margin-bottom: 10px;
-    padding: 10px 12px;
-    border-radius: 6px;
-    background: rgba(30, 41, 59, 0.6);
-    border-left: 3px solid #6366f1;
-    transition: background 0.2s;
-}
+    .btn-streaming.close-btn:hover {
+        background: rgba(100, 116, 139, 0.25);
+        border-color: rgba(100, 116, 139, 0.6);
+        color: #cbd5e1;
+    }
 
-.streaming-log:hover {
-    background: rgba(30, 41, 59, 0.8);
-}
+    /* 流式日志条目：按类型区分左边框颜色 */
+    .streaming-log {
+        margin-bottom: 10px;
+        padding: 10px 12px;
+        border-radius: 6px;
+        background: rgba(30, 41, 59, 0.6);
+        border-left: 3px solid #6366f1;
+        transition: background 0.2s;
+    }
 
-.streaming-log.progress {
-    border-left-color: #eab308;
-}
+    .streaming-log:hover {
+        background: rgba(30, 41, 59, 0.8);
+    }
 
-.streaming-log.token {
-    border-left-color: #22c55e;
-    background: rgba(30, 41, 59, 0.8);
-    white-space: pre-wrap;
-    word-break: break-word;
-}
+    .streaming-log.progress {
+        border-left-color: #eab308;
+    }
 
-.streaming-log.error {
-    border-left-color: #ef4444;
-    background: rgba(239, 68, 68, 0.1);
-}
+    .streaming-log.token {
+        border-left-color: #22c55e;
+        background: rgba(30, 41, 59, 0.8);
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
 
-.streaming-log.complete {
-    border-left-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.1);
-}
+    .streaming-log.error {
+        border-left-color: #ef4444;
+        background: rgba(239, 68, 68, 0.1);
+    }
 
-.streaming-log-time {
-    font-size: 11px;
-    color: #64748b;
-    margin-bottom: 4px;
-    font-family: 'JetBrains Mono', monospace;
-}
+    .streaming-log.complete {
+        border-left-color: #3b82f6;
+        background: rgba(59, 130, 246, 0.1);
+    }
 
-.streaming-log-content {
-    color: #e2e8f0;
-    line-height: 1.6;
-}
+    .streaming-log-time {
+        font-size: 11px;
+        color: #64748b;
+        margin-bottom: 4px;
+        font-family: 'JetBrains Mono', monospace;
+    }
 
-/* 进度条动画 */
-.streaming-log.progress .streaming-log-content {
-    color: #fcd34d;
-}
+    .streaming-log-content {
+        color: #e2e8f0;
+        line-height: 1.6;
+    }
 
-/* Token 输出 - 更亮的文字 */
-.streaming-log.token .streaming-log-content {
-    color: #f1f5f9;
-}
+    /* 进度条动画：金色文字 */
+    .streaming-log.progress .streaming-log-content {
+        color: #fcd34d;
+    }
 
-/* 错误状态 - 红色文字 */
-.streaming-log.error .streaming-log-content {
-    color: #fca5a5;
-}
+    /* Token 输出：更亮的文字 */
+    .streaming-log.token .streaming-log-content {
+        color: #f1f5f9;
+    }
 
-/* 完成状态 - 蓝色文字 */
-.streaming-log.complete .streaming-log-content {
-    color: #93c5fd;
-}
-</style>
+    /* 错误状态：红色文字 */
+    .streaming-log.error .streaming-log-content {
+        color: #fca5a5;
+    }
 
-<div id="streaming-panel" class="streaming-panel">
-    <div class="streaming-panel-header">
-        <span class="streaming-panel-title" id="streaming-panel-title">生成中...</span>
-        <button class="streaming-panel-close" onclick="closeStreamingPanel()" title="关闭面板">&times;</button>
-    </div>
-    <div class="streaming-panel-body" id="streaming-panel-body">
-        <!-- 流式日志将在这里显示 -->
-    </div>
-    <div class="streaming-panel-footer">
-        <div class="streaming-status">
-            <div class="streaming-status-dot" id="streaming-status-dot"></div>
-            <span id="streaming-status-text">准备中...</span>
+    /* 完成状态：蓝色文字 */
+    .streaming-log.complete .streaming-log-content {
+        color: #93c5fd;
+    }
+    </style>
+
+    <div id="streaming-panel" class="streaming-panel">
+        <div class="streaming-panel-header">
+            <span class="streaming-panel-title" id="streaming-panel-title">生成中...</span>
+            <button class="streaming-panel-close" onclick="closeStreamingPanel()" title="关闭面板">&times;</button>
         </div>
-        <div class="streaming-actions">
-            <button class="btn-streaming" id="btn-copy-output" onclick="copyStreamingOutput()" disabled>复制内容</button>
-            <button class="btn-streaming close-btn" id="btn-close-panel" onclick="closeStreamingPanel()">关闭</button>
+        <div class="streaming-panel-body" id="streaming-panel-body">
+            <!-- 流式日志由 JavaScript 动态追加 -->
+        </div>
+        <div class="streaming-panel-footer">
+            <div class="streaming-status">
+                <div class="streaming-status-dot" id="streaming-status-dot"></div>
+                <span id="streaming-status-text">准备中...</span>
+            </div>
+            <div class="streaming-actions">
+                <button class="btn-streaming" id="btn-copy-output" onclick="copyStreamingOutput()" disabled>复制内容</button>
+                <button class="btn-streaming close-btn" id="btn-close-panel" onclick="closeStreamingPanel()">关闭</button>
+            </div>
         </div>
     </div>
-</div>
 
-    <!-- SSE客户端 -->
+    <!-- ================= JavaScript 模块加载 ================= -->
+    <!-- SSE 流式客户端：提供 EventSource 连接管理和消息解析 -->
     <script src="/frontend/streaming-client.js"></script>
 
+    <!-- 应用主逻辑：包含所有业务逻辑、状态管理和 UI 交互 -->
     <script src="/frontend/app.js"></script>
 </body>
 </html>

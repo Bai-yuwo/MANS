@@ -1,11 +1,29 @@
 """
 knowledge_bases/character_db.py
-人物知识库
 
-设计原则：
-1. 单文件存储：每个人物一个 JSON 文件
-2. 状态历史：保留人物变化轨迹
-3. 关系网：独立存储关系信息
+人物知识库，负责人物卡的持久化存储和状态更新。
+
+职责边界：
+    - 存储每个人物的完整 CharacterCard（固有属性 + 动态状态）。
+    - 管理人物状态历史，记录每次状态变更的时间、章节和具体内容。
+    - 维护人物关系网，支持关系的创建、更新和历史追踪。
+    - 提供 UpdateExtractor 所需的人物状态应用接口（apply_update）。
+
+存储结构：
+    workspace/{project_id}/characters/
+    ├── {name}.json          # 单个人物卡
+    └── relationships.json   # 关系网络（预留扩展）
+
+状态更新流程：
+    1. UpdateExtractor 从生成文本中提取 CharacterStateUpdate。
+    2. 调用 apply_update() 将变更应用到对应人物卡。
+    3. apply_update() 自动记录状态历史快照（update_state）。
+    4. 更新后的人物卡通过 save_character() 持久化到磁盘。
+
+典型用法：
+    db = CharacterDB(project_id="xxx")
+    char = await db.get_character("张三")
+    await db.apply_update(update, chapter=5, scene_index=2)
 """
 
 from typing import Optional
@@ -19,75 +37,101 @@ logger = get_logger('knowledge_bases.character_db')
 
 class CharacterDB(BaseDB):
     """
-    人物知识库
-    
-    存储人物卡、状态历史、关系网
-    
-    使用示例：
-        db = CharacterDB(project_id="xxx")
-        char = db.get_character("张三")
-        await db.apply_update(update)
+    人物知识库。
+
+    人物是故事的核心。CharacterDB 不仅存储人物的静态设定（外貌、性格、背景），
+    还追踪人物的动态状态（位置、修为、情绪、目标）随故事发展的变化轨迹。
+    通过 state_history 字段，可以回溯任意时刻人物的状态，支持场景回滚。
+
+    存储约定：
+        每个人物以姓名为文件名（{name}.json）存储在 characters/ 子目录下。
+        文件名即人物的唯一标识（Display Name），确保与 ScenePlan.present_characters 列表一致。
+
+    延迟初始化：
+        继承 BaseDB 的延迟初始化机制，首次访问时自动创建目录结构。
     """
-    
+
     def __init__(self, project_id: str):
         super().__init__(project_id, "characters")
-    
+
     async def get_character(self, name: str) -> Optional[CharacterCard]:
         """
-        根据姓名获取人物卡（异步）
-        
+        根据姓名获取人物卡。
+
+        查找逻辑：
+            以姓名为 key 加载对应的 JSON 文件，反序列化为 CharacterCard。
+            若文件不存在或解析失败，返回 None 并记录错误日志。
+
         Args:
-            name: 人物姓名
-        
+            name: 人物姓名（与文件名对应）。
+
         Returns:
-            CharacterCard 对象，不存在则返回 None
+            CharacterCard 实例，不存在或解析失败时返回 None。
         """
         data = await self.load(name)
         if not data:
             return None
-        
+
         try:
             return CharacterCard(**data)
         except Exception as e:
             logger.error(f"解析人物卡失败 {name}: {e}")
             return None
-    
+
     async def save_character(self, character: CharacterCard) -> bool:
         """
-        保存人物卡（异步）
-        
+        保存人物卡到磁盘。
+
+        使用 BaseDB.save() 的原子写入机制（临时文件 + os.replace），
+        确保即使写入过程中发生崩溃，也不会损坏已有数据。
+
         Args:
-            character: 人物卡对象
-        
+            character: 要保存的人物卡对象。
+
         Returns:
-            是否保存成功
+            是否保存成功。
         """
         return await self.save(character.name, character.model_dump())
-    
-    async def apply_update(self, update: CharacterStateUpdate, chapter: int = 0, scene_index: int = -1) -> bool:
+
+    async def apply_update(
+        self,
+        update: CharacterStateUpdate,
+        chapter: int = 0,
+        scene_index: int = -1
+    ) -> bool:
         """
-        应用人物状态更新（异步）
-        
+        将 UpdateExtractor 提取的状态更新应用到人物卡。
+
+        更新字段映射：
+            - location_change → current_location
+            - cultivation_change → cultivation.realm
+            - emotion_change → current_emotion
+            - goal_updates → active_goals（追加模式，不覆盖已有目标）
+            - relationship_updates → relationships（更新现有关系或新建关系）
+
+        每次成功更新后，会自动调用 update_state() 记录历史快照，
+        快照包含章节号、场景序号、时间戳和变更内容字典。
+
         Args:
-            update: 状态更新对象
-        
+            update: UpdateExtractor 生成的状态更新对象。
+            chapter: 当前章节号，用于历史记录。
+            scene_index: 当前场景序号，用于历史记录。
+
         Returns:
-            是否更新成功
+            是否更新成功。若人物不存在则返回 False 并记录错误。
         """
         char = await self.get_character(update.character_name)
         if not char:
             logger.error(f"人物不存在: {update.character_name}")
             return False
-        
-        # 应用更新
+
         updates = {}
-        
+
         if update.location_change:
             char.current_location = update.location_change
             updates['location'] = update.location_change
-        
+
         if update.cultivation_change:
-            # 应用修为变化到角色卡对象
             from core.schemas import CultivationLevel
             if char.cultivation is None:
                 char.cultivation = CultivationLevel(
@@ -98,18 +142,17 @@ class CharacterDB(BaseDB):
             else:
                 char.cultivation.realm = update.cultivation_change
             updates['cultivation'] = update.cultivation_change
-        
+
         if update.emotion_change:
             char.current_emotion = update.emotion_change
             updates['emotion'] = update.emotion_change
-        
+
         if update.goal_updates:
             for goal in update.goal_updates:
                 if goal not in char.active_goals:
                     char.active_goals.append(goal)
             updates['goals'] = update.goal_updates
 
-        # 处理关系更新（此前完全遗漏）
         if update.relationship_updates:
             from core.schemas import Relationship
             for rel_update in update.relationship_updates:
@@ -120,7 +163,6 @@ class CharacterDB(BaseDB):
                 if not target_name or not change_desc:
                     continue
 
-                # 查找是否已存在与该目标的关系
                 existing_rel = None
                 for rel in char.relationships:
                     if rel.target_name == target_name:
@@ -128,13 +170,11 @@ class CharacterDB(BaseDB):
                         break
 
                 if existing_rel:
-                    # 更新现有关系
                     existing_rel.current_sentiment = change_desc
                     existing_rel.add_history_note(
                         f"第{chapter}章: {change_desc}"
                     )
                 else:
-                    # 新建关系
                     new_rel = Relationship(
                         target_character_id="",
                         target_name=target_name,
@@ -146,7 +186,6 @@ class CharacterDB(BaseDB):
                     )
                     char.relationships.append(new_rel)
 
-        # 记录状态历史
         if updates:
             char.update_state(
                 chapter=chapter,
@@ -155,22 +194,26 @@ class CharacterDB(BaseDB):
             )
 
         return await self.save_character(char)
-    
+
     async def list_characters(self) -> list[str]:
         """
-        列出所有人物姓名（异步）
-        
+        列出所有已保存的人物姓名。
+
         Returns:
-            人物姓名列表
+            人物姓名列表（按字母顺序排序）。
         """
         return await self.list_keys()
-    
+
     async def list_all_characters(self) -> list[dict]:
         """
-        获取所有人物信息（异步，返回字典列表，供 API 使用）
-        
+        获取所有人物的原始数据字典。
+
+        用途：
+            主要用于 API 响应，前端展示人物列表时直接返回原始字典，
+            避免 Pydantic 序列化的额外开销。
+
         Returns:
-            人物字典列表
+            人物数据字典列表，解析失败的条目会被跳过。
         """
         names = await self.list_keys()
         characters = []
@@ -179,45 +222,52 @@ class CharacterDB(BaseDB):
             if data:
                 characters.append(data)
         return characters
-    
+
     async def get_character_by_id(self, char_id: str) -> Optional[dict]:
         """
-        根据 ID 获取人物信息（异步）
-        
+        根据 ID 查找人物。
+
+        注意：
+            CharacterDB 以姓名为文件名，此方法需要遍历所有人物文件进行匹配。
+            性能上适用于人物数量不多的场景（通常 < 100 人）。
+
         Args:
-            char_id: 人物ID
-        
+            char_id: 人物卡中的 id 字段值。
+
         Returns:
-            人物数据字典，不存在则返回 None
+            匹配的人物数据字典，未找到返回 None。
         """
         all_chars = await self.list_all_characters()
         for char in all_chars:
             if char.get("id") == char_id:
                 return char
         return None
-    
+
     async def add_relationship(self, character_id: str, relationship) -> bool:
         """
-        添加人物关系（异步）
-        
+        为指定人物添加关系条目。
+
+        实现逻辑：
+            遍历所有人物文件，找到 id 匹配的人物后，
+            在其 relationships 列表中追加新关系。
+
         Args:
-            character_id: 人物ID
-            relationship: Relationship 对象或字典
-        
+            character_id: 人物的 id 字段值。
+            relationship: Relationship 对象或兼容字典。
+
         Returns:
-            是否添加成功
+            是否添加成功。若找不到对应人物返回 False。
         """
-        # 遍历所有人物找到匹配的
         names = await self.list_keys()
         for name in names:
             data = await self.load(name)
             if data and data.get("id") == character_id:
                 if "relationships" not in data:
                     data["relationships"] = []
-                
+
                 rel_data = relationship.model_dump() if hasattr(relationship, 'model_dump') else relationship
                 data["relationships"].append(rel_data)
                 return await self.save(name, data)
-        
+
         logger.error(f"人物不存在: {character_id}")
         return False

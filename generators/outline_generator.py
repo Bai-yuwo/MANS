@@ -1,9 +1,36 @@
 """
 generators/outline_generator.py
+
 全局大纲生成器
 
-职责：基于 Bible 和人物设定生成三幕式全局大纲
-输出：包含三幕结构、关键转折点、全局伏笔的大纲数据
+职责边界：
+    - 基于 Bible（世界观）和人物设定生成三幕式全局大纲。
+    - 输出包含三幕结构、核心冲突、剧情风格、关键转折点、结局方向和全局伏笔。
+    - 全局大纲只描述"方向"而非"具体情节"，保持宏观视角。
+    - 通过 StoryDB 持久化，同时向量化存储到向量库。
+    - 全局伏笔直接写入 ForeshadowingDB，供后续章节规划使用。
+
+生成内容：
+    1. 三幕结构（act1/act2a/act2b/act3），每幕包含名称、章节范围、描述、关键方向。
+    2. 核心冲突（central_conflict, protagonist_goal, antagonist_force, stakes）。
+    3. 剧情风格（growth_curve, rhythm_mode, highlight_density, description）。
+    4. 关键转折点（3-5个），每个包含名称、所在章节、一句话描述。
+    5. 结局方向（direction, resolution_type）。
+    6. 全局伏笔清单（3-5条主线伏笔）。
+
+设计原则：
+    - 宏观视角：描述"这一阶段主角要做什么/面对什么"，而非"具体发生什么事"。
+    - 基调适配：根据 ProjectMeta.tone 选择对应的节奏模式（如热血→扮猪吃虎）。
+    - 章节连续性：验证四幕的章节范围必须连续且不重叠。
+    - 伏笔预埋：在大纲阶段就设计好主线伏笔的埋设幕次和解决幕次。
+
+典型用法：
+    generator = OutlineGenerator(project_id="xxx")
+    outline = await generator.generate(
+        project_meta=project_meta,
+        bible_data=bible_data,
+        characters_data=characters_data
+    )
 """
 
 from typing import Any
@@ -17,28 +44,43 @@ from knowledge_bases.story_db import StoryDB
 class OutlineGenerator(BaseGenerator):
     """
     全局大纲生成器
-    
-    生成内容：
-    - 三幕结构划分（幕1/幕2a/幕2b/幕3）
-    - 主线矛盾与核心冲突
-    - 关键转折点（5-10个）
-    - 结局方向
-    - 初版全局伏笔清单（5-8条主线伏笔）
-    
-    使用示例：
-        generator = OutlineGenerator(project_id="xxx")
-        outline = await generator.generate(
-            project_meta=project_meta,
-            bible_data=bible_data,
-            characters_data=characters_data
-        )
+
+    全局大纲是小说叙事的顶层蓝图，定义了故事的整体走向、节奏模式和关键节点。
+    它不负责具体场景或对话，只回答"故事要走向哪里"和"何时发生关键转折"。
+
+    与后续规划器的关系：
+        - ArcPlanner 将全局大纲的每一幕扩展为具体的弧线规划（情绪曲线、里程碑）。
+        - ChapterPlanner 将弧线规划进一步细化为单章的场景序列。
+        - 因此，全局大纲必须保持足够的抽象度，给下层规划器留出创作空间。
+
+    生成策略：
+        1. 根据 ProjectMeta.target_length 估算总章节数（短篇30章/中篇100章/长篇300章/超长篇500章）。
+        2. 在 prompt 中根据 tone（基调）提供对应的大纲示例（热血/成长/虐心）。
+        3. 使用详细的三幕结构示例，引导 LLM 输出正确的 JSON 格式。
+        4. 提供"正确 vs 错误"的示例对比，明确什么是"方向"、什么是"情节"。
+
+    伏笔处理：
+        生成的大纲中的 foreshadowing_list 会被直接转换为 ForeshadowingItem 存入 ForeshadowingDB。
+        埋设幕次和解决幕次会被映射为粗略的章节范围（act1→1-25, act2a→26-50 等）。
     """
-    
+
     def _get_generator_name(self) -> str:
+        """返回生成器名称，用于日志和进度报告中标识当前环节。"""
         return "OutlineGenerator"
-    
+
     def get_output_schema(self) -> dict:
-        """返回大纲生成的 JSON Schema"""
+        """
+        返回大纲生成的 JSON Schema 定义。
+
+        Schema 结构：
+            - three_act_structure: 三幕结构对象，包含 act1/act2a/act2b/act3，
+              每幕有 name/chapter_range/description/key_directions。
+            - main_conflict: 核心冲突对象，包含 central_conflict/protagonist_goal/antagonist_force/stakes。
+            - story_pattern: 剧情风格对象，包含 growth_curve/rhythm_mode/highlight_density/description。
+            - turning_points: 转折点数组，每项包含 name/chapter/description。
+            - ending: 结局对象，包含 direction/resolution_type。
+            - foreshadowing_list: 伏笔数组，每项包含 type/description/planted_act/resolution_act/importance。
+        """
         return {
             "name": "outline_output",
             "schema": {
@@ -180,31 +222,39 @@ class OutlineGenerator(BaseGenerator):
                 "required": ["three_act_structure", "main_conflict", "story_pattern", "turning_points", "ending", "foreshadowing_list"]
             }
         }
-    
-    def _build_prompt(self, 
-                      project_meta: ProjectMeta, 
-                      bible_data: dict, 
+
+    def _build_prompt(self,
+                      project_meta: ProjectMeta,
+                      bible_data: dict,
                       characters_data: dict,
                       **kwargs) -> str:
         """
-        构建大纲生成 prompt
-        
+        构建大纲生成 prompt。
+
+        Prompt 设计要点：
+            1. 提取主角和配角的关键信息，作为大纲生成的人物依据。
+            2. 根据 target_length 估算总章节数，用于计算每幕的章节范围。
+            3. 提供详细的基调控制说明，引导 LLM 根据 tone 选择合适的节奏模式。
+            4. 提供"正确 vs 错误"的示例对比，明确抽象"方向"与具体"情节"的界限。
+            5. 每幕只要求 2 个 key_directions，保持精简。
+
         Args:
-            project_meta: 项目元信息
-            bible_data: Bible 数据
-            characters_data: 人物数据（包含主角和配角）
-            
+            project_meta: 项目元信息。
+            bible_data: Bible 数据。
+            characters_data: 人物数据，包含 protagonist 和 supporting_characters。
+            **kwargs: 预留扩展参数。
+
         Returns:
-            完整的 prompt 字符串
+            完整的 prompt 字符串。
         """
         # 提取关键信息
         protagonist = characters_data.get("protagonist", {})
         supporting = characters_data.get("supporting_characters", [])
         combat_system = bible_data.get("combat_system", {})
-        
+
         # 估算章节数
         target_chapters = self._estimate_chapter_count(project_meta.target_length)
-        
+
         prompt = f"""基于以下世界观和人物设定，为小说《{project_meta.name}》生成全局大纲。
 
 ## 作品信息
@@ -229,11 +279,11 @@ class OutlineGenerator(BaseGenerator):
 ## 主要配角
 
 """
-        
+
         # 添加配角信息
         for char in supporting[:4]:
             prompt += f"- **{char.get('name', '未知')}**：{char.get('role_in_story', '配角')}，{char.get('relationship_to_protagonist', '')}\n"
-        
+
         prompt += f"""
 
 ## 输出要求
@@ -396,16 +446,25 @@ class OutlineGenerator(BaseGenerator):
 - 章节范围必须连续且不重叠
 """
         return prompt
-    
+
     def _estimate_chapter_count(self, target_length: str) -> int:
         """
-        根据目标篇幅估算章节数
-        
+        根据目标篇幅估算章节数。
+
+        估算规则：
+            - 短篇(<10万): 约30章，每章3000字左右。
+            - 中篇(10-50万): 约100章，每章4000-5000字。
+            - 长篇(50-200万): 约300章，每章5000-6000字。
+            - 超长篇(200万+): 约500章，每章4000字以上。
+
+        此估算用于计算三幕结构中每幕的章节范围。实际章节数可能因
+        ChapterPlanner 的规划而略有出入。
+
         Args:
-            target_length: 目标篇幅描述
-            
+            target_length: 目标篇幅描述字符串（来自 ProjectMeta.target_length）。
+
         Returns:
-            估算的章节数
+            估算的章节数整数。
         """
         length_map = {
             "短篇(<10万)": 30,
@@ -414,28 +473,43 @@ class OutlineGenerator(BaseGenerator):
             "超长篇(200万+)": 500
         }
         return length_map.get(target_length, 100)
-    
+
     def _parse_response(self, response: str) -> dict:
         """
-        解析大纲生成响应
-        
+        解析大纲生成响应。
+
+        使用基类提供的 _safe_json_parse() 进行安全解析。
+        若解析失败，基类会自动构造修正提示词并重试。
+
         Args:
-            response: LLM 返回的 JSON 字符串
-            
+            response: LLM 返回的原始 JSON 字符串。
+
         Returns:
-            解析后的大纲数据字典
+            解析后的大纲数据字典。
         """
         return self._safe_json_parse(response)
-    
+
     def _validate_result(self, result: dict) -> bool:
         """
-        验证大纲数据完整性
-        
+        验证大纲数据完整性。
+
+        验证项：
+            1. 三幕结构存在性：必须有 act1/act2a/act2b/act3，每个 act 有 chapter_range 和 key_directions。
+            2. 章节范围连续性：act1 结束 + 1 == act2a 开始，act2a 结束 + 1 == act2b 开始，
+               act2b 结束 + 1 == act3 开始。不连续时抛出 ValidationError。
+            3. 核心冲突：必须有 central_conflict。
+            4. 剧情风格：必须有 story_pattern，且 growth_curve/rhythm_mode 必须在合法枚举中。
+            5. 转折点数量：至少3个，最多5个（保持宏观视角）。
+            6. 伏笔数量：至少3个，最多5个（只列主线伏笔）。
+
         Args:
-            result: 解析后的大纲数据
-            
+            result: 解析后的大纲数据字典。
+
         Returns:
-            验证是否通过
+            True 表示验证通过。
+
+        Raises:
+            ValidationError: 验证失败时抛出，包含具体错误信息。
         """
         # 验证三幕结构
         three_act = result.get("three_act_structure", {})
@@ -446,20 +520,20 @@ class OutlineGenerator(BaseGenerator):
                     f"缺少 {act} 结构",
                     stage="validation"
                 )
-            
+
             act_data = three_act[act]
             if "chapter_range" not in act_data:
                 raise ValidationError(
                     f"{act} 缺少 chapter_range",
                     stage="validation"
                 )
-            
+
             if "key_directions" not in act_data or not act_data["key_directions"]:
                 raise ValidationError(
                     f"{act} 缺少发展方向",
                     stage="validation"
                 )
-        
+
         # 验证章节范围连续性
         act1_end = three_act["act1"]["chapter_range"][1]
         act2a_start = three_act["act2a"]["chapter_range"][0]
@@ -467,25 +541,25 @@ class OutlineGenerator(BaseGenerator):
         act2b_start = three_act["act2b"]["chapter_range"][0]
         act2b_end = three_act["act2b"]["chapter_range"][1]
         act3_start = three_act["act3"]["chapter_range"][0]
-        
+
         if act2a_start != act1_end + 1:
             raise ValidationError(
                 f"幕间不连续: act1 结束于 {act1_end}，act2a 开始于 {act2a_start}",
                 stage="validation"
             )
-        
+
         if act2b_start != act2a_end + 1:
             raise ValidationError(
                 f"幕间不连续: act2a 结束于 {act2a_end}，act2b 开始于 {act2b_start}",
                 stage="validation"
             )
-        
+
         if act3_start != act2b_end + 1:
             raise ValidationError(
                 f"幕间不连续: act2b 结束于 {act2b_end}，act3 开始于 {act3_start}",
                 stage="validation"
             )
-        
+
         # 验证核心冲突
         main_conflict = result.get("main_conflict", {})
         if "central_conflict" not in main_conflict:
@@ -493,7 +567,7 @@ class OutlineGenerator(BaseGenerator):
                 "缺少核心冲突描述",
                 stage="validation"
             )
-        
+
         # 验证剧情风格
         story_pattern = result.get("story_pattern", {})
         if not story_pattern:
@@ -501,21 +575,21 @@ class OutlineGenerator(BaseGenerator):
                 "缺少 story_pattern（剧情风格控制）",
                 stage="validation"
             )
-        
+
         valid_growth = ["steady_rise", "up_and_down", "power_fantasy", "late_bloom"]
         if story_pattern.get("growth_curve") not in valid_growth:
             raise ValidationError(
                 f"growth_curve 必须是 {valid_growth} 之一",
                 stage="validation"
             )
-        
+
         valid_rhythm = ["step_by_step", "crouching_tiger", "underdog_hero", "last_stand"]
         if story_pattern.get("rhythm_mode") not in valid_rhythm:
             raise ValidationError(
                 f"rhythm_mode 必须是 {valid_rhythm} 之一",
                 stage="validation"
             )
-        
+
         # 验证转折点
         turning_points = result.get("turning_points", [])
         if len(turning_points) < 3:
@@ -528,7 +602,7 @@ class OutlineGenerator(BaseGenerator):
                 f"转折点数量过多: 有 {len(turning_points)} 个，最多 5 个（保持宏观视角）",
                 stage="validation"
             )
-        
+
         # 验证伏笔
         foreshadowing = result.get("foreshadowing_list", [])
         if len(foreshadowing) < 3:
@@ -541,30 +615,42 @@ class OutlineGenerator(BaseGenerator):
                 f"伏笔数量过多: 有 {len(foreshadowing)} 个，最多 5 个（只列主线伏笔）",
                 stage="validation"
             )
-        
+
         return True
-    
+
     async def _save_result(self, result: dict) -> None:
         """
-        保存大纲到知识库（异步）
-        
+        保存大纲到知识库，并将全局伏笔写入伏笔库。
+
+        保存流程：
+            1. 调用 StoryDB.save_outline() 保存三幕结构、核心冲突、转折点、结局等。
+            2. 提取 foreshadowing_list，将每条全局伏笔转换为 ForeshadowingItem 存入 ForeshadowingDB。
+
+        伏笔章节范围映射：
+            由于大纲只记录幕次（act1/act2a/act2b/act3），需要映射为粗略的章节范围：
+            - act1 → (1, 25)
+            - act2a → (26, 50)
+            - act2b → (51, 75)
+            - act3 → (76, 100)
+            这是一个简化处理，实际触发范围在 ArcPlanner 中会进一步细化。
+
         Args:
-            result: 验证通过的大纲数据
+            result: 验证通过的大纲数据字典。
         """
         story_db = StoryDB(self.project_id)
-        
+
         # 保存大纲
         await story_db.save_outline(result)
-        
+
         # 保存伏笔到伏笔库
         foreshadowing_db = ForeshadowingDB(self.project_id)
         foreshadowing_list = result.get("foreshadowing_list", [])
-        
+
         for i, fs_data in enumerate(foreshadowing_list):
             # 计算触发范围
             planted_act = fs_data.get("planted_act", "act1")
             resolution_act = fs_data.get("resolution_act", "act3")
-            
+
             # 从幕次映射到章节范围（简化处理）
             act_chapter_map = {
                 "act1": (1, 25),
@@ -572,28 +658,36 @@ class OutlineGenerator(BaseGenerator):
                 "act2b": (51, 75),
                 "act3": (76, 100)
             }
-            
+
             trigger_start = act_chapter_map.get(planted_act, (1, 25))[0]
             trigger_end = act_chapter_map.get(resolution_act, (76, 100))[1]
-            
+
             await foreshadowing_db.add_foreshadowing(
                 fs_type=fs_data.get("type", "plot"),
                 description=fs_data.get("description", ""),
                 trigger_range=(trigger_start, trigger_end),
                 urgency=fs_data.get("importance", "medium")
             )
-    
+
     async def _vectorize_result(self, result: dict) -> None:
         """
-        将大纲内容向量化存储
-        
+        将大纲内容向量化存储，供后续语义检索。
+
+        向量化策略：
+            1. 三幕结构：每幕单独向量化，metadata 标记 type=act 和 chapter_range。
+            2. 转折点：每个转折点单独向量化，metadata 标记 type=turning_point 和 chapter。
+            3. 核心冲突：整体向量化，metadata 标记 type=conflict。
+
+        存入 collection "outlines"，便于后续按语义检索故事结构信息。
+        例如："故事的高潮在哪里" → 检索到对应幕或转折点的向量。
+
         Args:
-            result: 已保存的大纲数据
+            result: 已保存的大纲数据字典。
         """
         from vector_store.store import VectorStore
-        
+
         vector_store = VectorStore(self.project_id)
-        
+
         # 向量化三幕结构
         three_act = result.get("three_act_structure", {})
         for act_name, act_data in three_act.items():
@@ -612,7 +706,7 @@ class OutlineGenerator(BaseGenerator):
                     "source": "outline_generation"
                 }
             )
-        
+
         # 向量化转折点
         turning_points = result.get("turning_points", [])
         for i, tp in enumerate(turning_points):
@@ -631,7 +725,7 @@ class OutlineGenerator(BaseGenerator):
                     "source": "outline_generation"
                 }
             )
-        
+
         # 向量化核心冲突
         main_conflict = result.get("main_conflict", {})
         conflict_text = f"""核心冲突：{main_conflict.get('central_conflict', '')}

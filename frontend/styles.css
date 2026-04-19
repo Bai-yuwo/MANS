@@ -1,3 +1,28 @@
+/**
+ * MANS 前端样式表
+ *
+ * 设计系统概述：
+ *     采用深色主题（Dark Mode）作为默认配色方案，以蓝紫色（Indigo）为主色调，
+ *     营造专注、沉浸的写作氛围。所有颜色通过 CSS 变量（Custom Properties）
+ *     集中管理，便于统一调整和多主题扩展。
+ *
+ * 布局架构：
+ *     - 顶部固定导航栏（top-bar）：高度 60px，三栏网格布局（左中右）。
+ *     - 左侧可折叠边栏（sidebar）：默认宽度 160px，折叠后 60px。
+ *     - 主内容区（content-area）：占据剩余空间，支持面板切换。
+ *     - 流式输出浮层（streaming-panel）：固定定位在右下角，玻璃拟态风格。
+ *
+ * 响应式设计：
+ *     - 桌面端（>768px）：完整侧边栏 + 网格布局。
+ *     - 平板/移动端（<=768px）：侧边栏自动折叠，网格单列排列。
+ *
+ * 命名规范：
+ *     - BEM 风格：block-element-modifier，如 .scene-card、.scene-card.locked。
+ *     - 状态类：pending / completed / active / disabled / error / saving / saved。
+ *     - 尺寸修饰：sm / large（用于按钮、加载器等）。
+ */
+
+/* ================= 设计令牌（Design Tokens）================= */
 :root {
     --primary: #6366f1;
     --primary-dark: #4f46e5;
@@ -13,12 +38,14 @@
     --info: #3b82f6;
 }
 
+/* ================= 全局重置与基础样式 ================= */
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
+/* 滑入/滑出动画，用于 Toast 通知和面板切换 */
 @keyframes slideIn {
     from { opacity: 0; transform: translateX(100%); }
     to { opacity: 1; transform: translateX(0); }
@@ -29,6 +56,7 @@
     to { opacity: 0; transform: translateX(100%); }
 }
 
+/* 页面根元素：全屏布局，禁止滚动溢出 */
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
     height: 100vh;
@@ -38,7 +66,8 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
-/* ================= 模态框 ================= */
+/* ================= 模态框（Modal）================= */
+/* 模态框遮罩层：全屏固定定位，半透明黑色背景，flex 居中内容 */
 .modal {
     position: fixed;
     top: 0;
@@ -84,7 +113,7 @@ body {
     color: var(--error);
 }
 
-/* ================= 表单 ================= */
+/* ================= 表单组件 ================= */
 .form-group {
     margin-bottom: 20px;
 }
@@ -96,6 +125,7 @@ body {
     font-weight: 500;
 }
 
+/* 统一输入框样式：深色背景、无边框、聚焦时主色高亮 */
 .form-group input,
 .form-group select,
 .form-group textarea {
@@ -122,7 +152,7 @@ body {
     margin-top: 30px;
 }
 
-/* ================= 项目列表 ================= */
+/* ================= 项目列表网格 ================= */
 .project-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -130,6 +160,7 @@ body {
     padding: 10px;
 }
 
+/* 项目卡片：左侧色条标识、悬停上浮阴影 */
 .project-card {
     background-color: var(--bg-card);
     border: 1px solid var(--bg-hover);
@@ -152,6 +183,7 @@ body {
     font-size: 18px;
 }
 
+/* 类型标签：胶囊形状，主色半透明背景 */
 .project-card .genre {
     display: inline-block;
     background: rgba(99, 102, 241, 0.15);
@@ -181,7 +213,7 @@ body {
     margin-top: 16px;
 }
 
-/* ================= 初始化步骤 ================= */
+/* ================= 初始化向导步骤 ================= */
 .init-steps {
     display: flex;
     flex-direction: column;
@@ -189,7 +221,7 @@ body {
     padding: 10px;
 }
 
-/* 初始化向导隔离样式 */
+/* 初始化面板激活态：居中布局 + 渐变背景 */
 #initialization-panel.active {
     display: flex;
     flex-direction: column;
@@ -220,6 +252,7 @@ body {
     padding: 20px;
 }
 
+/* 步骤状态：pending（半透明）/ completed（绿色边框） */
 .init-step.pending {
     opacity: 0.6;
 }
@@ -236,6 +269,7 @@ body {
     margin-bottom: 15px;
 }
 
+/* 步骤序号：圆形徽章，completed 时变绿色 */
 .step-number {
     width: 32px;
     height: 32px;
@@ -301,6 +335,7 @@ body {
     padding: 10px;
 }
 
+/* 场景列表：垂直堆叠，每个场景之间留足间距 */
 .scenes-list {
     display: flex;
     flex-direction: column;
@@ -351,6 +386,7 @@ body {
     margin-bottom: 15px;
 }
 
+/* 场景内容区域：可滚动、生成时锁定 */
 .scene-content {
     background-color: var(--bg-dark);
     border: 1px solid var(--bg-hover);
@@ -362,7 +398,7 @@ body {
     transition: opacity 0.3s ease;
 }
 
-/* 生成中锁定状态 */
+/* 生成中锁定状态：禁用交互 + 半透明遮罩 + 脉冲动画提示 */
 .scene-content.locked {
     pointer-events: none;
     opacity: 0.75;
@@ -392,7 +428,7 @@ body {
     50% { opacity: 0.7; }
 }
 
-/* 自动保存状态提示 */
+/* 自动保存状态提示：颜色随状态变化 */
 .save-status {
     font-size: 12px;
     color: var(--text-secondary);
@@ -413,9 +449,11 @@ body {
     color: var(--error);
 }
 
+/* 生成文本排版：保留换行、1.8 倍行高、首行缩进两字符 */
 .generated-text {
     white-space: pre-wrap;
     line-height: 1.8;
+    text-indent: 2em;
 }
 
 .generating {
@@ -428,7 +466,7 @@ body {
     margin-top: 10px;
 }
 
-/* ================= 知识库 ================= */
+/* ================= 知识库展示 ================= */
 .kb-sections details {
     margin-bottom: 15px;
     background-color: var(--bg-card);
@@ -448,6 +486,7 @@ body {
     padding-left: 20px;
 }
 
+/* 大纲可读化展示 */
 .outline-readable {
     display: flex;
     flex-direction: column;
@@ -517,6 +556,7 @@ body {
     line-height: 1.6;
 }
 
+/* 时间线样式：左侧竖线 + 圆点标记 */
 .outline-timeline {
     display: flex;
     flex-direction: column;
@@ -554,6 +594,7 @@ body {
     color: var(--text-secondary);
 }
 
+/* 伏笔列表：卡片式布局，标签 + 重要性 + 描述 */
 .outline-foreshadowing-list {
     list-style: none;
     padding: 0;
@@ -574,6 +615,7 @@ body {
     font-size: 13px;
 }
 
+/* 伏笔类型标签：不同背景色区分 */
 .fs-tag {
     font-size: 11px;
     padding: 2px 6px;
@@ -609,7 +651,7 @@ body {
     color: var(--text-secondary);
 }
 
-/* ================= 上边栏 ================= */
+/* ================= 顶部导航栏 ================= */
 .top-bar {
     position: fixed;
     top: 0; left: 0; right: 0;
@@ -637,6 +679,7 @@ body {
     min-width: 0;
 }
 
+/* 右侧工具栏：默认隐藏，进入项目后显示 */
 .top-bar-right {
     display: flex;
     align-items: center;
@@ -654,6 +697,7 @@ body {
     pointer-events: auto;
 }
 
+/* 顶部图标按钮：60x60 触摸区域 */
 .top-bar-icon {
     width: 60px; height: 60px;
     display: flex; align-items: center; justify-content: center;
@@ -681,6 +725,7 @@ body {
     padding-left: 10px;
 }
 
+/* 项目名称显示：居中，超长时省略号截断 */
 .top-bar-project-name {
     font-size: 16px;
     font-weight: 600;
@@ -712,6 +757,7 @@ body {
     display: flex; margin-top: 60px; height: calc(100vh - 60px);
 }
 
+/* 侧边栏：可折叠，过渡动画使用 cubic-bezier 实现自然手感 */
 .sidebar {
     width: 160px;
     background-color: var(--bg-card);
@@ -743,6 +789,7 @@ body {
     color: var(--primary-light);
 }
 
+/* 禁用状态：降低透明度，禁止点击 */
 .sidebar-item.disabled {
     opacity: 0.35;
     cursor: not-allowed;
@@ -753,6 +800,7 @@ body {
     width: 20px; height: 20px; fill: currentColor; flex-shrink: 0;
 }
 
+/* 侧边栏折叠时隐藏文字 */
 .sidebar-item-text {
     font-size: 14px; opacity: 1; transition: opacity 0.2s; font-weight: 500;
 }
@@ -767,6 +815,7 @@ body {
     background-color: var(--bg-dark);
 }
 
+/* 内容面板：默认隐藏，通过 .active 类激活显示 */
 .content-panel {
     display: none;
     background-color: var(--bg-card);
@@ -794,7 +843,7 @@ body {
     font-size: 15px;
 }
 
-/* ================= 空状态 ================= */
+/* ================= 空状态展示 ================= */
 .panel-empty {
     display: flex;
     flex-direction: column;
@@ -840,7 +889,7 @@ body {
     justify-content: space-between;
 }
 
-/* ================= 卡片网格 ================= */
+/* ================= 统计卡片网格 ================= */
 .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -934,7 +983,7 @@ body {
     font-size: 14px;
 }
 
-/* ================= 表单组件 ================= */
+/* ================= 自定义下拉框 ================= */
 .custom-select {
     padding: 8px 36px 8px 16px;
     border: 1px solid var(--bg-hover);
@@ -945,6 +994,7 @@ body {
     cursor: pointer; outline: none; width: 220px;
     transition: all 0.2s ease;
     appearance: none;
+    /* 自定义下拉箭头 SVG */
     background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
     background-repeat: no-repeat;
     background-position: right 12px center;
@@ -960,7 +1010,7 @@ body {
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
 }
 
-/* ================= 通用按钮类 ================= */
+/* ================= 通用按钮类（MANS Button）================= */
 .mans-btn {
     display: inline-flex;
     align-items: center;
@@ -989,6 +1039,7 @@ body {
     transform: scale(0.96);
 }
 
+/* 主色按钮：用于主要操作 */
 .mans-btn.primary {
     background-color: var(--primary);
     color: #ffffff;
@@ -1001,6 +1052,7 @@ body {
     box-shadow: 0 0 12px rgba(99, 102, 241, 0.3);
 }
 
+/* 危险按钮：用于删除等破坏性操作 */
 .mans-btn.danger {
     background-color: transparent;
     color: var(--error);
@@ -1012,12 +1064,13 @@ body {
     color: #ffffff;
 }
 
+/* 小尺寸按钮 */
 .mans-btn.sm {
     padding: 6px 14px;
     font-size: 13px;
 }
 
-/* 响应式设计 */
+/* ================= 响应式设计断点 ================= */
 @media (max-width: 768px) {
     .sidebar { width: 60px; }
     .sidebar .sidebar-item-text { opacity: 0; width: 0; }
@@ -1071,6 +1124,7 @@ button:disabled,
     to { transform: rotate(360deg); }
 }
 
+/* 加载遮罩层：全屏半透明 + 居中内容 */
 .loading-overlay {
     position: absolute;
     top: 0;
@@ -1092,6 +1146,7 @@ button:disabled,
     font-size: 14px;
 }
 
+/* 加载点动画：通过 content 切换实现 "..." 效果 */
 .loading-dots::after {
     content: '';
     animation: dots 1.5s steps(4, end) infinite;
@@ -1123,7 +1178,7 @@ button:disabled,
     display: block;
 }
 
-/* ================= 深色模式 pre/code 样式 ================= */
+/* ================= 代码块样式（深色模式）================= */
 pre, code {
     background-color: var(--bg-dark);
     color: var(--text-primary);
@@ -1190,6 +1245,7 @@ pre code {
     color: var(--text-secondary);
 }
 
+/* 流式日志按类型着色 */
 .streaming-log {
     background: var(--bg-card);
     border-left: 3px solid var(--primary);
@@ -1245,7 +1301,7 @@ pre code {
     min-height: 120px;
 }
 
-/* ================= 弧线卡片 ================= */
+/* ================= 弧线卡片操作区 ================= */
 .arc-card-actions {
     display: flex;
     align-items: center;
@@ -1264,7 +1320,7 @@ pre code {
     white-space: nowrap;
 }
 
-/* ================= 控制台日志 ================= */
+/* ================= 控制台日志面板 ================= */
 .console-toolbar {
     display: flex;
     align-items: center;
@@ -1300,6 +1356,7 @@ pre code {
     cursor: pointer;
 }
 
+/* 连接状态指示器：未连接/连接中/已连接/错误 */
 .console-connection-status {
     font-size: 12px;
     padding: 3px 10px;
@@ -1324,6 +1381,7 @@ pre code {
     color: var(--error);
 }
 
+/* 控制台输出区域：等宽字体 + 自定义滚动条 */
 .console-output {
     background: var(--bg-dark);
     border: 1px solid var(--bg-hover);
@@ -1339,6 +1397,7 @@ pre code {
     scrollbar-color: rgba(99, 102, 241, 0.4) transparent;
 }
 
+/* WebKit 滚动条样式 */
 .console-output::-webkit-scrollbar {
     width: 6px;
 }
@@ -1352,6 +1411,7 @@ pre code {
     border-radius: 3px;
 }
 
+/* 单条日志：flex 布局，带淡入动画 */
 .console-log {
     display: flex;
     gap: 10px;
@@ -1376,6 +1436,7 @@ pre code {
     opacity: 0.7;
 }
 
+/* 日志级别标签：彩色徽章 */
 .console-log-level {
     min-width: 56px;
     flex-shrink: 0;
@@ -1415,6 +1476,7 @@ pre code {
     flex: 1;
 }
 
+/* 过滤隐藏 */
 .console-log.hidden {
     display: none;
 }

@@ -1,9 +1,30 @@
-{# writer/prompts/style_injection.j2 #}
-{# 文风注入格式化模板 #}
-{# 用于将风格参考信息渲染为写作指导 #}
+{#
+    writer/prompts/style_injection.j2
 
-{# 输入：style_config (风格配置对象) #}
-{# 输出：格式化的文风指导 #}
+    文风注入格式化模板。
+
+    职责边界：
+        - 将风格配置对象（style_config）渲染为结构化的写作风格指导文本。
+        - 供 InjectionEngine 在组装上下文时调用，将风格要求注入到 Writer 的 prompt 中。
+        - 涵盖情感基调、文风关键词、参考作家、写作原则、禁止/推荐表达方式、
+          场景类型范文、对话风格和描写风格等维度。
+
+    输入变量：
+        style_config (dict): 风格配置字典，由用户在项目初始化时设定或后续调整。
+        可能包含以下字段（均为可选）：
+            - emotional_base_tone: 整体情感基调描述
+            - style_keywords: 文风关键词列表
+            - reference_authors: 参考作家列表
+            - writing_principles: 写作原则列表
+            - forbidden_patterns: 禁止使用的表达方式列表
+            - preferred_patterns: 推荐的表达方式列表
+            - scene_type_examples: 场景类型范文字典 {场景类型: 范文文本}
+            - dialogue_style: 对话风格指导
+            - description_style: 描写风格指导
+
+    输出：
+        格式化的文风指导文本，直接插入 writer.j2 的【文风参考】部分。
+#}
 
 {% if style_config.emotional_base_tone %}
 【整体情感基调】

@@ -1,9 +1,42 @@
 """
 generators/arc_planner.py
+
 弧线规划器
 
-职责：基于全局大纲生成单条弧线的详细规划（10-20章）
-输出：包含情绪曲线、伏笔布局、章节因果链的弧线规划
+职责边界：
+    - 基于全局大纲中某一幕的宏观数据，生成该幕内单条弧线（10-20章）的详细规划。
+    - 输出包含弧线主题、情绪曲线、章节里程碑、转折点、伏笔设计、因果链等内容。
+    - 弧线规划只保留宏观设计，不生成具体场景、详细对话或每章的精细情节。
+    - 通过 StoryDB 持久化，同时向量化存储到向量库。
+    - 弧线中的新伏笔设计直接写入 ForeshadowingDB。
+
+生成内容：
+    1. 弧线基本信息（arc_id, arc_number, chapter_range, arc_theme, arc_goal, protagonist_development）。
+    2. 情绪弧线（emotional_arc）：开篇情绪、高潮位置、高潮情绪、结尾情绪、整体模式（上升/下降/波浪）。
+    3. 关键转折点（key_turning_points）：1-3个，每个包含 chapter/name/description/impact。
+    4. 章节里程碑（chapter_milestones）：数组长度等于章节数，每章包含 milestone（进展）和 must_happen（核心事件）。
+    5. 伏笔设计（foreshadowing_design）：2-4条新伏笔，包含类型、描述、埋设/暗示/触发/解决章节。
+    6. 因果链（causal_highlights）：2-4条关键因果，说明"因为A，所以B"的逻辑。
+
+设计原则：
+    - 宏观视角：严禁写场景细节、对话、心理描写，只保留弧线的骨架设计。
+    - 里程碑精简：每章只写两句话（milestone 20字以内 + must_happen 30字以内）。
+    - 伏笔预留：只设计新伏笔，已有伏笔不需要在这里操作。
+    - 章节范围约束：所有 chapter 数值必须在弧线章节范围内。
+
+与 ChapterPlanner 的分工：
+    - ArcPlanner 输出的是"弧线层面的宏观设计"（情绪走向、里程碑、转折点）。
+    - ChapterPlanner 基于里程碑自主设计"单章的场景序列"（场景意图、POV、出场人物等）。
+    - 两者界限明确：ArcPlanner 不预生成 ChapterPlan，ChapterPlanner 不修改弧线设计。
+
+典型用法：
+    planner = ArcPlanner(project_id="xxx")
+    arc_plan = await planner.generate(
+        arc_number=1,
+        act_data=act1_data,
+        bible_data=bible_data,
+        characters_data=characters_data
+    )
 """
 
 from typing import Any
@@ -16,27 +49,24 @@ from knowledge_bases.foreshadowing_db import ForeshadowingDB
 class ArcPlanner(BaseGenerator):
     """
     弧线规划器
-    
-    生成内容：
-    - 弧线整体目标和主题
-    - 情绪曲线节点（高潮/低谷分布）
-    - 每章的关键事件
-    - 伏笔布局（埋设/触发/解决节点）
-    - 章节间因果链
-    
-    使用示例：
-        planner = ArcPlanner(project_id="xxx")
-        arc_plan = await planner.generate(
-            arc_number=1,
-            act_data=act1_data,
-            bible_data=bible_data,
-            characters_data=characters_data
-        )
+
+    弧线（Arc）是介于"幕"和"章"之间的中间层规划单元。一条弧线通常包含 10-20 章，
+    对应全局大纲中的一幕（act）。弧线规划的核心任务是：在保持宏观视角的前提下，
+    为每一章定义"必须发生什么"和"情绪如何变化"。
+
+    设计哲学：
+        - "方向感"优于"详细感"：弧线规划应该给 ChapterPlanner 足够的创作自由度，
+          同时确保不偏离全局大纲的方向。
+        - 情绪先行：先确定整体情绪走向（上升/下降/波浪），再填充具体事件。
+        - 伏笔预埋：在弧线阶段就确定新伏笔的埋设和触发节点，让伏笔分布更自然。
+
+    继承自 BaseGenerator，复用带重试的生成流程和闭环修正机制。
     """
-    
+
     def _get_generator_name(self) -> str:
+        """返回生成器名称，用于日志和进度报告中标识当前环节。"""
         return "ArcPlanner"
-    
+
     def _build_prompt(self,
                       arc_number: int,
                       act_data: dict,
@@ -45,10 +75,25 @@ class ArcPlanner(BaseGenerator):
                       existing_foreshadowing: list = None,
                       **kwargs) -> str:
         """
-        构建弧线规划 prompt（缩略版）
+        构建弧线规划 prompt。
 
-        弧线只保留宏观设计：情绪走向、转折点、里程碑、伏笔设计、关键因果。
-        具体的每章标题、场景、详细事件全部交给 ChapterPlanner。
+        Prompt 设计要点：
+            1. 明确告知 LLM 这是"弧线层面的宏观规划"，严禁包含具体场景或对话。
+            2. 提供弧线基本信息（序号、章节范围、主题、描述、发展方向）。
+            3. 提供主角信息，确保弧线围绕主角成长展开。
+            4. 提供详细的字段说明和数量约束（转折点1-3个、伏笔2-4条等）。
+            5. 里程碑数组长度必须等于章节数，这是一个强约束。
+
+        Args:
+            arc_number: 弧线序号（从1开始）。
+            act_data: 全局大纲中对应幕的数据，包含 name/description/chapter_range/key_directions。
+            bible_data: Bible 数据。
+            characters_data: 人物数据。
+            existing_foreshadowing: 已有伏笔列表（可选，当前未使用但预留）。
+            **kwargs: 预留扩展参数。
+
+        Returns:
+            完整的 prompt 字符串。
         """
         # 提取信息
         chapter_range = act_data.get("chapter_range", [1, 20])
@@ -183,22 +228,43 @@ class ArcPlanner(BaseGenerator):
 - 所有 chapter 数值必须在 [{start_chapter}, {end_chapter}] 范围内
 """
         return prompt
-    
+
     def _parse_response(self, response: str) -> dict:
         """
-        解析弧线规划响应
-        
+        解析弧线规划响应。
+
+        使用基类提供的 _safe_json_parse() 进行安全解析。
+        若解析失败，基类会自动构造修正提示词并重试。
+
         Args:
-            response: LLM 返回的 JSON 字符串
-            
+            response: LLM 返回的原始 JSON 字符串。
+
         Returns:
-            解析后的弧线规划数据
+            解析后的弧线规划数据字典。
         """
         return self._safe_json_parse(response)
-    
+
     def _validate_result(self, result: dict) -> bool:
         """
-        验证弧线规划数据完整性（缩略版）
+        验证弧线规划数据完整性。
+
+        验证项：
+            1. arc_id 存在性：必须有 arc_id 字段。
+            2. 章节范围有效性：start_chapter <= end_chapter，且至少包含1章。
+            3. 情绪弧线：必须有 emotional_arc，且 pattern 只能是"上升"、"下降"、"波浪"。
+            4. 转折点：至少1个，最多3个，每个转折点 chapter 必须在弧线范围内。
+            5. 章节里程碑：数组长度必须等于章节数，且 chapter_number 必须连续递增。
+            6. 伏笔设计：至少2条，最多4条，每个伏笔的 planted_chapter/trigger_chapter/resolution_chapter
+               必须在弧线范围内。
+
+        Args:
+            result: 解析后的弧线规划数据字典。
+
+        Returns:
+            True 表示验证通过。
+
+        Raises:
+            ValidationError: 验证失败时抛出，包含具体错误信息。
         """
         # 验证基本信息
         if "arc_id" not in result:
@@ -280,13 +346,22 @@ class ArcPlanner(BaseGenerator):
                     )
 
         return True
-    
+
     async def _save_result(self, result: dict) -> None:
         """
-        保存弧线规划到知识库（异步）
+        保存弧线规划到知识库，并将新伏笔写入伏笔库。
 
-        只保存弧线规划和伏笔设计，不再预生成每章的 ChapterPlan。
-        详细的单章规划完全交给 ChapterPlanner 负责。
+        保存流程：
+            1. 规范化 arc_id：去掉重复的 "arc_" 前缀，确保保存为 arcs/arc_1.json。
+            2. 调用 StoryDB.save_arc_plan() 保存弧线规划。
+            3. 提取 foreshadowing_design，将每条新伏笔转换为 ForeshadowingItem 存入 ForeshadowingDB。
+
+        与 ChapterPlanner 的分工明确：
+            ArcPlanner 只保存弧线规划和伏笔设计，不预生成 ChapterPlan。
+            详细的单章规划完全交给 ChapterPlanner 负责。
+
+        Args:
+            result: 验证通过的弧线规划数据字典。
         """
         story_db = StoryDB(self.project_id)
         foreshadowing_db = ForeshadowingDB(self.project_id)
@@ -309,10 +384,23 @@ class ArcPlanner(BaseGenerator):
                 ),
                 urgency=fs.get("importance", "medium")
             )
-    
+
     async def _vectorize_result(self, result: dict) -> None:
         """
-        将弧线规划向量化存储（缩略版）
+        将弧线规划向量化存储，供后续语义检索。
+
+        向量化策略：
+            1. 弧线主题：将 arc_theme, arc_goal, protagonist_development 和情绪走向组合为文本，
+               存入 outlines collection，type=arc。
+            2. 转折点：每个转折点单独向量化，metadata 包含 arc_id 和 chapter_number，type=turning_point。
+            3. 章节里程碑：每个里程碑单独向量化，metadata 包含 arc_id 和 chapter_number，type=chapter_milestone。
+
+        检索场景示例：
+            - "第一弧线的高潮在哪里" → 检索到对应弧线的向量。
+            - "第15章需要发生什么" → 检索到对应里程碑的向量。
+
+        Args:
+            result: 已保存的弧线规划数据字典。
         """
         from vector_store.store import VectorStore
 

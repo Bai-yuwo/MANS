@@ -521,6 +521,7 @@ class LLMClient:
         system_prompt: str = "",
         max_tokens: int = 2000,
         temperature: float = 0.7,
+        json_schema: Optional[dict] = None,
         connect_timeout: int = 30,
         sock_read_timeout: int = 60,
         total_timeout: int = 600,
@@ -534,6 +535,7 @@ class LLMClient:
             system_prompt: 系统提示词
             max_tokens: 最大生成 token 数
             temperature: 温度参数
+            json_schema: JSON Schema 定义（非 writer 角色使用结构化输出）
             connect_timeout: 连接超时（保留参数）
             sock_read_timeout: 读取超时（保留参数）
             total_timeout: 总超时（保留参数）
@@ -555,6 +557,7 @@ class LLMClient:
                     system_prompt=system_prompt,
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    json_schema=json_schema,
                 ):
                     yield token
 
@@ -567,6 +570,7 @@ class LLMClient:
         system_prompt: str = "",
         max_tokens: int = 2000,
         temperature: float = 0.7,
+        json_schema: Optional[dict] = None,
     ) -> AsyncIterator[str]:
         """实际的流式 LLM 调用实现"""
         kwargs = self._build_call_kwargs(
@@ -576,6 +580,7 @@ class LLMClient:
             prompt=prompt,
             max_tokens=max_tokens,
             temperature=temperature,
+            json_schema=json_schema,
         )
         kwargs["stream"] = True
 

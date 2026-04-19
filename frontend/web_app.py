@@ -652,22 +652,41 @@ async def suggest_arc(project_id: str, request: Request):
 
 章节范围：第 {next_start} 章 ~ 第 {next_end} 章。
 
-请输出严格的 JSON：
+请输出严格的 JSON。"""
 
-{{
-  "chapter_range": [{next_start}, {next_end}],
-  "title": "弧线名称（简洁，10字以内）",
-  "description": "用一句话描述这条弧线的核心走向或作用"
-}}
-
-只输出 JSON，不要其他内容。"""
+    arc_suggest_schema = {
+        "name": "arc_suggestion",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "chapter_range": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 2,
+                    "maxItems": 2
+                },
+                "title": {
+                    "type": "string",
+                    "description": "弧线名称（简洁，10字以内）"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "用一句话描述这条弧线的核心走向或作用"
+                }
+            },
+            "required": ["chapter_range", "title", "description"],
+            "additionalProperties": False
+        }
+    }
 
     try:
         response = await quick_call(
             role="extract",
             prompt=prompt,
             max_tokens=500,
-            temperature=0.5
+            temperature=0.5,
+            response_format="json_schema",
+            json_schema=arc_suggest_schema
         )
         suggestion = json.loads(response)
         return {"success": True, "suggestion": suggestion}

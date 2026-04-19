@@ -359,6 +359,9 @@ class BaseGenerator(ABC):
             full_content = ""
             token_count = 0
 
+            # 获取 JSON Schema（如果子类定义了）
+            json_schema = self.get_output_schema()
+
             # 使用分离的超时策略：
             # - connect_timeout: 30s（快速判定连接是否成功）
             # - sock_read_timeout: 60s（token之间的最大间隔）
@@ -368,6 +371,7 @@ class BaseGenerator(ABC):
                 prompt=prompt,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                json_schema=json_schema,
                 connect_timeout=connect_timeout,
                 sock_read_timeout=sock_read_timeout,
                 total_timeout=total_timeout

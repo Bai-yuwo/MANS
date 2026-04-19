@@ -63,6 +63,8 @@ workspace/
 *.swo
 *~
 *APItest.py
+APIResponseType.txt
+LLM_Output.txt
 
 # Windows 批处理脚本
 *.bat

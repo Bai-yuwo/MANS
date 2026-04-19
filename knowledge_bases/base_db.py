@@ -101,13 +101,7 @@ class BaseDB:
         # 使用全局文件路径锁，确保跨实例并发安全
         file_lock = await FileLockRegistry.acquire(str(file_path))
         async with file_lock:
-            try:
-                async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-                    content = await f.read()
-                    return json.loads(content)
-            except (json.JSONDecodeError, IOError) as e:
-                logger.error(f"加载数据失败 {key}: {e}")
-                return None
+            return await self._load_no_lock(key)
 
     async def save(self, key: str, data: dict) -> bool:
         """
@@ -123,42 +117,11 @@ class BaseDB:
             是否保存成功
         """
         file_path = self._get_file_path(key)
-        temp_path = file_path.with_suffix('.tmp')
 
         # 使用全局文件路径锁，确保跨实例并发安全
         file_lock = await FileLockRegistry.acquire(str(file_path))
         async with file_lock:
-            try:
-                # 如果文件已存在，先读取最新数据，进行深度合并（防止丢失更新）
-                if file_path.exists():
-                    try:
-                        async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-                            latest = json.loads(await f.read())
-                        # 深度合并：data 的字段覆盖 latest 的字段，但保留 latest 中未被覆盖的字段
-                        merged = self._deep_merge(latest, data)
-                        data = merged
-                    except (json.JSONDecodeError, IOError):
-                        # 读取失败则继续使用传入的 data
-                        pass
-
-                # 添加更新时间
-                data['_updated_at'] = datetime.now().isoformat()
-
-                # 写入临时文件
-                async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
-                    await f.write(json.dumps(data, ensure_ascii=False, indent=2))
-
-                # 原子替换（os.replace 在 Python 3.3+ 支持跨文件系统原子操作）
-                import os
-                os.replace(str(temp_path), str(file_path))
-                return True
-
-            except IOError as e:
-                logger.error(f"保存数据失败 {key}: {e}")
-                # 清理临时文件
-                if temp_path.exists():
-                    temp_path.unlink()
-                return False
+            return await self._save_no_lock(key, data)
 
     @staticmethod
     def _deep_merge(base: dict, override: dict) -> dict:

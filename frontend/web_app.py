@@ -63,6 +63,27 @@ from core.injection_engine import InjectionEngine
 app = FastAPI(title="MANS - Multi-Agent Novel System")
 
 # ============================================================
+# 安全辅助函数
+# ============================================================
+
+_WORKSPACE_ROOT = Path("workspace").resolve()
+
+
+def _validate_project_path(project_id: str) -> Path:
+    """
+    验证项目ID安全并返回项目路径
+
+    防止路径遍历攻击：确保解析后的路径始终在工作区目录内
+    """
+    project_path = (_WORKSPACE_ROOT / project_id).resolve()
+    try:
+        project_path.relative_to(_WORKSPACE_ROOT)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="非法项目ID")
+    return project_path
+
+
+# ============================================================
 # Pydantic 请求/响应模型
 # ============================================================
 
@@ -206,12 +227,12 @@ async def get_project(project_id: str):
 async def delete_project(project_id: str):
     """删除项目"""
     import shutil
-    
-    project_path = Path("workspace") / project_id
-    
+
+    project_path = _validate_project_path(project_id)
+
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
-    
+
     try:
         shutil.rmtree(project_path)
         return {"success": True, "message": "项目已删除"}

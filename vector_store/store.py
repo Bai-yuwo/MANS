@@ -239,8 +239,7 @@ class VectorStore:
             
         except Exception as e:
             log_exception(logger, e, "向量检索失败")
-            logger.warning(f"向量检索失败，返回空结果: {e}")
-            return []
+            raise
     
     async def upsert(
         self,
@@ -315,7 +314,7 @@ class VectorStore:
             
         except Exception as e:
             log_exception(logger, e, "批量向量存储失败")
-            return False
+            raise
     
     async def delete(
         self,
@@ -371,7 +370,7 @@ class VectorStore:
             包含 collection 信息的字典
         """
         try:
-            coll = self._get_or_create_collection(collection)
+            coll = await self._get_or_create_collection(collection)
             count = await asyncio.to_thread(coll.count)
             return {
                 "collection": collection,

@@ -13,6 +13,7 @@ import asyncio
 import logging
 import sys
 import threading
+import traceback
 from pathlib import Path
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from datetime import datetime
@@ -201,8 +202,6 @@ def log_exception(logger: logging.Logger, exc: Exception, context: str = ""):
         exc: 异常对象
         context: 异常上下文描述
     """
-    import traceback
-    
     error_msg = f"{context}: {str(exc)}" if context else str(exc)
     logger.error(error_msg)
     logger.error(f"Traceback:\n{traceback.format_exc()}")

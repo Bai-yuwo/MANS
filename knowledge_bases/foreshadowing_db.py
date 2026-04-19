@@ -207,8 +207,8 @@ class ForeshadowingDB(BaseDB):
         根据描述移除伏笔（用于回滚场景产生的新伏笔）
 
         Args:
-            description: 伏笔描述
-            chapter_number: 章节号（用于进一步匹配）
+            description: 伏笔描述（精确匹配）
+            chapter_number: 章节号（预留，当前未使用）
 
         Returns:
             是否成功移除
@@ -217,13 +217,10 @@ class ForeshadowingDB(BaseDB):
             items = await self.get_all_items()
             original_len = len(items)
 
-            # 移除描述匹配且是在指定章节埋下的伏笔
+            # 精确匹配描述（避免模糊匹配误删不相关伏笔）
             items = [
                 item for item in items
-                if not (
-                    description in item.description
-                    or item.description in description
-                )
+                if item.description != description
             ]
 
             if len(items) < original_len:

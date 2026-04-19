@@ -90,11 +90,10 @@ class BibleDB(BaseDB):
             items = data.get("items", [])
             original_len = len(items)
 
-            # 移除内容匹配的规则（允许部分匹配）
+            # 精确匹配内容（避免模糊匹配误删不相关规则）
             items = [
                 item for item in items
-                if content not in item.get("content", "")
-                and item.get("content", "") not in content
+                if item.get("content", "") != content
             ]
 
             if len(items) < original_len:

@@ -166,8 +166,8 @@ class StoryDB(BaseDB):
         try:
             async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
                 await f.write(json.dumps(arc_data, ensure_ascii=False, indent=2))
-            import shutil
-            shutil.move(str(temp_path), str(file_path))
+            import os
+            os.replace(str(temp_path), str(file_path))
             return True
         except Exception as e:
             logger.error(f"保存弧线规划失败: {e}")

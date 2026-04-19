@@ -455,7 +455,7 @@ class LLMClient:
 
             elapsed = time.time() - start_time
 
-            content = response.output_text or ""
+            content = getattr(response, 'output_text', '') or ''
 
             usage = {}
             if hasattr(response, 'usage') and response.usage:

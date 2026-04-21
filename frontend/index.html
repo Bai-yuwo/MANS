@@ -47,18 +47,6 @@
                     </svg>
                     <span class="sidebar-item-text">作品创作</span>
                 </li>
-                <li class="sidebar-item disabled" data-panel="arc" data-requires-project="true">
-                    <svg viewBox="0 0 24 24">
-                        <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
-                    </svg>
-                    <span class="sidebar-item-text">弧线规划</span>
-                </li>
-                <li class="sidebar-item disabled" data-panel="chapter-plan" data-requires-project="true">
-                    <svg viewBox="0 0 24 24">
-                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
-                    </svg>
-                    <span class="sidebar-item-text">章节规划</span>
-                </li>
                 <li class="sidebar-item disabled" data-panel="issues" data-requires-project="true">
                     <svg viewBox="0 0 24 24">
                         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
@@ -207,40 +195,7 @@
                 <button id="enter-writing-btn" class="mans-btn primary" style="display: none; margin-top: 20px;">进入写作</button>
             </div>
 
-            <!-- 弧线规划面板：弧线列表 + 创建模态框 -->
-            <div class="content-panel" id="arc-panel">
-                <h3 class="panel-title">弧线规划</h3>
-                <div class="panel-content">
-                    <div id="arc-empty" class="panel-empty">
-                        <svg class="panel-empty-icon" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-                        </svg>
-                        <p class="panel-empty-text">请先选择一个作品，再生成弧线规划</p>
-                    </div>
-                    <div id="arc-content" style="display: none;">
-                        <div class="arc-toolbar" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
-                            <button class="mans-btn primary" onclick="openCreateArcModal()">
-                                <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;vertical-align:middle;margin-right:4px;">
-                                    <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-                                </svg>
-                                创建新弧线
-                            </button>
-                            <button class="mans-btn" id="suggest-arc-btn" onclick="suggestNextArc()">
-                                <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;vertical-align:middle;margin-right:4px;">
-                                    <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6A4.997 4.997 0 0 1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z"/>
-                                </svg>
-                                智能推荐
-                            </button>
-                        </div>
-                        <div id="arc-suggest-result" style="display:none;margin-bottom:16px;"></div>
-                        <div class="arc-grid" id="arc-list-dynamic">
-                            <!-- 弧线列表由 JavaScript 动态加载 -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 创建弧线模态框 -->
+            <!-- 创建弧线模态框（并入写作区后复用） -->
             <div id="create-arc-modal" class="modal" style="display: none;">
                 <div class="modal-content" style="max-width: 520px;">
                     <div class="modal-header">
@@ -279,29 +234,6 @@
                 </div>
             </div>
 
-            <!-- 章节规划面板：章节编号输入 + 规划结果展示 -->
-            <div class="content-panel" id="chapter-plan-panel">
-                <h3 class="panel-title">章节规划</h3>
-                <div class="panel-content">
-                    <div id="chapter-plan-empty" class="panel-empty">
-                        <svg class="panel-empty-icon" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
-                        </svg>
-                        <p class="panel-empty-text">请先选择一个作品，再生成章节规划</p>
-                    </div>
-                    <div id="chapter-plan-content" style="display: none;">
-                        <div class="chapter-input-group">
-                            <label>章节编号:</label>
-                            <input type="number" id="chapter-plan-number" min="1" value="1">
-                            <button class="mans-btn primary" onclick="generateChapterPlan(parseInt(document.getElementById('chapter-plan-number').value))">生成章节规划</button>
-                        </div>
-                        <div id="chapter-plan-result" class="chapter-plan-result">
-                            <!-- 章节规划结果由 JavaScript 动态渲染 -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <!-- Issue Pool 面板：问题追踪与审查 -->
             <div class="content-panel" id="issues-panel">
                 <h3 class="panel-title">Issue Pool</h3>
@@ -332,8 +264,16 @@
                     <p class="panel-empty-text">请先选择一个作品进入写作界面</p>
                 </div>
                 <div id="writing-content" style="display: none;">
+                    <!-- 写作区头部工具栏 -->
                     <div class="writing-header">
-                        <h3>写作界面</h3>
+                        <div class="writing-header-left">
+                            <button id="toggle-writing-sidebar" class="mans-btn icon-btn" title="切换导航栏">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+                                </svg>
+                            </button>
+                            <h3>写作界面</h3>
+                        </div>
                         <div class="writing-actions">
                             <button id="view-exports-btn" class="mans-btn" onclick="loadExports()">导出列表</button>
                             <button id="view-kb-btn" class="mans-btn">查看知识库</button>
@@ -341,8 +281,53 @@
                         </div>
                     </div>
                     <div id="exports-panel" class="exports-panel" style="display:none;"></div>
-                    <div id="chapter-plan-display" class="chapter-content">
-                        <!-- 章节规划和场景内容由 JavaScript 动态加载 -->
+
+                    <!-- 写作区主体：侧边栏 + 主内容 -->
+                    <div class="writing-layout">
+                        <!-- 左侧导航栏：弧线 → 章节树 -->
+                        <aside id="writing-sidebar" class="writing-sidebar">
+                            <div class="sidebar-header">
+                                <span class="sidebar-title">章节导航</span>
+                            </div>
+                            <div class="sidebar-toolbar">
+                                <button class="mans-btn sm" onclick="openCreateArcModal()" title="创建新弧线">
+                                    <svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:currentColor;vertical-align:middle;margin-right:3px;">
+                                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                    </svg>
+                                    新弧线
+                                </button>
+                                <button class="mans-btn sm" id="sidebar-gen-chapter-btn" onclick="generateChapterPlan(AppState.currentChapter)" title="为当前章节生成规划">
+                                    <svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:currentColor;vertical-align:middle;margin-right:3px;">
+                                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                                    </svg>
+                                    生成本章
+                                </button>
+                            </div>
+                            <div id="writing-sidebar-content" class="writing-sidebar-content">
+                                <!-- 弧线章节树由 JavaScript 动态加载 -->
+                            </div>
+                        </aside>
+
+                        <!-- 主内容区 -->
+                        <main class="writing-main">
+                            <!-- 章节规划概览（可折叠） -->
+                            <div id="chapter-plan-overview" class="chapter-plan-overview collapsed">
+                                <div class="overview-header" onclick="toggleChapterOverview()">
+                                    <span class="overview-title">章节规划概览</span>
+                                    <span class="overview-toggle">▸</span>
+                                </div>
+                                <div class="overview-body" style="display: none;">
+                                    <div id="overview-content">
+                                        <!-- 由 JavaScript 填充 -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 场景卡片列表 -->
+                            <div id="chapter-plan-display" class="chapter-content">
+                                <!-- 章节规划和场景内容由 JavaScript 动态加载 -->
+                            </div>
+                        </main>
                     </div>
                 </div>
             </div>
@@ -374,10 +359,28 @@
                         <input type="text" id="setting-api-base" placeholder="http://127.0.0.1:666" value="">
                     </div>
                     <div class="form-group">
-                        <label>默认生成温度</label>
-                        <input type="range" id="setting-temperature" min="0" max="1" step="0.1" value="0.7"
+                        <label>写作模型温度 (0.5 ~ 1.0)</label>
+                        <input type="range" id="setting-temp-writer" min="0.5" max="1" step="0.05" value="0.75"
                                style="width: 100%; accent-color: var(--primary);">
-                        <span id="temperature-value" style="color: var(--text-secondary); font-size: 13px;">0.7</span>
+                        <span id="temp-writer-value" style="color: var(--text-secondary); font-size: 13px;">0.75</span>
+                    </div>
+                    <div class="form-group">
+                        <label>生成模型温度 (0 ~ 0.5)</label>
+                        <input type="range" id="setting-temp-generator" min="0" max="0.5" step="0.05" value="0.3"
+                               style="width: 100%; accent-color: var(--primary);">
+                        <span id="temp-generator-value" style="color: var(--text-secondary); font-size: 13px;">0.3</span>
+                    </div>
+                    <div class="form-group">
+                        <label>裁剪模型温度 (0 ~ 0.5)</label>
+                        <input type="range" id="setting-temp-trim" min="0" max="0.5" step="0.05" value="0.1"
+                               style="width: 100%; accent-color: var(--primary);">
+                        <span id="temp-trim-value" style="color: var(--text-secondary); font-size: 13px;">0.1</span>
+                    </div>
+                    <div class="form-group">
+                        <label>提取模型温度 (0 ~ 0.5)</label>
+                        <input type="range" id="setting-temp-extract" min="0" max="0.5" step="0.05" value="0.3"
+                               style="width: 100%; accent-color: var(--primary);">
+                        <span id="temp-extract-value" style="color: var(--text-secondary); font-size: 13px;">0.3</span>
                     </div>
                     <div class="form-group">
                         <label>最大重试次数</label>
@@ -722,6 +725,7 @@
             <div class="streaming-status">
                 <div class="streaming-status-dot" id="streaming-status-dot"></div>
                 <span id="streaming-status-text">准备中...</span>
+                <span id="streaming-stats" style="margin-left: 12px; color: #64748b; font-size: 12px; font-family: 'JetBrains Mono', monospace;"></span>
             </div>
             <div class="streaming-actions">
                 <button class="btn-streaming" id="btn-copy-output" onclick="copyStreamingOutput()" disabled>复制内容</button>

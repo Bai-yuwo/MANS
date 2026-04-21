@@ -23,7 +23,7 @@
  *
  * 用法：
  *     // 启动 Bible 流式生成
- *     await startStreamingGeneration('bible', { temperature: 0.7 });
+ *     await startStreamingGeneration('bible', { temperature: 0.3 });
  *
  *     // 复制本次生成的完整内容到剪贴板
  *     copyStreamingOutput();
@@ -54,7 +54,8 @@ const StreamingState = {
     startTime: null,
     currentTokenLog: null,
     status: 'idle',
-    lastError: ''
+    lastError: '',
+    tokenCount: 0
 };
 
 // ============================================
@@ -107,13 +108,14 @@ async function startStreamingGeneration(type = 'bible', extraParams = {}) {
     StreamingState.logs = [];
     StreamingState.startTime = Date.now();
     StreamingState.lastError = '';
+    StreamingState.tokenCount = 0;
 
     // 添加开始日志
     addStreamingLog('progress', `开始${getTypeName(type)}生成...`);
 
     try {
-        // 读取温度设置
-        const temperature = typeof getSetting === 'function' ? getSetting('temperature', 0.7) : 0.7;
+        // 读取生成器温度设置（generator 角色：Bible、人物、大纲、弧线、章节规划）
+        const temperature = typeof getSetting === 'function' ? getSetting('temperature_generator', 0.3) : 0.3;
 
         // 构建查询参数
         const queryParams = new URLSearchParams();
@@ -170,15 +172,23 @@ async function startStreamingGeneration(type = 'bible', extraParams = {}) {
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-                if (line.startsWith('event:')) {
-                    lastEventType = line.slice(6).trim();
+                const trimmed = line.replace(/\r$/, '');
+
+                // 调试：输出原始SSE行（调试用，便于排查格式问题）
+                if (trimmed.trim() && !trimmed.startsWith(':')) {
+                    console.debug('[SSE raw]', trimmed);
+                }
+
+                if (trimmed.startsWith('event:')) {
+                    lastEventType = trimmed.slice(6).trim();
                     continue;
                 }
 
-                if (line.startsWith('data:')) {
-                    const dataStr = line.slice(5).trim();
+                if (trimmed.startsWith('data:')) {
+                    const dataStr = trimmed.slice(5).trim();
                     try {
                         const data = JSON.parse(dataStr);
+                        console.debug('[SSE parsed]', lastEventType, data);
                         handleSSEEvent(lastEventType, data);
                         // 重置事件类型
                         lastEventType = 'message';
@@ -235,14 +245,38 @@ function handleSSEEvent(eventType, data) {
         case 'start':
         case 'message':  // 默认事件类型
             if (data.message) {
-                addStreamingLog('progress', data.message);
-                updateStreamingStatus('streaming', data.message);
+                // 构建元数据信息（如果存在）
+                const metaParts = [];
+                if (data.model) metaParts.push(`模型: ${data.model}`);
+                if (data.prompt_length) metaParts.push(`Prompt: ${data.prompt_length} 字符`);
+                if (data.max_tokens) metaParts.push(`MaxTokens: ${data.max_tokens}`);
+                if (data.temperature !== undefined) metaParts.push(`温度: ${data.temperature}`);
+                const metaStr = metaParts.length > 0 ? ` [${metaParts.join(' | ')}]` : '';
+
+                addStreamingLog('progress', data.message + metaStr);
+                updateStreamingStatus('streaming', data.message + metaStr);
+
+                // 如果有元数据，额外添加一行详细信息到日志
+                if (metaParts.length > 0) {
+                    const detailParts = [];
+                    if (data.role) detailParts.push(`Role: ${data.role}`);
+                    if (data.model) detailParts.push(`Model: ${data.model}`);
+                    if (data.prompt_length) detailParts.push(`Prompt长度: ${data.prompt_length} 字符`);
+                    if (data.max_tokens) detailParts.push(`MaxTokens: ${data.max_tokens}`);
+                    if (data.temperature !== undefined) detailParts.push(`Temperature: ${data.temperature}`);
+                    addStreamingLog('progress', `▸ 调用详情: ${detailParts.join(' | ')}`);
+                }
             }
             break;
 
         case 'progress':
             if (data.message) {
-                addStreamingLog('progress', data.message);
+                const stats = [];
+                if (data.token_count !== undefined) stats.push(`${data.token_count} tokens`);
+                if (data.char_count !== undefined) stats.push(`${data.char_count} 字`);
+                const statsStr = stats.length > 0 ? ` (${stats.join(' / ')})` : '';
+                addStreamingLog('progress', data.message + statsStr);
+                updateStreamingStatus('streaming', data.message + statsStr);
             }
             break;
 
@@ -250,6 +284,13 @@ function handleSSEEvent(eventType, data) {
             // 实时显示LLM输出
             if (data.content) {
                 StreamingState.fullContent += data.content;
+                StreamingState.tokenCount = (StreamingState.tokenCount || 0) + 1;
+
+                // 更新底部统计
+                const statsEl = document.getElementById('streaming-stats');
+                if (statsEl) {
+                    statsEl.textContent = `${StreamingState.tokenCount} tokens / ${StreamingState.fullContent.length} 字`;
+                }
 
                 // 如果还没有token日志元素，创建一个
                 if (!StreamingState.currentTokenLog) {
@@ -482,7 +523,8 @@ function getTypeName(type) {
         'bible': 'Bible',
         'characters': '人物设定',
         'outline': '大纲',
-        'arc': '弧线规划'
+        'arc': '弧线规划',
+        'chapter': '章节规划'
     };
     return names[type] || type;
 }
@@ -523,6 +565,7 @@ function resetStreamingState() {
     StreamingState.currentTokenLog = null;
     StreamingState.startTime = null;
     StreamingState.lastError = '';
+    StreamingState.tokenCount = 0;
 }
 
 // 显式导出到 window，供 HTML 内联事件处理器调用

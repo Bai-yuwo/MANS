@@ -63,6 +63,7 @@ class LogConfig:
         logging.ERROR: 'error.log',
         logging.CRITICAL: 'critical.log',
     }
+    PROMPT_LOG_FILE = 'prompt.log'
 
 
 # 模块级全局标志，确保 setup_logging() 只执行一次。
@@ -136,10 +137,31 @@ def setup_logging(console_level=None):
         file_handler.setFormatter(file_formatter)
         root_logger.addHandler(file_handler)
 
+    # Prompt 专用日志文件：记录每次 LLM 调用的请求详情
+    prompt_handler = RotatingFileHandler(
+        LogConfig.LOG_DIR / LogConfig.PROMPT_LOG_FILE,
+        maxBytes=LogConfig.MAX_BYTES,
+        backupCount=LogConfig.BACKUP_COUNT,
+        encoding='utf-8'
+    )
+    prompt_handler.setLevel(logging.DEBUG)
+    prompt_formatter = logging.Formatter(
+        '%(asctime)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    prompt_handler.setFormatter(prompt_formatter)
+    # 使用过滤器确保只有 mans.prompt logger 的日志进入 prompt.log
+    class PromptFilter(logging.Filter):
+        def filter(self, record):
+            return record.name == 'mans.prompt'
+    prompt_handler.addFilter(PromptFilter())
+    root_logger.addHandler(prompt_handler)
+
     root_logger.info("=" * 80)
     root_logger.info(f"MANS 日志系统已启动 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     root_logger.info(f"日志目录: {LogConfig.LOG_DIR}")
     root_logger.info("日志按级别分类: debug.log | info.log | warning.log | error.log | critical.log")
+    root_logger.info("Prompt 日志: prompt.log")
     root_logger.info("=" * 80)
 
 

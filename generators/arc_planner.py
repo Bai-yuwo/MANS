@@ -67,6 +67,112 @@ class ArcPlanner(BaseGenerator):
         """返回生成器名称，用于日志和进度报告中标识当前环节。"""
         return "ArcPlanner"
 
+    def get_output_schema(self) -> dict:
+        """
+        返回弧线规划的 JSON Schema 定义。
+
+        Schema 结构：
+            - arc_id: 弧线唯一标识。
+            - arc_number: 弧线序号。
+            - chapter_range: 章节范围 [start, end]。
+            - arc_theme: 弧线主题（一句话概括）。
+            - arc_goal: 弧线目标（主角在这弧线要完成什么）。
+            - protagonist_development: 主角在这弧线中的成长方向。
+            - emotional_arc: 情绪弧线对象，包含 opening/climax_chapter/climax_emotion/ending/pattern。
+            - key_turning_points: 转折点数组，每项包含 chapter/name/description/impact。
+            - chapter_milestones: 章节里程碑数组，每项包含 chapter_number/milestone/must_happen。
+            - foreshadowing_design: 伏笔设计数组，每项包含 type/description/planted_chapter/hint_chapters/trigger_chapter/resolution_chapter/importance。
+            - causal_highlights: 因果链数组，每项包含 from_chapter/to_chapter/cause/effect。
+        """
+        return {
+            "name": "arc_plan_output",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "arc_id": {"type": "string"},
+                    "arc_number": {"type": "integer"},
+                    "chapter_range": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "minItems": 2,
+                        "maxItems": 2
+                    },
+                    "arc_theme": {"type": "string"},
+                    "arc_goal": {"type": "string"},
+                    "protagonist_development": {"type": "string"},
+                    "emotional_arc": {
+                        "type": "object",
+                        "properties": {
+                            "opening": {"type": "string"},
+                            "climax_chapter": {"type": "integer"},
+                            "climax_emotion": {"type": "string"},
+                            "ending": {"type": "string"},
+                            "pattern": {"type": "string"}
+                        },
+                        "required": ["opening", "climax_chapter", "climax_emotion", "ending", "pattern"]
+                    },
+                    "key_turning_points": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "chapter": {"type": "integer"},
+                                "name": {"type": "string"},
+                                "description": {"type": "string"},
+                                "impact": {"type": "string"}
+                            },
+                            "required": ["chapter", "name", "description", "impact"]
+                        }
+                    },
+                    "chapter_milestones": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "chapter_number": {"type": "integer"},
+                                "milestone": {"type": "string"},
+                                "must_happen": {"type": "string"}
+                            },
+                            "required": ["chapter_number", "milestone", "must_happen"]
+                        }
+                    },
+                    "foreshadowing_design": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "description": {"type": "string"},
+                                "planted_chapter": {"type": "integer"},
+                                "hint_chapters": {
+                                    "type": "array",
+                                    "items": {"type": "integer"}
+                                },
+                                "trigger_chapter": {"type": "integer"},
+                                "resolution_chapter": {"type": "integer"},
+                                "importance": {"type": "string"}
+                            },
+                            "required": ["type", "description", "planted_chapter", "trigger_chapter", "resolution_chapter", "importance"]
+                        }
+                    },
+                    "causal_highlights": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "from_chapter": {"type": "integer"},
+                                "to_chapter": {"type": "integer"},
+                                "cause": {"type": "string"},
+                                "effect": {"type": "string"}
+                            },
+                            "required": ["from_chapter", "to_chapter", "cause", "effect"]
+                        }
+                    }
+                },
+                "required": ["arc_id", "arc_number", "chapter_range", "arc_theme", "arc_goal", "protagonist_development", "emotional_arc", "key_turning_points", "chapter_milestones", "foreshadowing_design", "causal_highlights"]
+            }
+        }
+
     def _build_prompt(self,
                       arc_number: int,
                       act_data: dict,

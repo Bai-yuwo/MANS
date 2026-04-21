@@ -120,10 +120,18 @@ class Config:
     PORT: int = 666
     WORKSPACE_PATH: str = "workspace"
     VECTOR_STORE_TYPE: str = "chromadb"
-    INJECTION_TOKEN_BUDGET: int = 3500
+    INJECTION_TOKEN_BUDGET: int = 8000
     INJECTION_MAX_CHARACTERS: int = 3
     INJECTION_MAX_FORESHADOWING: int = 2
     WRITER_MAX_TOKENS: int = 3000
+    GENERATOR_MAX_TOKENS: int = 8000
+    TRIM_MAX_TOKENS: int = 2000
+    EXTRACT_MAX_TOKENS: int = 2000
+    RATE_LIMIT: int = 2
+    WRITER_TEMPERATURE: float = 0.75
+    GENERATOR_TEMPERATURE: float = 0.3
+    TRIM_TEMPERATURE: float = 0.1
+    EXTRACT_TEMPERATURE: float = 0.3
     ACTIVE_PROVIDER: str = "doubao"
     PROVIDERS: dict[str, ProviderConfig] = field(default_factory=dict)
     ENABLE_STREAMING: bool = True
@@ -162,6 +170,14 @@ class Config:
         self.INJECTION_MAX_CHARACTERS = int(os.getenv("INJECTION_MAX_CHARACTERS", self.INJECTION_MAX_CHARACTERS))
         self.INJECTION_MAX_FORESHADOWING = int(os.getenv("INJECTION_MAX_FORESHADOWING", self.INJECTION_MAX_FORESHADOWING))
         self.WRITER_MAX_TOKENS = int(os.getenv("WRITER_MAX_TOKENS", self.WRITER_MAX_TOKENS))
+        self.GENERATOR_MAX_TOKENS = int(os.getenv("GENERATOR_MAX_TOKENS", self.GENERATOR_MAX_TOKENS))
+        self.TRIM_MAX_TOKENS = int(os.getenv("TRIM_MAX_TOKENS", self.TRIM_MAX_TOKENS))
+        self.EXTRACT_MAX_TOKENS = int(os.getenv("EXTRACT_MAX_TOKENS", self.EXTRACT_MAX_TOKENS))
+        self.RATE_LIMIT = int(os.getenv("RATE_LIMIT", self.RATE_LIMIT))
+        self.WRITER_TEMPERATURE = float(os.getenv("WRITER_TEMPERATURE", self.WRITER_TEMPERATURE))
+        self.GENERATOR_TEMPERATURE = float(os.getenv("GENERATOR_TEMPERATURE", self.GENERATOR_TEMPERATURE))
+        self.TRIM_TEMPERATURE = float(os.getenv("TRIM_TEMPERATURE", self.TRIM_TEMPERATURE))
+        self.EXTRACT_TEMPERATURE = float(os.getenv("EXTRACT_TEMPERATURE", self.EXTRACT_TEMPERATURE))
         self.ACTIVE_PROVIDER = os.getenv("ACTIVE_PROVIDER", self.ACTIVE_PROVIDER)
         self.ENABLE_STREAMING = os.getenv("ENABLE_STREAMING", str(self.ENABLE_STREAMING)).lower() == "true"
         self.ENABLE_ASYNC_UPDATE = os.getenv("ENABLE_ASYNC_UPDATE", str(self.ENABLE_ASYNC_UPDATE)).lower() == "true"
@@ -240,6 +256,56 @@ class Config:
                 f"可用选项: {list(self.PROVIDERS.keys())}"
             )
         return self.PROVIDERS[self.ACTIVE_PROVIDER]
+
+    def get_temperature_for_role(self, role: str) -> float:
+        """
+        根据角色获取默认温度。
+
+        各角色的温度设计逻辑：
+            - writer (0.75): 正文生成需要一定创意，允许较高温度。
+            - generator (0.3): 结构化输出需要稳定性，温度较低。
+            - trim (0.1): 上下文裁剪需要确定性，温度最低。
+            - extract (0.3): 状态提取需要一致性，温度较低。
+
+        Args:
+            role: 任务角色标识。
+
+        Returns:
+            该角色的默认温度值。
+        """
+        role = role.lower()
+        temp_map = {
+            "writer": self.WRITER_TEMPERATURE,
+            "generator": self.GENERATOR_TEMPERATURE,
+            "trim": self.TRIM_TEMPERATURE,
+            "extract": self.EXTRACT_TEMPERATURE,
+        }
+        return temp_map.get(role, 0.7)
+
+    def get_max_tokens_for_role(self, role: str) -> int:
+        """
+        根据角色获取默认最大输出 token 数。
+
+        各角色的 token 预算设计逻辑：
+            - writer (3000): 单次场景正文，约 1500-2000 中文字符。
+            - generator (8000): Bible/大纲等结构化数据生成，内容量大。
+            - trim (2000): 上下文裁剪输出，通常较短。
+            - extract (2000): 状态提取输出，结构化 JSON，不需要太长。
+
+        Args:
+            role: 任务角色标识。
+
+        Returns:
+            该角色的默认 max_tokens 值。
+        """
+        role = role.lower()
+        tokens_map = {
+            "writer": self.WRITER_MAX_TOKENS,
+            "generator": self.GENERATOR_MAX_TOKENS,
+            "trim": self.TRIM_MAX_TOKENS,
+            "extract": self.EXTRACT_MAX_TOKENS,
+        }
+        return tokens_map.get(role, 4000)
 
     def get_model_for_role(self, role: str) -> tuple[str, ProviderConfig]:
         """
@@ -348,6 +414,16 @@ class Config:
             "WORKSPACE_PATH": self.WORKSPACE_PATH,
             "INJECTION_TOKEN_BUDGET": self.INJECTION_TOKEN_BUDGET,
             "WRITER_MAX_TOKENS": self.WRITER_MAX_TOKENS,
+            "GENERATOR_MAX_TOKENS": self.GENERATOR_MAX_TOKENS,
+            "TRIM_MAX_TOKENS": self.TRIM_MAX_TOKENS,
+            "EXTRACT_MAX_TOKENS": self.EXTRACT_MAX_TOKENS,
+            "RATE_LIMIT": self.RATE_LIMIT,
+            "TEMPERATURES": {
+                "writer": self.WRITER_TEMPERATURE,
+                "generator": self.GENERATOR_TEMPERATURE,
+                "trim": self.TRIM_TEMPERATURE,
+                "extract": self.EXTRACT_TEMPERATURE,
+            },
             "PROVIDERS_STATUS": {
                 name: "已配置" if cfg.is_configured() else "未配置"
                 for name, cfg in self.PROVIDERS.items()

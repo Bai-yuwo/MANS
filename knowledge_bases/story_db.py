@@ -30,6 +30,7 @@ knowledge_bases/story_db.py
 """
 
 import json
+import os
 from pathlib import Path
 
 import aiofiles
@@ -222,7 +223,6 @@ class StoryDB(BaseDB):
         try:
             async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
                 await f.write(json.dumps(arc_data, ensure_ascii=False, indent=2))
-            import os
             os.replace(str(temp_path), str(file_path))
             return True
         except Exception as e:

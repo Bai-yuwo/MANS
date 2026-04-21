@@ -547,8 +547,9 @@ Token 预算：{budget_tokens}
                 style_config = await self.style_db.get_style_config()
                 if style_config:
                     from jinja2 import Environment, FileSystemLoader
+                    prompts_dir = Path(__file__).parent.parent / "writer" / "prompts"
                     env = Environment(
-                        loader=FileSystemLoader("writer/prompts"),
+                        loader=FileSystemLoader(str(prompts_dir)),
                         trim_blocks=True,
                         lstrip_blocks=True
                     )

@@ -156,8 +156,9 @@ class Writer:
 
         # 复用类级缓存的 Jinja2 模板环境，避免重复磁盘 I/O
         if Writer._template_env is None:
+            prompts_dir = Path(__file__).parent / "prompts"
             Writer._template_env = Environment(
-                loader=FileSystemLoader("writer/prompts"),
+                loader=FileSystemLoader(str(prompts_dir)),
                 trim_blocks=True,
                 lstrip_blocks=True
             )
@@ -197,7 +198,7 @@ class Writer:
         chapter_plan: ChapterPlan,
         stream_callback: Optional[Callable[[str], None]] = None,
         sync_update: bool = False,
-        temperature: float = 0.75
+        temperature: float = None
     ) -> str:
         """
         生成单个场景文本（回调式流式输出）。
@@ -242,6 +243,7 @@ class Writer:
 
             # Step 2: 渲染 Jinja2 提示词
             prompt = self._render_prompt(injection_ctx)
+            system_prompt = self._render_system_prompt(injection_ctx)
 
             # Step 3: 调用主力大模型，流式生成
             full_text = ""
@@ -249,9 +251,14 @@ class Writer:
             # 估算 token 数（中文字符 * 2 约等于 tokens）
             max_tokens = scene_plan.target_word_count * 2
 
+            # 若未显式传入 temperature，使用 config 中 writer 角色的默认值
+            if temperature is None:
+                temperature = self.config.get_temperature_for_role('writer')
+
             async for token in self.llm_client.stream(
                 role="writer",
                 prompt=prompt,
+                system_prompt=system_prompt,
                 max_tokens=max_tokens,
                 temperature=temperature
             ):
@@ -316,7 +323,7 @@ class Writer:
         scene_plan: ScenePlan,
         chapter_plan: ChapterPlan,
         sync_update: bool = False,
-        temperature: float = 0.75
+        temperature: float = None
     ) -> AsyncIterator[str]:
         """
         生成单个场景文本（异步迭代器版本）。
@@ -347,14 +354,20 @@ class Writer:
 
         # Step 2: 渲染 Jinja2 提示词
         prompt = self._render_prompt(injection_ctx)
+        system_prompt = self._render_system_prompt(injection_ctx)
 
         # Step 3: 流式生成并 yield
         full_text = ""
         max_tokens = scene_plan.target_word_count * 2
 
+        # 若未显式传入 temperature，使用 config 中 writer 角色的默认值
+        if temperature is None:
+            temperature = self.config.get_temperature_for_role('writer')
+
         async for token in self.llm_client.stream(
             role="writer",
             prompt=prompt,
+            system_prompt=system_prompt,
             max_tokens=max_tokens,
             temperature=temperature
         ):
@@ -426,6 +439,43 @@ class Writer:
         except Exception as e:
             raise PromptRenderError(
                 f"模板渲染失败: {str(e)}",
+                stage="prompt_render",
+                details={"error": str(e)}
+            )
+
+    def _render_system_prompt(self, injection_ctx: InjectionContext) -> str:
+        """
+        渲染系统提示词模板。
+
+        加载 writer/prompts/system.j2 模板，将 InjectionContext 传入渲染，
+        生成作为 LLM system role 的提示词。system prompt 定义了作家的
+        身份、写作要求和禁止事项，与任务级的 user prompt 分离。
+
+        模板路径：writer/prompts/system.j2
+        模板变量：context（InjectionContext 对象）。
+
+        Args:
+            injection_ctx: InjectionEngine 组装完成的上下文数据。
+
+        Returns:
+            渲染后的 system prompt 字符串。
+
+        Raises:
+            PromptRenderError: 模板文件未找到或渲染失败。
+        """
+        try:
+            template = self.template_env.get_template("system.j2")
+            return template.render(context=injection_ctx)
+        except TemplateNotFound:
+            # 如果 system.j2 不存在，返回一个默认的系统提示词
+            return (
+                "你是一位中文网络小说作家，专注于场景描写。"
+                "文笔流畅，节奏感强，对话自然，细节生动。"
+                "严格基于提供的设定信息创作，不引入设定外内容。"
+            )
+        except Exception as e:
+            raise PromptRenderError(
+                f"系统提示词模板渲染失败: {str(e)}",
                 stage="prompt_render",
                 details={"error": str(e)}
             )
@@ -593,7 +643,7 @@ class Writer:
         previous_attempt: str,
         feedback: str,
         stream_callback: Optional[Callable[[str], None]] = None,
-        temperature: float = 0.75
+        temperature: float = None
     ) -> str:
         """
         根据反馈重新生成场景。
@@ -637,6 +687,7 @@ class Writer:
 
         # 在标准 prompt 基础上添加反馈
         base_prompt = self._render_prompt(injection_ctx)
+        system_prompt = self._render_system_prompt(injection_ctx)
 
         feedback_prompt = f"""{base_prompt}
 
@@ -654,9 +705,14 @@ class Writer:
         full_text = ""
         max_tokens = scene_plan.target_word_count * 2
 
+        # 若未显式传入 temperature，使用 config 中 writer 角色的默认值
+        if temperature is None:
+            temperature = self.config.get_temperature_for_role('writer')
+
         async for token in self.llm_client.stream(
             role="writer",
             prompt=feedback_prompt,
+            system_prompt=system_prompt,
             max_tokens=max_tokens,
             temperature=temperature
         ):
@@ -712,7 +768,7 @@ class Writer:
         chapter_plan: ChapterPlan,
         previous_attempt: str,
         feedback: str,
-        temperature: float = 0.75
+        temperature: float = None
     ) -> AsyncIterator[str]:
         """
         根据反馈重新生成场景（流式迭代器版本）。
@@ -739,6 +795,7 @@ class Writer:
         )
 
         base_prompt = self._render_prompt(injection_ctx)
+        system_prompt = self._render_system_prompt(injection_ctx)
         feedback_prompt = f"""{base_prompt}
 
 ---
@@ -754,9 +811,14 @@ class Writer:
         full_text = ""
         max_tokens = scene_plan.target_word_count * 2
 
+        # 若未显式传入 temperature，使用 config 中 writer 角色的默认值
+        if temperature is None:
+            temperature = self.config.get_temperature_for_role('writer')
+
         async for token in self.llm_client.stream(
             role="writer",
             prompt=feedback_prompt,
+            system_prompt=system_prompt,
             max_tokens=max_tokens,
             temperature=temperature
         ):

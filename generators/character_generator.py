@@ -447,6 +447,7 @@ class CharacterGenerator(BaseGenerator):
             ),
             current_emotion=protagonist_data.get("current_emotion", "平静"),
             active_goals=protagonist_data.get("active_goals", []),
+            is_protagonist=True,
             relationships=[],
             first_appeared_chapter=0,
             last_updated_chapter=0

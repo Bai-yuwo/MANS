@@ -54,6 +54,9 @@ from core.update_extractor import UpdateExtractor
 logger = get_logger('frontend.web_app')
 setup_sse_logging()
 
+# 全局配置实例，供路由中读取角色默认值
+_config = get_config()
+
 # 生成器组件：按依赖顺序 Bible → Characters → Outline → Arc → Chapter
 from generators import (
     BibleGenerator, CharacterGenerator, OutlineGenerator,
@@ -84,7 +87,11 @@ app = FastAPI(title="MANS - Multi-Agent Novel System")
 # ============================================================
 
 # 工作区根目录的绝对路径，用于路径遍历校验
-_WORKSPACE_ROOT = Path("workspace").resolve()
+_workspace_config_path = Path(_config.WORKSPACE_PATH)
+if not _workspace_config_path.is_absolute():
+    _WORKSPACE_ROOT = _workspace_config_path.resolve()
+else:
+    _WORKSPACE_ROOT = _workspace_config_path
 
 
 def _validate_project_path(project_id: str) -> Path:
@@ -201,7 +208,7 @@ async def create_project(request: CreateProjectRequest):
         HTTPException: 500，当文件写入异常时。
     """
     project_id = str(uuid.uuid4())
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _WORKSPACE_ROOT / project_id
 
     try:
         # 创建项目目录骨架
@@ -250,7 +257,7 @@ async def get_projects():
     Returns:
         {"projects": [...]}，项目列表按目录遍历顺序（无序）。
     """
-    workspace_path = Path("workspace")
+    workspace_path = _WORKSPACE_ROOT
     projects = []
 
     if workspace_path.exists():
@@ -290,7 +297,8 @@ async def get_project(project_id: str):
     Raises:
         HTTPException: 404，项目不存在；500，读取失败。
     """
-    meta_path = Path("workspace") / project_id / "project_meta.json"
+    workspace_path = _validate_project_path(project_id)
+    meta_path = workspace_path / "project_meta.json"
 
     if not meta_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -350,7 +358,7 @@ async def get_project_status(project_id: str):
         字典，包含 has_bible、has_characters、has_outline、initialized、
         current_chapter、status 等字段。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
 
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -394,7 +402,7 @@ async def get_project_status(project_id: str):
 # ============================================================
 
 @app.post("/api/projects/{project_id}/generate/bible")
-async def generate_bible(project_id: str, temperature: float = 0.7):
+async def generate_bible(project_id: str, temperature: float = _config.GENERATOR_TEMPERATURE):
     """
     触发 Bible（世界观设定）生成 —— 非流式兼容接口。
 
@@ -414,7 +422,7 @@ async def generate_bible(project_id: str, temperature: float = 0.7):
     Raises:
         HTTPException: 404，项目不存在；500，生成失败。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
 
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -449,7 +457,7 @@ async def generate_bible(project_id: str, temperature: float = 0.7):
 
 
 @app.post("/api/projects/{project_id}/stream/bible")
-async def stream_generate_bible(project_id: str, request: Request, temperature: float = 0.7):
+async def stream_generate_bible(project_id: str, request: Request, temperature: float = _config.GENERATOR_TEMPERATURE):
     """
     流式生成 Bible（SSE 接口）。
 
@@ -470,7 +478,7 @@ async def stream_generate_bible(project_id: str, request: Request, temperature: 
     Returns:
         EventSourceResponse，SSE 事件流。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
 
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -485,17 +493,23 @@ async def stream_generate_bible(project_id: str, request: Request, temperature: 
             project_meta = ProjectMeta(**meta)
             generator = BibleGenerator(project_id)
 
-            # 推送开始事件
-            yield {
-                "event": "start",
-                "data": json.dumps({"message": "开始生成 Bible..."}, ensure_ascii=False)
-            }
-
             # 通过生成器的流式接口逐事件转发
             async for event in generator.generate_stream(project_meta=project_meta, temperature=temperature):
                 event_type = event.get("type", "message")
 
-                if event_type == "progress":
+                if event_type == "start":
+                    yield {
+                        "event": "start",
+                        "data": json.dumps({
+                            "message": event.get("message", ""),
+                            "prompt_length": event.get("prompt_length", 0),
+                            "model": event.get("model", ""),
+                            "role": event.get("role", ""),
+                            "max_tokens": event.get("max_tokens", 0),
+                            "temperature": event.get("temperature", 0),
+                        }, ensure_ascii=False)
+                    }
+                elif event_type == "progress":
                     yield {
                         "event": "progress",
                         "data": json.dumps({"message": event.get("message", "")}, ensure_ascii=False)
@@ -533,7 +547,7 @@ async def stream_generate_bible(project_id: str, request: Request, temperature: 
             }
             return
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), ping=15)
 
 
 @app.post("/api/projects/{project_id}/confirm/bible")
@@ -568,6 +582,7 @@ async def update_bible(project_id: str, bible_data: dict):
     Raises:
         HTTPException: 500，保存失败。
     """
+    _validate_project_path(project_id)
     try:
         bible_db = BibleDB(project_id)
         await bible_db.save("bible", bible_data)
@@ -577,7 +592,7 @@ async def update_bible(project_id: str, bible_data: dict):
 
 
 @app.post("/api/projects/{project_id}/generate/characters")
-async def generate_characters(project_id: str, temperature: float = 0.7):
+async def generate_characters(project_id: str, temperature: float = _config.GENERATOR_TEMPERATURE):
     """
     触发人物设定生成。
 
@@ -598,7 +613,7 @@ async def generate_characters(project_id: str, temperature: float = 0.7):
         HTTPException: 400，未生成 Bible；500，生成失败。
     """
     try:
-        workspace_path = Path("workspace") / project_id
+        workspace_path = _validate_project_path(project_id)
         async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
             content = await f.read()
             meta = json.loads(content)
@@ -622,6 +637,8 @@ async def generate_characters(project_id: str, temperature: float = 0.7):
             "data": result
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成人物失败: {str(e)}")
 
@@ -633,7 +650,7 @@ async def confirm_characters(project_id: str):
 
 
 @app.post("/api/projects/{project_id}/generate/outline")
-async def generate_outline(project_id: str, temperature: float = 0.7):
+async def generate_outline(project_id: str, temperature: float = _config.GENERATOR_TEMPERATURE):
     """
     触发全局大纲生成。
 
@@ -655,7 +672,7 @@ async def generate_outline(project_id: str, temperature: float = 0.7):
         HTTPException: 400，前置数据缺失；500，生成失败。
     """
     try:
-        workspace_path = Path("workspace") / project_id
+        workspace_path = _validate_project_path(project_id)
         async with aiofiles.open(workspace_path / "project_meta.json", "r", encoding="utf-8") as f:
             content = await f.read()
             meta = json.loads(content)
@@ -679,10 +696,14 @@ async def generate_outline(project_id: str, temperature: float = 0.7):
                 async with aiofiles.open(char_file, "r", encoding="utf-8") as f:
                     content = await f.read()
                     char_data = json.loads(content)
-                if not characters_data["protagonist"]:
+                if char_data.get("is_protagonist", False):
                     characters_data["protagonist"] = char_data
                 else:
                     characters_data["supporting_characters"].append(char_data)
+
+        # 兼容旧数据：若未找到标记为主角的卡片，将第一个配角提升为主角
+        if not characters_data["protagonist"] and characters_data["supporting_characters"]:
+            characters_data["protagonist"] = characters_data["supporting_characters"].pop(0)
 
         generator = OutlineGenerator(project_id)
         result = await generator.generate(
@@ -717,7 +738,7 @@ async def confirm_outline(project_id: str):
         HTTPException: 500，文件写入失败。
     """
     try:
-        workspace_path = Path("workspace") / project_id
+        workspace_path = _validate_project_path(project_id)
         meta_path = workspace_path / "project_meta.json"
 
         async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
@@ -756,7 +777,7 @@ async def list_arcs(project_id: str):
     Raises:
         HTTPException: 404，项目不存在。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -784,7 +805,8 @@ async def get_arc_status(project_id: str, arc_number: int):
     Returns:
         {"project_id": "...", "arc_number": N, "exists": bool}。
     """
-    arc_path = Path("workspace") / project_id / "arcs" / f"arc_{arc_number}.json"
+    workspace_path = _validate_project_path(project_id)
+    arc_path = workspace_path / "arcs" / f"arc_{arc_number}.json"
     return {
         "project_id": project_id,
         "arc_number": arc_number,
@@ -811,7 +833,7 @@ async def create_arc_meta(project_id: str, request: CreateArcRequest):
     Raises:
         HTTPException: 404，项目不存在。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -859,7 +881,7 @@ async def delete_arc_meta(project_id: str, arc_number: int):
     Raises:
         HTTPException: 404，项目不存在。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -894,7 +916,7 @@ async def suggest_arc(project_id: str, request: Request):
     Raises:
         HTTPException: 400，未生成大纲；404，项目不存在。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -980,7 +1002,7 @@ async def suggest_arc(project_id: str, request: Request):
             role="extract",
             prompt=prompt,
             max_tokens=500,
-            temperature=0.5,
+            temperature=_config.EXTRACT_TEMPERATURE,
             response_format="json_schema",
             json_schema=arc_suggest_schema
         )
@@ -1041,7 +1063,7 @@ async def _resolve_arc_act_data(project_id: str, arc_number: int) -> dict:
 
 
 @app.post("/api/projects/{project_id}/generate/arc")
-async def generate_arc(project_id: str, arc_number: int = 1, temperature: float = 0.7):
+async def generate_arc(project_id: str, arc_number: int = 1, temperature: float = _config.GENERATOR_TEMPERATURE):
     """
     触发弧线规划生成 —— 非流式接口。
 
@@ -1062,7 +1084,7 @@ async def generate_arc(project_id: str, arc_number: int = 1, temperature: float 
     Raises:
         HTTPException: 400/404，前置条件不满足；500，生成失败。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
 
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -1087,10 +1109,14 @@ async def generate_arc(project_id: str, arc_number: int = 1, temperature: float 
                 async with aiofiles.open(char_file, "r", encoding="utf-8") as f:
                     content = await f.read()
                     char_data = json.loads(content)
-                if not characters_data["protagonist"]:
+                if char_data.get("is_protagonist", False):
                     characters_data["protagonist"] = char_data
                 else:
                     characters_data["supporting_characters"].append(char_data)
+
+        # 兼容旧数据：若未找到标记为主角的卡片，将第一个配角提升为主角
+        if not characters_data["protagonist"] and characters_data["supporting_characters"]:
+            characters_data["protagonist"] = characters_data["supporting_characters"].pop(0)
 
         # 读取已有伏笔
         foreshadowing_db = ForeshadowingDB(project_id)
@@ -1106,7 +1132,7 @@ async def generate_arc(project_id: str, arc_number: int = 1, temperature: float 
             characters_data=characters_data,
             existing_foreshadowing=existing_foreshadowing,
             temperature=temperature,
-            max_tokens=6000,
+            max_tokens=_config.GENERATOR_MAX_TOKENS,
             total_timeout=900,
             sock_read_timeout=120
         )
@@ -1124,7 +1150,7 @@ async def generate_arc(project_id: str, arc_number: int = 1, temperature: float 
 
 
 @app.post("/api/projects/{project_id}/stream/arc")
-async def stream_generate_arc(project_id: str, request: Request, arc_number: int = 1, temperature: float = 0.7):
+async def stream_generate_arc(project_id: str, request: Request, arc_number: int = 1, temperature: float = _config.GENERATOR_TEMPERATURE):
     """
     流式生成弧线规划（SSE 接口）。
 
@@ -1140,7 +1166,7 @@ async def stream_generate_arc(project_id: str, request: Request, arc_number: int
     Returns:
         EventSourceResponse，SSE 事件流。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
 
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -1166,10 +1192,14 @@ async def stream_generate_arc(project_id: str, request: Request, arc_number: int
                     async with aiofiles.open(char_file, "r", encoding="utf-8") as f:
                         content = await f.read()
                         char_data = json.loads(content)
-                    if not characters_data["protagonist"]:
+                    if char_data.get("is_protagonist", False):
                         characters_data["protagonist"] = char_data
                     else:
                         characters_data["supporting_characters"].append(char_data)
+
+            # 兼容旧数据：若未找到标记为主角的卡片，将第一个配角提升为主角
+            if not characters_data["protagonist"] and characters_data["supporting_characters"]:
+                characters_data["protagonist"] = characters_data["supporting_characters"].pop(0)
 
             foreshadowing_db = ForeshadowingDB(project_id)
             existing_foreshadowing = await foreshadowing_db.list_all_foreshadowing()
@@ -1178,8 +1208,6 @@ async def stream_generate_arc(project_id: str, request: Request, arc_number: int
 
             generator = ArcPlanner(project_id)
 
-            yield {"event": "start", "data": json.dumps({"message": f"开始生成弧线 {arc_number} 规划..."}, ensure_ascii=False)}
-
             async for event in generator.generate_stream(
                 arc_number=arc_number,
                 act_data=act_data,
@@ -1187,12 +1215,24 @@ async def stream_generate_arc(project_id: str, request: Request, arc_number: int
                 characters_data=characters_data,
                 existing_foreshadowing=existing_foreshadowing,
                 temperature=temperature,
-                max_tokens=6000,
+                max_tokens=_config.GENERATOR_MAX_TOKENS,
                 total_timeout=900,
                 sock_read_timeout=120
             ):
                 event_type = event.get("type", "message")
-                if event_type == "progress":
+                if event_type == "start":
+                    yield {
+                        "event": "start",
+                        "data": json.dumps({
+                            "message": event.get("message", ""),
+                            "prompt_length": event.get("prompt_length", 0),
+                            "model": event.get("model", ""),
+                            "role": event.get("role", ""),
+                            "max_tokens": event.get("max_tokens", 0),
+                            "temperature": event.get("temperature", 0),
+                        }, ensure_ascii=False)
+                    }
+                elif event_type == "progress":
                     yield {"event": "progress", "data": json.dumps({"message": event.get("message", "")}, ensure_ascii=False)}
                 elif event_type == "token":
                     yield {"event": "token", "data": json.dumps({"content": event.get("content", "")}, ensure_ascii=False)}
@@ -1208,11 +1248,11 @@ async def stream_generate_arc(project_id: str, request: Request, arc_number: int
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
             return
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), ping=15)
 
 
 @app.post("/api/projects/{project_id}/generate/chapter")
-async def generate_chapter_plan(project_id: str, chapter_number: int = 1, temperature: float = 0.7):
+async def generate_chapter_plan(project_id: str, chapter_number: int = 1, temperature: float = _config.GENERATOR_TEMPERATURE):
     """
     触发单章的章节规划生成。
 
@@ -1233,7 +1273,7 @@ async def generate_chapter_plan(project_id: str, chapter_number: int = 1, temper
     Raises:
         HTTPException: 400，未找到对应弧线规划；500，生成失败。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
 
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -1273,6 +1313,85 @@ async def generate_chapter_plan(project_id: str, chapter_number: int = 1, temper
         raise HTTPException(status_code=500, detail=f"生成章节规划失败: {str(e)}")
 
 
+@app.post("/api/projects/{project_id}/stream/chapter")
+async def stream_generate_chapter_plan(project_id: str, request: Request, chapter_number: int = 1, temperature: float = _config.GENERATOR_TEMPERATURE):
+    """
+    流式生成章节规划（SSE 接口）。
+
+    事件类型与 stream_generate_bible 相同：start / progress / token / complete / error / done。
+    相比非流式接口，前端可实时观察 ChapterPlanner 的 LLM 输出过程。
+
+    Args:
+        project_id: 项目 UUID。
+        request: FastAPI Request 对象。
+        chapter_number: 章节编号。
+        temperature: LLM 采样温度。
+
+    Returns:
+        EventSourceResponse，SSE 事件流。
+    """
+    workspace_path = _validate_project_path(project_id)
+
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    async def event_generator():
+        try:
+            story_db = StoryDB(project_id)
+
+            # 定位包含该章节的弧线规划
+            arc_plan = await story_db.get_arc_plan_for_chapter(chapter_number)
+            if not arc_plan:
+                yield {"event": "error", "data": json.dumps({"error": f"未找到第 {chapter_number} 章的弧线规划，请先生成弧线规划"}, ensure_ascii=False)}
+                return
+
+            # 读取上一章摘要，用于上下文衔接
+            previous_summary = ""
+            if chapter_number > 1:
+                prev_final = await story_db.get_chapter_final(chapter_number - 1)
+                if prev_final:
+                    previous_summary = prev_final.get("summary", "")
+
+            generator = ChapterPlanner(project_id)
+
+            async for event in generator.generate_stream(
+                chapter_number=chapter_number,
+                arc_plan=arc_plan,
+                previous_chapter_summary=previous_summary,
+                temperature=temperature
+            ):
+                event_type = event.get("type", "message")
+                if event_type == "start":
+                    yield {
+                        "event": "start",
+                        "data": json.dumps({
+                            "message": event.get("message", ""),
+                            "prompt_length": event.get("prompt_length", 0),
+                            "model": event.get("model", ""),
+                            "role": event.get("role", ""),
+                            "max_tokens": event.get("max_tokens", 0),
+                            "temperature": event.get("temperature", 0),
+                        }, ensure_ascii=False)
+                    }
+                elif event_type == "progress":
+                    yield {"event": "progress", "data": json.dumps({"message": event.get("message", "")}, ensure_ascii=False)}
+                elif event_type == "token":
+                    yield {"event": "token", "data": json.dumps({"content": event.get("content", "")}, ensure_ascii=False)}
+                elif event_type == "complete":
+                    yield {"event": "complete", "data": json.dumps({"message": event.get("message", ""), "data": event.get("data", {})}, ensure_ascii=False)}
+                elif event_type == "error":
+                    yield {"event": "error", "data": json.dumps({"error": event.get("error", "未知错误")}, ensure_ascii=False)}
+
+            yield {"event": "done", "data": json.dumps({"message": "流式传输完成"})}
+
+        except Exception as e:
+            logger.error(f"流式生成章节规划失败: {e}")
+            yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
+            return
+
+    return EventSourceResponse(event_generator(), ping=15)
+
+
 # ============================================================
 # Issue Pool 与更新记录接口
 # ============================================================
@@ -1297,7 +1416,7 @@ async def get_issues(project_id: str):
         HTTPException: 404，项目不存在；500，聚合失败。
     """
     try:
-        workspace_path = Path("workspace") / project_id
+        workspace_path = _validate_project_path(project_id)
         if not workspace_path.exists():
             raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -1391,7 +1510,7 @@ async def get_chapter_updates(project_id: str, chapter_num: int):
         HTTPException: 404，项目不存在；500，读取失败。
     """
     try:
-        workspace_path = Path("workspace") / project_id
+        workspace_path = _validate_project_path(project_id)
         if not workspace_path.exists():
             raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -1446,7 +1565,7 @@ async def stream_logs(project_id: str, request: Request, level: str = "INFO"):
     Returns:
         EventSourceResponse，SSE 日志流。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -1493,7 +1612,7 @@ async def stream_logs(project_id: str, request: Request, level: str = "INFO"):
 # ============================================================
 
 @app.post("/api/projects/{project_id}/stream/characters")
-async def stream_generate_characters(project_id: str, request: Request, temperature: float = 0.7):
+async def stream_generate_characters(project_id: str, request: Request, temperature: float = _config.GENERATOR_TEMPERATURE):
     """
     流式生成人物设定（SSE 接口）。
 
@@ -1503,7 +1622,7 @@ async def stream_generate_characters(project_id: str, request: Request, temperat
     Returns:
         EventSourceResponse，SSE 事件流。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
 
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -1523,15 +1642,25 @@ async def stream_generate_characters(project_id: str, request: Request, temperat
 
             generator = CharacterGenerator(project_id)
 
-            yield {"event": "start", "data": json.dumps({"message": "开始生成人物设定..."}, ensure_ascii=False)}
-
             async for event in generator.generate_stream(
                 project_meta=project_meta,
                 bible_data=bible_data,
                 temperature=temperature
             ):
                 event_type = event.get("type", "message")
-                if event_type == "progress":
+                if event_type == "start":
+                    yield {
+                        "event": "start",
+                        "data": json.dumps({
+                            "message": event.get("message", ""),
+                            "prompt_length": event.get("prompt_length", 0),
+                            "model": event.get("model", ""),
+                            "role": event.get("role", ""),
+                            "max_tokens": event.get("max_tokens", 0),
+                            "temperature": event.get("temperature", 0),
+                        }, ensure_ascii=False)
+                    }
+                elif event_type == "progress":
                     yield {"event": "progress", "data": json.dumps({"message": event.get("message", "")}, ensure_ascii=False)}
                 elif event_type == "token":
                     yield {"event": "token", "data": json.dumps({"content": event.get("content", "")}, ensure_ascii=False)}
@@ -1547,11 +1676,11 @@ async def stream_generate_characters(project_id: str, request: Request, temperat
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
             return
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), ping=15)
 
 
 @app.post("/api/projects/{project_id}/stream/outline")
-async def stream_generate_outline(project_id: str, request: Request, temperature: float = 0.7):
+async def stream_generate_outline(project_id: str, request: Request, temperature: float = _config.GENERATOR_TEMPERATURE):
     """
     流式生成全局大纲（SSE 接口）。
 
@@ -1561,7 +1690,7 @@ async def stream_generate_outline(project_id: str, request: Request, temperature
     Returns:
         EventSourceResponse，SSE 事件流。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
 
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -1587,14 +1716,16 @@ async def stream_generate_outline(project_id: str, request: Request, temperature
                     async with aiofiles.open(char_file, "r", encoding="utf-8") as f:
                         content = await f.read()
                         char_data = json.loads(content)
-                    if not characters_data["protagonist"]:
+                    if char_data.get("is_protagonist", False):
                         characters_data["protagonist"] = char_data
                     else:
                         characters_data["supporting_characters"].append(char_data)
 
-            generator = OutlineGenerator(project_id)
+            # 兼容旧数据：若未找到标记为主角的卡片，将第一个配角提升为主角
+            if not characters_data["protagonist"] and characters_data["supporting_characters"]:
+                characters_data["protagonist"] = characters_data["supporting_characters"].pop(0)
 
-            yield {"event": "start", "data": json.dumps({"message": "开始生成大纲..."}, ensure_ascii=False)}
+            generator = OutlineGenerator(project_id)
 
             async for event in generator.generate_stream(
                 project_meta=project_meta,
@@ -1603,7 +1734,19 @@ async def stream_generate_outline(project_id: str, request: Request, temperature
                 temperature=temperature
             ):
                 event_type = event.get("type", "message")
-                if event_type == "progress":
+                if event_type == "start":
+                    yield {
+                        "event": "start",
+                        "data": json.dumps({
+                            "message": event.get("message", ""),
+                            "prompt_length": event.get("prompt_length", 0),
+                            "model": event.get("model", ""),
+                            "role": event.get("role", ""),
+                            "max_tokens": event.get("max_tokens", 0),
+                            "temperature": event.get("temperature", 0),
+                        }, ensure_ascii=False)
+                    }
+                elif event_type == "progress":
                     yield {"event": "progress", "data": json.dumps({"message": event.get("message", "")}, ensure_ascii=False)}
                 elif event_type == "token":
                     yield {"event": "token", "data": json.dumps({"content": event.get("content", "")}, ensure_ascii=False)}
@@ -1619,7 +1762,7 @@ async def stream_generate_outline(project_id: str, request: Request, temperature
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
             return
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), ping=15)
 
 
 # ============================================================
@@ -1860,9 +2003,9 @@ async def stream_scene(project_id: str, chapter_num: int, scene_index: int, requ
         HTTPException: 404，项目不存在；流内返回 error 事件。
     """
     body = await request.json()
-    temperature = body.get("temperature", 0.75)
+    temperature = body.get("temperature", _config.WRITER_TEMPERATURE)
 
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
 
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -2001,6 +2144,10 @@ async def confirm_chapter(project_id: str, chapter_num: int):
     Raises:
         HTTPException: 404，草稿不存在；500，处理失败。
     """
+    workspace_path = _validate_project_path(project_id)
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
     try:
         story_db = StoryDB(project_id)
 
@@ -2030,7 +2177,6 @@ async def confirm_chapter(project_id: str, chapter_num: int):
         await story_db.save_chapter_final(chapter_final_obj)
 
         # 生成只读发行版 Markdown 文件
-        workspace_path = Path("workspace") / project_id
         exports_dir = workspace_path / "exports"
         exports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2103,7 +2249,8 @@ async def list_exports(project_id: str):
     Returns:
         {"project_id": "...", "exports": [...]}。
     """
-    exports_dir = Path("workspace") / project_id / "exports"
+    workspace_path = _validate_project_path(project_id)
+    exports_dir = workspace_path / "exports"
     if not exports_dir.exists():
         return {"project_id": project_id, "exports": []}
 
@@ -2153,7 +2300,8 @@ async def get_export(project_id: str, filename: str):
     Raises:
         HTTPException: 403，路径非法；404，文件不存在；500，读取失败。
     """
-    exports_dir = Path("workspace") / project_id / "exports"
+    workspace_path = _validate_project_path(project_id)
+    exports_dir = workspace_path / "exports"
     file_path = exports_dir / filename
 
     # 路径安全校验
@@ -2251,6 +2399,10 @@ async def edit_scene(project_id: str, chapter_num: int, scene_index: int, conten
     Raises:
         HTTPException: 404，草稿不存在；500，保存失败。
     """
+    workspace_path = _validate_project_path(project_id)
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
     try:
         story_db = StoryDB(project_id)
 
@@ -2339,6 +2491,10 @@ async def manual_extract_scene(project_id: str, chapter_num: int, scene_index: i
     Raises:
         HTTPException: 404，草稿或场景不存在；500，触发失败。
     """
+    workspace_path = _validate_project_path(project_id)
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
     try:
         story_db = StoryDB(project_id)
 
@@ -2430,6 +2586,10 @@ async def rollback_scene_updates_endpoint(
     Raises:
         HTTPException: 500，回滚失败。
     """
+    workspace_path = _validate_project_path(project_id)
+    if not workspace_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
     try:
         extractor = UpdateExtractor(project_id)
         result = await extractor.rollback_scene_updates(
@@ -2494,7 +2654,11 @@ async def regenerate_scene_stream_endpoint(
     try:
         body = await request.json()
         feedback = body.get("feedback", "")
-        temperature = body.get("temperature", 0.75)
+        temperature = body.get("temperature", _config.WRITER_TEMPERATURE)
+
+        workspace_path = _validate_project_path(project_id)
+        if not workspace_path.exists():
+            raise HTTPException(status_code=404, detail="项目不存在")
 
         story_db = StoryDB(project_id)
         chapter_plan_raw = await story_db.get_chapter_plan(chapter_num)
@@ -2629,7 +2793,7 @@ async def sync_vectors(project_id: str):
     Raises:
         HTTPException: 404，项目不存在；500，同步失败。
     """
-    workspace_path = Path("workspace") / project_id
+    workspace_path = _validate_project_path(project_id)
     if not workspace_path.exists():
         raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -2832,6 +2996,38 @@ async def get_outline(project_id: str):
 # 静态文件挂载与首页
 # ============================================================
 
+@app.get("/api/config")
+async def get_system_config():
+    """
+    获取系统运行时配置。
+
+    返回各角色的默认温度、max_tokens、速率限制等配置信息，
+    供前端初始化设置面板时使用。
+
+    安全说明：返回结果中隐藏 API Key 等敏感信息。
+
+    Returns:
+        配置字典，包含 temperatures、max_tokens、rate_limit 等字段。
+    """
+    return {
+        "temperatures": {
+            "writer": _config.WRITER_TEMPERATURE,
+            "generator": _config.GENERATOR_TEMPERATURE,
+            "trim": _config.TRIM_TEMPERATURE,
+            "extract": _config.EXTRACT_TEMPERATURE,
+        },
+        "max_tokens": {
+            "writer": _config.WRITER_MAX_TOKENS,
+            "generator": _config.GENERATOR_MAX_TOKENS,
+            "trim": _config.TRIM_MAX_TOKENS,
+            "extract": _config.EXTRACT_MAX_TOKENS,
+        },
+        "rate_limit": _config.RATE_LIMIT,
+        "injection_token_budget": _config.INJECTION_TOKEN_BUDGET,
+        "active_provider": _config.ACTIVE_PROVIDER,
+    }
+
+
 @app.get("/")
 async def root():
     """
@@ -2839,7 +3035,7 @@ async def root():
 
     返回 frontend/index.html，由前端路由接管后续导航。
     """
-    return FileResponse("frontend/index.html")
+    return FileResponse(Path(__file__).parent / "index.html")
 
 
 # 挂载 frontend/ 目录为静态文件服务，使 /frontend/app.js、/frontend/styles.css 等可直接访问

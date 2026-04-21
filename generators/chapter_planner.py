@@ -87,6 +87,66 @@ class ChapterPlanner(BaseGenerator):
         """返回生成器名称，用于日志和进度报告中标识当前环节。"""
         return "ChapterPlanner"
 
+    def get_output_schema(self) -> dict:
+        """
+        返回章节规划的 JSON Schema 定义。
+
+        Schema 结构：
+            - chapter_number: 章节编号。
+            - title: 章节标题。
+            - arc_id: 所属弧线 ID。
+            - chapter_goal: 本章对主线的推进目标（一句话）。
+            - emotional_arc: 本章的情绪走向描述。
+            - key_events: 关键事件字符串数组。
+            - scenes: 场景数组，每项包含 scene_index/intent/pov_character/present_characters/
+              emotional_tone/foreshadowing_to_plant/foreshadowing_to_trigger/target_word_count/special_instructions。
+        """
+        return {
+            "name": "chapter_plan_output",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "chapter_number": {"type": "integer"},
+                    "title": {"type": "string"},
+                    "arc_id": {"type": "string"},
+                    "chapter_goal": {"type": "string"},
+                    "emotional_arc": {"type": "string"},
+                    "key_events": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    },
+                    "scenes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "scene_index": {"type": "integer"},
+                                "intent": {"type": "string"},
+                                "pov_character": {"type": "string"},
+                                "present_characters": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                },
+                                "emotional_tone": {"type": "string"},
+                                "foreshadowing_to_plant": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                },
+                                "foreshadowing_to_trigger": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                },
+                                "target_word_count": {"type": "integer"},
+                                "special_instructions": {"type": "string"}
+                            },
+                            "required": ["scene_index", "intent", "pov_character", "present_characters"]
+                        }
+                    }
+                },
+                "required": ["chapter_number", "title", "arc_id", "chapter_goal", "emotional_arc", "key_events", "scenes"]
+            }
+        }
+
     def _build_prompt(self,
                       chapter_number: int,
                       arc_plan: dict,

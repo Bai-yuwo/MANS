@@ -171,6 +171,19 @@ class BaseGenerator(ABC):
         """
         return None
 
+    def get_system_prompt(self) -> str:
+        """
+        返回生成器的系统提示词。
+
+        子类可重写此方法以提供针对特定生成任务的 system prompt。
+        默认返回一个通用的结构化输出指导，要求 LLM 严格按 JSON 格式返回。
+        """
+        return (
+            "你是一个专业的中文网络小说创作助手，擅长根据给定信息生成结构化的创作素材。"
+            "你必须严格按照要求的 JSON 格式输出，不要输出任何其他内容（如 markdown 代码块、解释说明等）。"
+            "JSON 字符串值内部如需引号，必须使用英文单引号（'），严禁使用双引号或中文引号。"
+        )
+
     @abstractmethod
     def _build_prompt(self, **kwargs) -> str:
         """
@@ -268,9 +281,10 @@ class BaseGenerator(ABC):
         generator_name = self._get_generator_name()
         self._report_progress(f"[{generator_name}] 开始生成...")
 
-        temperature = kwargs.pop('temperature', 0.7)
+        # 从 config 获取 generator 角色的默认值
+        temperature = kwargs.pop('temperature', self.config.get_temperature_for_role('generator'))
         max_retries = kwargs.pop('max_retries', 3)
-        max_tokens = kwargs.pop('max_tokens', 4000)
+        max_tokens = kwargs.pop('max_tokens', self.config.get_max_tokens_for_role('generator'))
         connect_timeout = kwargs.pop('connect_timeout', 30)
         sock_read_timeout = kwargs.pop('sock_read_timeout', 60)
         total_timeout = kwargs.pop('total_timeout', 600)
@@ -296,10 +310,11 @@ class BaseGenerator(ABC):
                 json_schema = self.get_output_schema()
                 response_format = "json_schema" if json_schema else None
 
+                system_prompt = self.get_system_prompt()
                 response: LLMResponse = await self.llm_client.call_with_retry(
                     role="generator",
                     prompt=current_prompt,
-                    system_prompt="",
+                    system_prompt=system_prompt,
                     response_format=response_format,
                     json_schema=json_schema,
                     max_tokens=max_tokens,
@@ -383,14 +398,18 @@ class BaseGenerator(ABC):
         """
         流式生成方法，逐块 yield 进度和 token 事件。
 
-        与 generate() 的区别：
-            - 在 LLM 调用阶段，通过 SSE 流式接收 token，实时 yield 给调用方。
-            - 前端可实时展示生成内容，提升用户体验。
-            - 生成完成后同样执行解析、验证、保存、向量化。
+        实现策略：
+            由于 json_schema 结构化输出模式下，底层 API 不会通过
+            response.output_text.delta 事件逐 token 返回文本，因此
+            本方法改用 call() 非流式调用获取完整响应，然后将响应文本
+            拆分为小块逐块 yield，模拟打字机效果。
+
+            这样既能保证 json_schema 的解析成功率，又能让前端看到
+            实时的生成过程。
 
         事件类型：
             - progress：生成阶段状态更新（如"构建 prompt..."）。
-            - token：LLM 生成的单个文本片段。
+            - token：LLM 生成的文本片段（模拟流式）。
             - complete：生成流程全部完成，附带最终数据结构。
             - error：生成过程中发生错误。
 
@@ -403,10 +422,13 @@ class BaseGenerator(ABC):
         Raises:
             流式生成中的异常会被包装为 error 事件 yield 后重新抛出。
         """
+        import asyncio
+
         generator_name = self._get_generator_name()
 
-        temperature = kwargs.pop('temperature', 0.7)
-        max_tokens = kwargs.pop('max_tokens', 4000)
+        # 从 config 获取 generator 角色的默认值
+        temperature = kwargs.pop('temperature', self.config.get_temperature_for_role('generator'))
+        max_tokens = kwargs.pop('max_tokens', self.config.get_max_tokens_for_role('generator'))
         connect_timeout = kwargs.pop('connect_timeout', 30)
         sock_read_timeout = kwargs.pop('sock_read_timeout', 60)
         total_timeout = kwargs.pop('total_timeout', 600)
@@ -416,30 +438,56 @@ class BaseGenerator(ABC):
             yield {"type": "progress", "message": f"[{generator_name}] 构建 prompt..."}
             prompt = self._build_prompt(**kwargs)
 
+            # 获取模型信息，用于 start 事件元数据
+            model_name, _ = self.llm_client.config.get_model_for_role("generator")
+
+            # 推送 start 事件，包含调用元数据
+            yield {
+                "type": "start",
+                "message": f"[{generator_name}] 开始生成...",
+                "prompt_length": len(prompt),
+                "model": model_name,
+                "role": "generator",
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            # 强制让出控制权，确保 start 事件被 flush 到客户端
+            await asyncio.sleep(0)
+
             self._report_progress(f"[{generator_name}] 调用大模型...")
             yield {"type": "progress", "message": f"[{generator_name}] 调用大模型..."}
-
-            full_content = ""
-            token_count = 0
+            await asyncio.sleep(0)
 
             json_schema = self.get_output_schema()
+            system_prompt = self.get_system_prompt()
 
-            async for token in self.llm_client.stream(
+            # 使用 call() 而非 stream()：json_schema 模式下 stream 不返回逐 token 事件
+            response = await self.llm_client.call_with_retry(
                 role="generator",
                 prompt=prompt,
+                system_prompt=system_prompt,
+                json_schema=json_schema,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                json_schema=json_schema,
                 connect_timeout=connect_timeout,
                 sock_read_timeout=sock_read_timeout,
                 total_timeout=total_timeout
-            ):
-                full_content += token
+            )
+
+            full_content = response.content
+            token_count = 0
+            chunk_size = 4  # 每 4 个字符 yield 一次，模拟中文打字机效果
+
+            # 模拟流式输出：逐字符/逐词 yield
+            for i in range(0, len(full_content), chunk_size):
+                chunk = full_content[i:i + chunk_size]
                 token_count += 1
-                yield {"type": "token", "content": token}
+                yield {"type": "token", "content": chunk}
+                # 极小延迟模拟打字机效果（每 10 个 chunk 暂停一次，避免阻塞事件循环）
+                if token_count % 10 == 0:
+                    await asyncio.sleep(0)
 
-            self._report_progress(f"[{generator_name}] 收到 {token_count} 个token")
-
+            self._report_progress(f"[{generator_name}] 收到 {len(full_content)} 字符")
             yield {"type": "progress", "message": f"[{generator_name}] 解析响应..."}
             result = self._parse_response(full_content)
 
@@ -464,7 +512,7 @@ class BaseGenerator(ABC):
 
         except Exception as e:
             yield {"type": "error", "error": str(e)}
-            raise
+            # 不再重新抛出，由外层 event_generator 统一处理流关闭
 
     def _clean_json_response(self, response: str) -> str:
         """

@@ -248,6 +248,7 @@ class CharacterCard(BaseModel):
     relationships: list[Relationship] = Field(default_factory=list)
 
     # 元信息
+    is_protagonist: bool = False        # 是否为主角（用于 InjectionEngine 和生成器区分主角/配角）
     first_appeared_chapter: int = 0     # 首次出场章节（0表示尚未在正文中出场）
     last_updated_chapter: int = 0       # 最后更新章节
 

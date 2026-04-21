@@ -449,7 +449,9 @@ class UpdateExtractor:
         )
 
         # 步骤 2：并发写入各知识库
-        await self._apply_updates(updates, chapter_number=chapter_number)
+        await self._apply_updates(
+            updates, chapter_number=chapter_number, scene_index=scene_index
+        )
 
         # 步骤 3：向量化存储（如果启用）
         if self.config.ENABLE_VECTOR_SEARCH:
@@ -568,11 +570,11 @@ class UpdateExtractor:
 当前人物状态（用于对比，仅限计划出场人物）：
 {json.dumps(current_characters, ensure_ascii=False, indent=2)}
 
-场景文本：
-{self._truncate_text_for_extraction(generated_text)}  # 优先保留尾部（最新变化更关键）
+场景文本（优先保留尾部，最新变化更关键）：
+{self._truncate_text_for_extraction(generated_text)}
 
 请提取以下信息：
-1. 人物状态变化（位置/修为/情绪/目标/关系）—— 重要：如果文本中出现了不在"计划出场人物"列表中的角色（例如路人、新登场的 NPC、意外出现的角色），也请一并提取其状态变化。
+1. 人物状态变化（位置/修为/情绪/目标/关系）—— 仅限上述"计划出场人物"列表中的人物。对于路人、临时NPC等未在计划中的角色，**不提取**其状态变化，保持人物库整洁。
 2. 新发现或确认的世界规则
 3. 伏笔状态变化（planted→hinted 或 triggered 或 resolved）
 4. 新埋入的伏笔（如有）
@@ -844,7 +846,12 @@ class UpdateExtractor:
                 source_scene_index=scene_index
             )
 
-    async def _apply_updates(self, updates: ExtractedUpdates, chapter_number: int = 0) -> None:
+    async def _apply_updates(
+        self,
+        updates: ExtractedUpdates,
+        chapter_number: int = 0,
+        scene_index: int = -1
+    ) -> None:
         """
         并发应用更新到各知识库。
 
@@ -864,7 +871,13 @@ class UpdateExtractor:
 
         # 人物更新
         if updates.character_updates:
-            tasks.append(self._update_characters(updates.character_updates, chapter_number=chapter_number))
+            tasks.append(
+                self._update_characters(
+                    updates.character_updates,
+                    chapter_number=chapter_number,
+                    scene_index=scene_index
+                )
+            )
 
         # 世界观规则更新
         if updates.new_world_rules:
@@ -887,54 +900,38 @@ class UpdateExtractor:
                 if isinstance(result, Exception):
                     logger.error(f"更新任务 {i} 失败: {result}")
 
-    async def _update_characters(self, updates: list[CharacterStateUpdate], chapter_number: int = 0) -> None:
+    async def _update_characters(
+        self,
+        updates: list[CharacterStateUpdate],
+        chapter_number: int = 0,
+        scene_index: int = -1
+    ) -> None:
         """
         更新人物库。
 
         处理逻辑：
             1. 遍历每个人物状态更新。
-            2. 若人物不存在（新登场角色）：自动创建临时人物卡，标记为"待补充"。
+            2. 若人物不存在：跳过，记录日志。新人物应通过 CharacterGenerator
+               或手动创建流程入库，避免 UpdateExtractor 产生低质量 placeholder。
             3. 若人物存在：调用 CharacterDB.apply_update() 应用变更。
-
-        新角色自动初始化：
-            当文本中出现了不在现有知识库中的角色时，UpdateExtractor 会自动为其
-            创建一个临时人物卡，包含基本信息（位置、情绪、修为）。这确保了
-            即使是路人角色也能被追踪，避免"凭空消失"的一致性错误。
 
         Args:
             updates: CharacterStateUpdate 列表。
             chapter_number: 当前章节号。
+            scene_index: 场景序号（用于状态历史记录）。
         """
         try:
             for update in updates:
                 char = await self.character_db.get_character(update.character_name)
                 if not char:
-                    # 新登场角色：自动初始化临时人物卡
                     logger.info(
-                        f"检测到新登场角色 '{update.character_name}'，"
-                        f"自动创建临时人物卡（章节 {chapter_number}）"
+                        f"人物 '{update.character_name}' 不在知识库中，"
+                        f"跳过状态更新。如需跟踪该人物，请先通过人物创建流程入库。"
                     )
-                    char = CharacterCard(
-                        name=update.character_name,
-                        appearance="待补充",
-                        personality_core="待补充",
-                        background="待补充",
-                        current_location=update.location_change or "未知",
-                        current_emotion=update.emotion_change or "",
-                        first_appeared_chapter=chapter_number,
-                        last_updated_chapter=chapter_number
-                    )
-                    # 如果有修为变化，也记录上
-                    if update.cultivation_change:
-                        from core.schemas import CultivationLevel
-                        char.cultivation = CultivationLevel(
-                            realm=update.cultivation_change,
-                            stage="",
-                            combat_power_estimate="未知"
-                        )
-                    await self.character_db.save_character(char)
                     continue
-                await self.character_db.apply_update(update, chapter=chapter_number, scene_index=scene_index)
+                await self.character_db.apply_update(
+                    update, chapter=chapter_number, scene_index=scene_index
+                )
         except Exception as e:
             logger.error(f"人物库更新失败: {e}")
             raise

@@ -97,12 +97,15 @@ async function apiRequest(url, options = {}) {
     let lastError;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
+            // 正确合并 headers：默认 Content-Type 优先级最低，允许 options.headers 覆盖
+            const mergedHeaders = {
+                'Content-Type': 'application/json',
+                ...(options.headers || {})
+            };
+
             const response = await fetch(fullUrl, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...options.headers
-                },
-                ...options
+                ...options,
+                headers: mergedHeaders
             });
 
             if (!response.ok) {
@@ -120,6 +123,7 @@ async function apiRequest(url, options = {}) {
             if (error.status >= 400 && error.status < 500 && error.status !== 429) {
                 break;
             }
+            // 网络错误（无 status）或 5xx/429 才重试
             if (attempt < maxRetries) {
                 await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
             }
@@ -413,18 +417,13 @@ function renderArcList(arcs) {
 }
 
 /**
- * 检查并刷新弧线列表状态（从后端拉取最新数据）。
+ * 检查并刷新弧线状态。
+ * 弧线列表已并入写作区侧边栏，直接刷新侧边栏即可。
  *
  * @param {string} projectId - 项目 UUID。
  */
 async function checkArcStatus(projectId) {
-    try {
-        const data = await apiRequest(`/api/projects/${projectId}/arcs`);
-        renderArcList(data.arcs || []);
-    } catch (e) {
-        console.error('加载弧线列表失败:', e);
-        renderArcList([]);
-    }
+    await loadWritingSidebar(projectId);
 }
 
 /**
@@ -435,8 +434,6 @@ async function checkArcStatus(projectId) {
 function updatePanelEmptyStates() {
     const hasProject = !!AppState.currentProject;
     const pairs = [
-        ['arc-empty', 'arc-content'],
-        ['chapter-plan-empty', 'chapter-plan-content'],
         ['issues-empty', 'issues-content'],
         ['writing-empty', 'writing-content'],
         ['knowledge-empty', 'knowledge-content'],
@@ -653,6 +650,17 @@ async function openProject(projectId, options = {}) {
         refreshIssueBadge();
 
     } catch (error) {
+        // 项目不存在时清除过期的 localStorage，防止每次刷新都报错
+        if (error.message && (error.message.includes('404') || error.message.includes('不存在'))) {
+            localStorage.removeItem('mans_current_project');
+            localStorage.removeItem('mans_current_panel');
+            localStorage.removeItem('mans_current_chapter');
+            AppState.currentProject = null;
+            AppState.currentChapter = 1;
+            updateSidebarState(false);
+            updateTopBarProject(null);
+            showPanel('works');
+        }
         showMessage('打开项目失败: ' + error.message, 'error');
     }
 }
@@ -776,18 +784,8 @@ async function generateBible() {
     }
 
     try {
-        if (typeof startStreamingGeneration === 'function') {
-            await startStreamingGeneration('bible');
-            showMessage('Bible 生成成功！', 'success');
-        } else {
-            const result = await apiRequest(
-                `/api/projects/${AppState.currentProject}/generate/bible`,
-                { method: 'POST' }
-            );
-            showMessage('Bible 生成成功！', 'success');
-            displayBible(result.data);
-        }
-
+        await startStreamingGeneration('bible');
+        showMessage('Bible 生成成功！', 'success');
         await loadAndDisplayBible();
     } catch (error) {
         showMessage('生成 Bible 失败: ' + error.message, 'error');
@@ -865,16 +863,8 @@ async function generateCharacters() {
     }
 
     try {
-        if (typeof startStreamingGeneration === 'function') {
-            await startStreamingGeneration('characters');
-            showMessage('人物生成成功！', 'success');
-        } else {
-            await apiRequest(
-                `/api/projects/${AppState.currentProject}/generate/characters`,
-                { method: 'POST' }
-            );
-            showMessage('人物生成成功！', 'success');
-        }
+        await startStreamingGeneration('characters');
+        showMessage('人物生成成功！', 'success');
     } catch (error) {
         showMessage('生成人物失败: ' + error.message, 'error');
     } finally {
@@ -904,16 +894,8 @@ async function generateOutline() {
     }
 
     try {
-        if (typeof startStreamingGeneration === 'function') {
-            await startStreamingGeneration('outline');
-            showMessage('大纲生成成功！', 'success');
-        } else {
-            await apiRequest(
-                `/api/projects/${AppState.currentProject}/generate/outline`,
-                { method: 'POST' }
-            );
-            showMessage('大纲生成成功！', 'success');
-        }
+        await startStreamingGeneration('outline');
+        showMessage('大纲生成成功！', 'success');
     } catch (error) {
         showMessage('生成大纲失败: ' + error.message, 'error');
     } finally {
@@ -932,7 +914,7 @@ async function generateOutline() {
 /**
  * 加载写作界面数据。
  *
- * 获取项目当前章节号，加载章节规划与导出列表。
+ * 获取项目当前章节号，加载侧边栏导航、章节规划与导出列表。
  *
  * @param {string} projectId - 项目 UUID。
  */
@@ -941,7 +923,12 @@ async function loadWritingInterface(projectId) {
         const project = await apiRequest(`/api/projects/${projectId}`);
         AppState.currentChapter = project.current_chapter || AppState.currentChapter || 1;
         localStorage.setItem('mans_current_chapter', String(AppState.currentChapter));
-        await loadChapterPlan(projectId, AppState.currentChapter);
+
+        // 并行加载：侧边栏导航 + 当前章节内容
+        await Promise.all([
+            loadWritingSidebar(projectId),
+            loadChapterPlan(projectId, AppState.currentChapter)
+        ]);
         await loadExports();
     } catch (error) {
         console.error('加载写作界面失败:', error);
@@ -970,10 +957,16 @@ async function loadChapterPlan(projectId, chapterNum) {
         if (container) {
             container.innerHTML = `
                 <div class="panel-empty">
-                    <p class="panel-empty-text">第${escapeHtml(String(chapterNum))}章规划不存在，请先生成弧线规划</p>
+                    <p class="panel-empty-text">第${escapeHtml(String(chapterNum))}章规划不存在</p>
+                    <button class="mans-btn primary" onclick="generateChapterPlan(${chapterNum})"
+                            ${AppState.isGenerating ? 'disabled' : ''}>
+                        生成章节规划
+                    </button>
                 </div>
             `;
         }
+        // 清除概览面板，避免显示旧章节的数据
+        loadChapterPlanOverview(null);
     }
 }
 
@@ -1016,6 +1009,212 @@ function displayChapterPlan(plan) {
     if (!container) return;
 
     container.innerHTML = buildChapterPlanHtml(plan, true);
+
+    // 同步更新章节规划概览面板
+    loadChapterPlanOverview(plan);
+
+    // 更新侧边栏当前章节高亮
+    highlightCurrentChapterInSidebar(AppState.currentChapter);
+}
+
+/**
+ * 加载写作区侧边栏导航（弧线 → 章节树）。
+ *
+ * @param {string} projectId - 项目 UUID。
+ */
+async function loadWritingSidebar(projectId) {
+    const sidebarContent = document.getElementById('writing-sidebar-content');
+    if (!sidebarContent) return;
+
+    try {
+        const arcsData = await apiRequest(`/api/projects/${projectId}/arcs`);
+        const arcs = arcsData.arcs || [];
+
+        if (arcs.length === 0) {
+            sidebarContent.innerHTML = `
+                <div class="panel-empty" style="padding: 20px 10px;">
+                    <p class="panel-empty-text" style="font-size: 12px;">暂无弧线规划</p>
+                </div>
+            `;
+            return;
+        }
+
+        // 按弧线顺序渲染树形结构
+        let html = '<div class="arc-tree">';
+        for (const arc of arcs) {
+            const startCh = arc.chapter_range?.[0] || 1;
+            const endCh = arc.chapter_range?.[1] || startCh;
+            const arcId = `arc-nav-${arc.arc_number}`;
+
+            html += `
+                <div class="arc-item" id="${arcId}" data-arc-number="${arc.arc_number}">
+                    <div class="arc-header" onclick="toggleArcExpand('${arcId}')">
+                        <span class="arc-expand-icon">▸</span>
+                        <span class="arc-name" title="${escapeHtml(arc.title || '')}">${escapeHtml(arc.title || `弧线${arc.arc_number}`)}</span>
+                        <span class="arc-range">${startCh}-${endCh}</span>
+                    </div>
+                    <div class="arc-chapters">
+            `;
+
+            for (let ch = startCh; ch <= endCh; ch++) {
+                html += `
+                    <div class="chapter-nav-item" data-chapter="${ch}" onclick="switchChapter(${ch})">
+                        <span class="chapter-indicator"></span>
+                        <span>第${ch}章</span>
+                    </div>
+                `;
+            }
+
+            html += '</div></div>';
+        }
+        html += '</div>';
+        sidebarContent.innerHTML = html;
+
+        // 自动展开包含当前章节的弧线
+        highlightCurrentChapterInSidebar(AppState.currentChapter);
+
+    } catch (error) {
+        console.error('加载写作侧边栏失败:', error);
+        sidebarContent.innerHTML = `
+            <div class="panel-empty" style="padding: 20px 10px;">
+                <p class="panel-empty-text" style="font-size: 12px;">加载导航失败</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * 切换章节。
+ *
+ * @param {number} chapterNum - 目标章节编号。
+ */
+async function switchChapter(chapterNum) {
+    if (!AppState.currentProject || chapterNum === AppState.currentChapter) return;
+
+    AppState.currentChapter = chapterNum;
+    localStorage.setItem('mans_current_chapter', String(chapterNum));
+
+    // 更新侧边栏高亮
+    highlightCurrentChapterInSidebar(chapterNum);
+
+    // 加载新章节内容
+    await loadChapterPlan(AppState.currentProject, chapterNum);
+}
+
+/**
+ * 展开/折叠弧线。
+ *
+ * @param {string} arcId - 弧线 DOM 元素 ID。
+ */
+function toggleArcExpand(arcId) {
+    const arcItem = document.getElementById(arcId);
+    if (arcItem) {
+        arcItem.classList.toggle('expanded');
+    }
+}
+
+/**
+ * 高亮侧边栏中的当前章节。
+ *
+ * @param {number} chapterNum - 当前章节编号。
+ */
+function highlightCurrentChapterInSidebar(chapterNum) {
+    // 移除所有高亮
+    document.querySelectorAll('.chapter-nav-item.active').forEach(el => {
+        el.classList.remove('active');
+    });
+
+    // 添加当前章节高亮
+    const currentEl = document.querySelector(`.chapter-nav-item[data-chapter="${chapterNum}"]`);
+    if (currentEl) {
+        currentEl.classList.add('active');
+        // 确保所在弧线已展开
+        const arcItem = currentEl.closest('.arc-item');
+        if (arcItem && !arcItem.classList.contains('expanded')) {
+            arcItem.classList.add('expanded');
+        }
+        // 滚动到可视区域
+        currentEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+/**
+ * 切换章节规划概览面板的展开/折叠状态。
+ */
+function toggleChapterOverview() {
+    const panel = document.getElementById('chapter-plan-overview');
+    const body = panel?.querySelector('.overview-body');
+    if (!panel || !body) return;
+
+    const isExpanded = panel.classList.contains('expanded');
+    if (isExpanded) {
+        panel.classList.remove('expanded');
+        panel.classList.add('collapsed');
+        body.style.display = 'none';
+    } else {
+        panel.classList.add('expanded');
+        panel.classList.remove('collapsed');
+        body.style.display = 'block';
+    }
+}
+
+/**
+ * 加载章节规划概览到顶部面板。
+ *
+ * @param {object} plan - 章节规划数据。
+ */
+function loadChapterPlanOverview(plan) {
+    const content = document.getElementById('overview-content');
+    if (!content) return;
+
+    if (!plan) {
+        content.innerHTML = `
+            <div class="overview-section">
+                <div class="overview-section-label">章节目标</div>
+                <div class="overview-section-value" style="color: var(--text-secondary);">暂无规划</div>
+            </div>
+            <div class="overview-section">
+                <div class="overview-section-label">情绪弧线</div>
+                <div class="overview-section-value" style="color: var(--text-secondary);">暂无规划</div>
+            </div>
+            <div class="overview-section">
+                <div class="overview-section-label">关键事件</div>
+                <div class="overview-tags">
+                    <span class="overview-section-value" style="color: var(--text-secondary);">暂无规划</span>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    const keyEvents = plan.key_events || [];
+    const eventsHtml = keyEvents.length > 0
+        ? keyEvents.map(e => `<span class="overview-tag">${escapeHtml(e)}</span>`).join('')
+        : '<span class="overview-section-value" style="color: var(--text-secondary);">无关键事件</span>';
+
+    content.innerHTML = `
+        <div class="overview-section">
+            <div class="overview-section-label">章节目标</div>
+            <div class="overview-section-value">${escapeHtml(plan.chapter_goal || '未设置')}</div>
+        </div>
+        <div class="overview-section">
+            <div class="overview-section-label">情绪弧线</div>
+            <div class="overview-section-value">${escapeHtml(plan.emotional_arc || '未设置')}</div>
+        </div>
+        <div class="overview-section">
+            <div class="overview-section-label">关键事件</div>
+            <div class="overview-tags">${eventsHtml}</div>
+        </div>
+    `;
+
+    // 默认折叠概览面板
+    const panel = document.getElementById('chapter-plan-overview');
+    if (panel) {
+        panel.classList.remove('expanded');
+        panel.classList.add('collapsed');
+        const body = panel.querySelector('.overview-body');
+        if (body) body.style.display = 'none';
+    }
 }
 
 /**
@@ -1296,7 +1495,7 @@ async function connectStream(sceneIndex, contentDiv, signal = null) {
     const projectId = AppState.currentProject;
     const chapterNum = AppState.currentChapter;
 
-    const temperature = getSetting('temperature', 0.75);
+    const temperature = getSetting('temperature_writer', 0.75);
     const base = getApiBase().replace(/\/$/, '');
     const streamUrl = base
         ? `${base}/api/projects/${projectId}/stream/${chapterNum}/${sceneIndex}`
@@ -1348,7 +1547,19 @@ async function connectStream(sceneIndex, contentDiv, signal = null) {
                         break;
                     }
                     case 'progress': {
-                        // 预留：可在 UI 中显示进度条或 token 计数
+                        // 更新进度显示（字数/token 统计）
+                        try {
+                            const data = JSON.parse(currentEvent.data);
+                            const stats = [];
+                            if (data.token_count !== undefined) stats.push(`${data.token_count} tokens`);
+                            if (data.char_count !== undefined) stats.push(`${data.char_count} 字`);
+                            if (stats.length > 0) {
+                                const progressDiv = contentDiv.querySelector('.generating');
+                                if (progressDiv) {
+                                    progressDiv.textContent = `生成中... ${stats.join(' / ')}`;
+                                }
+                            }
+                        } catch (e) {}
                         break;
                     }
                     case 'scene_complete': {
@@ -1396,11 +1607,12 @@ async function connectStream(sceneIndex, contentDiv, signal = null) {
                 buffer = lines.pop(); // 保留不完整的最后一行
 
                 for (const line of lines) {
-                    if (line.startsWith('event:')) {
-                        currentEvent.event = line.slice(6).trim();
-                    } else if (line.startsWith('data:')) {
-                        currentEvent.data = line.slice(5).trim();
-                    } else if (line === '') {
+                    const trimmed = line.replace(/\r$/, '');
+                    if (trimmed.startsWith('event:')) {
+                        currentEvent.event = trimmed.slice(6).trim();
+                    } else if (trimmed.startsWith('data:')) {
+                        currentEvent.data = trimmed.slice(5).trim();
+                    } else if (trimmed === '') {
                         dispatchEvent();
                     }
                 }
@@ -1487,17 +1699,28 @@ async function startRewrite(sceneIndex) {
     AppState.currentScene = sceneIndex;
     updateAllSceneButtons();
 
+    // 中断之前的流式请求（如果存在）
+    if (AppState.currentAbortController) {
+        AppState.currentAbortController.abort();
+    }
+    AppState.currentAbortController = new AbortController();
+
     const contentDiv = document.getElementById(`scene-content-${sceneIndex}`);
     contentDiv.classList.add('locked');
     contentDiv.innerHTML = '<div class="generating">正在重写...</div>';
 
     try {
-        await connectRewriteStream(sceneIndex, feedback, contentDiv);
+        await connectRewriteStream(sceneIndex, feedback, contentDiv, AppState.currentAbortController.signal);
         checkAsyncUpdates(AppState.currentChapter);
     } catch (error) {
-        contentDiv.innerHTML = `<div class="error">重写失败: ${escapeHtml(error.message)}</div>`;
+        if (error.name === 'AbortError') {
+            contentDiv.innerHTML = '<div class="error">重写已取消</div>';
+        } else {
+            contentDiv.innerHTML = `<div class="error">重写失败: ${escapeHtml(error.message)}</div>`;
+        }
     } finally {
         AppState.isGenerating = false;
+        AppState.currentAbortController = null;
         contentDiv.classList.remove('locked');
         updateAllSceneButtons();
     }
@@ -1514,11 +1737,11 @@ async function startRewrite(sceneIndex) {
  * @param {HTMLElement} contentDiv - 内容渲染容器。
  * @returns {Promise<void>}
  */
-async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
+async function connectRewriteStream(sceneIndex, feedback, contentDiv, signal = null) {
     const projectId = AppState.currentProject;
     const chapterNum = AppState.currentChapter;
 
-    const temperature = getSetting('temperature', 0.75);
+    const temperature = getSetting('temperature_writer', 0.75);
     const base = getApiBase().replace(/\/$/, '');
     const streamUrl = base
         ? `${base}/api/projects/${projectId}/chapters/${chapterNum}/scenes/${sceneIndex}/regenerate`
@@ -1527,7 +1750,8 @@ async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
     const response = await fetch(streamUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ temperature, feedback })
+        body: JSON.stringify({ temperature, feedback }),
+        signal
     });
 
     if (!response.ok) {
@@ -1564,7 +1788,21 @@ async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
                         }
                         break;
                     }
-                    case 'progress': break;
+                    case 'progress': {
+                        try {
+                            const data = JSON.parse(currentEvent.data);
+                            const stats = [];
+                            if (data.token_count !== undefined) stats.push(`${data.token_count} tokens`);
+                            if (data.char_count !== undefined) stats.push(`${data.char_count} 字`);
+                            if (stats.length > 0) {
+                                const progressDiv = contentDiv.querySelector('.generating');
+                                if (progressDiv) {
+                                    progressDiv.textContent = `重写中... ${stats.join(' / ')}`;
+                                }
+                            }
+                        } catch (e) {}
+                        break;
+                    }
                     case 'scene_complete': {
                         const data = JSON.parse(currentEvent.data);
                         showMessage(`场景重写完成！字数: ${data.word_count}`, 'success');
@@ -1603,11 +1841,12 @@ async function connectRewriteStream(sceneIndex, feedback, contentDiv) {
                 const lines = buffer.split('\n');
                 buffer = lines.pop();
                 for (const line of lines) {
-                    if (line.startsWith('event:')) {
-                        currentEvent.event = line.slice(6).trim();
-                    } else if (line.startsWith('data:')) {
-                        currentEvent.data = line.slice(5).trim();
-                    } else if (line === '') {
+                    const trimmed = line.replace(/\r$/, '');
+                    if (trimmed.startsWith('event:')) {
+                        currentEvent.event = trimmed.slice(6).trim();
+                    } else if (trimmed.startsWith('data:')) {
+                        currentEvent.data = trimmed.slice(5).trim();
+                    } else if (trimmed === '') {
                         dispatchEvent();
                     }
                 }
@@ -2379,19 +2618,17 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
 
     // 自动恢复项目状态（页面刷新后）
+    // 弧线规划和章节规划已并入写作区，若上次记录为旧面板则重定向到写作区
+    const redirectedPanel = (savedPanel === 'arc' || savedPanel === 'chapter-plan') ? 'writing' : savedPanel;
     if (AppState.currentProject) {
         openProject(AppState.currentProject, { skipPanelSwitch: true }).then(() => {
-            showPanel(savedPanel);
-            if (savedPanel === 'knowledge') {
+            showPanel(redirectedPanel);
+            if (redirectedPanel === 'knowledge') {
                 loadKnowledgeBase(AppState.currentProject);
-            } else if (savedPanel === 'monitor') {
+            } else if (redirectedPanel === 'monitor') {
                 refreshMonitor();
-            } else if (savedPanel === 'issues') {
+            } else if (redirectedPanel === 'issues') {
                 loadIssuesForPanel();
-            } else if (savedPanel === 'arc') {
-                checkArcStatus(AppState.currentProject);
-            } else if (savedPanel === 'chapter-plan') {
-                loadChapterPlanForPanel(AppState.currentProject, AppState.currentChapter);
             }
         });
     } else {
@@ -2406,13 +2643,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // 温度滑块实时更新显示值
-    const tempSlider = document.getElementById('setting-temperature');
-    const tempValue = document.getElementById('temperature-value');
-    if (tempSlider && tempValue) {
-        tempSlider.addEventListener('input', () => {
-            tempValue.textContent = tempSlider.value;
-        });
-    }
+    const tempRoles = ['writer', 'generator', 'trim', 'extract'];
+    tempRoles.forEach(role => {
+        const slider = document.getElementById(`setting-temp-${role}`);
+        const value = document.getElementById(`temp-${role}-value`);
+        if (slider && value) {
+            slider.addEventListener('input', () => {
+                value.textContent = slider.value;
+            });
+        }
+    });
 
     // 绑定顶部汉堡菜单（切换侧边栏）
     const topBarIcon = document.querySelector('.top-bar-icon');
@@ -2553,6 +2793,18 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // 绑定写作区侧边栏切换按钮
+    const toggleSidebarBtn = document.getElementById('toggle-writing-sidebar');
+    if (toggleSidebarBtn) {
+        toggleSidebarBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const sidebar = document.getElementById('writing-sidebar');
+            if (sidebar) {
+                sidebar.classList.toggle('collapsed');
+            }
+        });
+    }
+
     // 绑定侧边栏导航点击
     document.querySelectorAll('.sidebar-item').forEach(item => {
         item.addEventListener('click', (e) => {
@@ -2574,16 +2826,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (panel) {
                 showPanel(panel + '-panel');
-                if (panel === 'arc' && AppState.currentProject) {
-                    checkArcStatus(AppState.currentProject);
-                } else if (panel === 'monitor' && AppState.currentProject) {
+                if (panel === 'monitor' && AppState.currentProject) {
                     refreshMonitor();
                 } else if (panel === 'issues' && AppState.currentProject) {
                     loadIssuesForPanel();
                 } else if (panel === 'knowledge' && AppState.currentProject) {
                     loadKnowledgeBase(AppState.currentProject);
-                } else if (panel === 'chapter-plan' && AppState.currentProject) {
-                    loadChapterPlanForPanel(AppState.currentProject, AppState.currentChapter);
                 }
             }
         });
@@ -2824,20 +3072,9 @@ async function generateArc(arcNumber) {
 
     let success = false;
     try {
-        if (typeof startStreamingGeneration === 'function') {
-            await startStreamingGeneration('arc', { arc_number: arcNumber });
-            showMessage(`弧线 ${arcNumber} 规划生成成功！`, 'success');
-            success = true;
-        } else {
-            const temperature = getSetting('temperature', 0.7);
-            const result = await apiRequest(
-                `/api/projects/${AppState.currentProject}/generate/arc?arc_number=${arcNumber}&temperature=${encodeURIComponent(temperature)}`,
-                { method: 'POST' }
-            );
-            showMessage(`弧线 ${arcNumber} 规划生成成功！`, 'success');
-            success = true;
-            return result;
-        }
+        await startStreamingGeneration('arc', { arc_number: arcNumber });
+        showMessage(`弧线 ${arcNumber} 规划生成成功！`, 'success');
+        success = true;
     } catch (error) {
         showMessage('生成弧线规划失败: ' + error.message, 'error');
     } finally {
@@ -2864,15 +3101,9 @@ async function generateChapterPlan(chapterNumber) {
     }
 
     try {
-        const temperature = getSetting('temperature', 0.7);
-        const result = await apiRequest(
-            `/api/projects/${AppState.currentProject}/generate/chapter?chapter_number=${chapterNumber}&temperature=${encodeURIComponent(temperature)}`,
-            { method: 'POST' }
-        );
+        await startStreamingGeneration('chapter', { chapter_number: chapterNumber });
         showMessage(`第 ${chapterNumber} 章规划生成成功！`, 'success');
         await loadChapterPlan(AppState.currentProject, chapterNumber);
-        await loadChapterPlanForPanel(AppState.currentProject, chapterNumber);
-        return result;
     } catch (error) {
         showMessage('生成章节规划失败: ' + error.message, 'error');
     } finally {
@@ -2890,12 +3121,15 @@ async function generateChapterPlan(chapterNumber) {
 /**
  * 保存用户设置到 localStorage。
  *
- * 设置项：apiBase（服务地址）、temperature（生成温度）、retries（最大重试次数）、logLevel（日志级别）。
+ * 设置项：apiBase（服务地址）、四个角色的温度、retries（最大重试次数）、logLevel（日志级别）。
  */
 function saveSettings() {
     const settings = {
         apiBase: document.getElementById('setting-api-base')?.value || '',
-        temperature: parseFloat(document.getElementById('setting-temperature')?.value || '0.7'),
+        temperature_writer: parseFloat(document.getElementById('setting-temp-writer')?.value || '0.75'),
+        temperature_generator: parseFloat(document.getElementById('setting-temp-generator')?.value || '0.3'),
+        temperature_trim: parseFloat(document.getElementById('setting-temp-trim')?.value || '0.1'),
+        temperature_extract: parseFloat(document.getElementById('setting-temp-extract')?.value || '0.3'),
         retries: parseInt(document.getElementById('setting-retries')?.value || '3'),
         logLevel: document.getElementById('setting-log-level')?.value || 'INFO'
     };
@@ -2907,7 +3141,15 @@ function saveSettings() {
  * 重置所有设置为默认值。
  */
 function resetSettings() {
-    const defaults = { apiBase: '', temperature: 0.7, retries: 3, logLevel: 'INFO' };
+    const defaults = {
+        apiBase: '',
+        temperature_writer: 0.75,
+        temperature_generator: 0.3,
+        temperature_trim: 0.1,
+        temperature_extract: 0.3,
+        retries: 3,
+        logLevel: 'INFO'
+    };
     localStorage.setItem('mans_settings', JSON.stringify(defaults));
     loadSettings();
     showMessage('设置已重置为默认值', 'success');
@@ -2918,17 +3160,33 @@ function resetSettings() {
  */
 function loadSettings() {
     const stored = localStorage.getItem('mans_settings');
-    const settings = stored ? JSON.parse(stored) : { apiBase: '', temperature: 0.7, retries: 3, logLevel: 'INFO' };
+    const defaults = {
+        apiBase: '',
+        temperature_writer: 0.75,
+        temperature_generator: 0.3,
+        temperature_trim: 0.1,
+        temperature_extract: 0.3,
+        retries: 3,
+        logLevel: 'INFO'
+    };
+    const settings = stored ? JSON.parse(stored) : defaults;
 
     const apiBase = document.getElementById('setting-api-base');
-    const temperature = document.getElementById('setting-temperature');
-    const tempValue = document.getElementById('temperature-value');
+    if (apiBase) apiBase.value = settings.apiBase || '';
+
+    const tempRoles = ['writer', 'generator', 'trim', 'extract'];
+    tempRoles.forEach(role => {
+        const slider = document.getElementById(`setting-temp-${role}`);
+        const value = document.getElementById(`temp-${role}-value`);
+        const defaultVal = defaults[`temperature_${role}`];
+        const storedVal = settings[`temperature_${role}`];
+        if (slider) slider.value = storedVal !== undefined ? storedVal : defaultVal;
+        if (value) value.textContent = storedVal !== undefined ? storedVal : defaultVal;
+    });
+
     const retries = document.getElementById('setting-retries');
     const logLevel = document.getElementById('setting-log-level');
 
-    if (apiBase) apiBase.value = settings.apiBase || '';
-    if (temperature) temperature.value = settings.temperature ?? 0.7;
-    if (tempValue) tempValue.textContent = settings.temperature ?? 0.7;
     if (retries) retries.value = settings.retries ?? 3;
     if (logLevel) logLevel.value = settings.logLevel || 'INFO';
 }
@@ -3208,6 +3466,9 @@ async function refreshMonitor() {
 }
 
 // 补充导出监控相关函数到 window
+window.toggleArcExpand = toggleArcExpand;
+window.switchChapter = switchChapter;
+window.toggleChapterOverview = toggleChapterOverview;
 window.generateArc = generateArc;
 window.generateChapterPlan = generateChapterPlan;
 window.saveSettings = saveSettings;

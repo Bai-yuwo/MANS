@@ -26,6 +26,7 @@ knowledge_bases/character_db.py
     await db.apply_update(update, chapter=5, scene_index=2)
 """
 
+import re
 from typing import Optional
 
 from knowledge_bases.base_db import BaseDB
@@ -56,27 +57,67 @@ class CharacterDB(BaseDB):
 
     async def get_character(self, name: str) -> Optional[CharacterCard]:
         """
-        根据姓名获取人物卡。
+        根据姓名获取人物卡，支持精确匹配、别名匹配和规范化匹配。
 
-        查找逻辑：
-            以姓名为 key 加载对应的 JSON 文件，反序列化为 CharacterCard。
-            若文件不存在或解析失败，返回 None 并记录错误日志。
+        查找逻辑（按优先级）：
+            1. 精确匹配：以 name 为 key 加载对应的 JSON 文件。
+            2. 别名匹配：遍历所有人物，检查 name 是否等于某人物的 name
+               或出现在该人物的 aliases 列表中。
+            3. 规范化匹配：去除 name 中的括号注释（如 "刘禅（现代）" → "刘禅"），
+               再次尝试精确匹配和别名匹配。
+            4. 若全部失败，返回 None 并记录警告日志。
 
         Args:
-            name: 人物姓名（与文件名对应）。
+            name: 人物姓名（可能与文件名不完全一致，如带括号注释）。
 
         Returns:
             CharacterCard 实例，不存在或解析失败时返回 None。
         """
+        # 1. 精确匹配
         data = await self.load(name)
-        if not data:
-            return None
+        if data:
+            try:
+                return CharacterCard(**data)
+            except Exception as e:
+                logger.error(f"解析人物卡失败 {name}: {e}")
+                return None
 
-        try:
-            return CharacterCard(**data)
-        except Exception as e:
-            logger.error(f"解析人物卡失败 {name}: {e}")
-            return None
+        # 2. 别名匹配
+        all_names = await self.list_keys()
+        for key in all_names:
+            char_data = await self.load(key)
+            if not char_data:
+                continue
+            if char_data.get("name") == name or name in char_data.get("aliases", []):
+                try:
+                    return CharacterCard(**char_data)
+                except Exception as e:
+                    logger.error(f"解析人物卡失败 {key}: {e}")
+                    continue
+
+        # 3. 规范化匹配（去除括号及其中内容，如 "刘禅（现代）" → "刘禅"）
+        normalized = re.sub(r"[（(].*?[）)]", "", name).strip()
+        if normalized and normalized != name:
+            data = await self.load(normalized)
+            if data:
+                try:
+                    return CharacterCard(**data)
+                except Exception as e:
+                    logger.error(f"解析人物卡失败 {normalized}: {e}")
+                    return None
+
+            for key in all_names:
+                char_data = await self.load(key)
+                if not char_data:
+                    continue
+                if char_data.get("name") == normalized or normalized in char_data.get("aliases", []):
+                    try:
+                        return CharacterCard(**char_data)
+                    except Exception as e:
+                        logger.error(f"解析人物卡失败 {key}: {e}")
+                        continue
+
+        return None
 
     async def save_character(self, character: CharacterCard) -> bool:
         """

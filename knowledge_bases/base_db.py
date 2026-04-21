@@ -32,6 +32,7 @@ knowledge_bases/base_db.py
 
 import asyncio
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Optional
@@ -116,7 +117,14 @@ class BaseDB:
         Args:
             project_id: 项目唯一标识，用于隔离不同项目的数据。
             db_name: 知识库名称，对应 workspace/{project_id}/ 下的子目录名。
+
+        Raises:
+            ValueError: 当 project_id 包含路径遍历字符时抛出。
         """
+        # 深度防御：验证 project_id 不包含路径遍历字符
+        if '..' in project_id or '/' in project_id or '\\' in project_id:
+            raise ValueError(f"非法项目ID: {project_id}")
+
         self.project_id = project_id
         self.db_name = db_name
 
@@ -139,7 +147,12 @@ class BaseDB:
 
         Returns:
             Path 对象，指向 workspace/{project_id}/{db_name}/{key}.json。
+
+        Raises:
+            ValueError: 当 key 包含路径遍历字符时抛出。
         """
+        if '..' in key or '/' in key or '\\' in key:
+            raise ValueError(f"非法数据标识: {key}")
         return self.db_path / f"{key}.json"
 
     async def load(self, key: str) -> Optional[dict]:
@@ -341,7 +354,6 @@ class BaseDB:
             data['_updated_at'] = datetime.now().isoformat()
             async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
                 await f.write(json.dumps(data, ensure_ascii=False, indent=2))
-            import os
             os.replace(str(temp_path), str(file_path))
             return True
         except IOError as e:

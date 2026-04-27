@@ -50,6 +50,7 @@ class SaveReviewIssues(BaseTool):
                             "continuity_issues": {"type": "array", "items": {"type": "object"}},
                             "consistency_issues": {"type": "array", "items": {"type": "object"}},
                             "scores": {"type": "object", "description": "Critic 产出的场景质量评分"},
+                            "metrics": {"type": "object", "description": "SceneMetricsCalculator 产出的量化指标(word_count_ratio/protagonist_action_ratio/scene_transition_count/dialogue_to_action_ratio)"},
                         },
                         "additionalProperties": True,
                     },

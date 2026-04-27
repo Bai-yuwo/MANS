@@ -124,8 +124,10 @@ class ReviewPanel extends HTMLElement {
                 </div>
                 <div class="review-body">
                     ${scores ? this._renderScores(scores) : ""}
+                    ${this._data?.issues?.metrics ? this._renderMetrics(this._data.issues.metrics) : ""}
                     ${this._renderIssuesSection(criticIssues, continuityIssues, consistencyIssues)}
                     ${this._renderGuidanceSection(guidanceHistory)}
+                    ${this._renderActionBar()}
                 </div>
             </div>
         `;
@@ -140,6 +142,14 @@ class ReviewPanel extends HTMLElement {
                 }
             });
         });
+
+        // 绑定操作栏按钮事件
+        const commentBtn = this.querySelector(".review-btn-comment");
+        const acceptBtn = this.querySelector(".review-btn-accept");
+        const rewriteBtn = this.querySelector(".review-btn-rewrite");
+        if (commentBtn) commentBtn.addEventListener("click", () => this._onComment());
+        if (acceptBtn) acceptBtn.addEventListener("click", () => this._onAccept());
+        if (rewriteBtn) rewriteBtn.addEventListener("click", () => this._onRewrite());
     }
 
     _renderScores(scores) {
@@ -162,6 +172,58 @@ class ReviewPanel extends HTMLElement {
                     <span class="review-score-label">爽点释放</span>
                     <span class="review-score-stars ${scoreClass(scores.payoff_satisfaction || 0)}">${star(scores.payoff_satisfaction || 0)}</span>
                     <span class="review-score-num">${scores.payoff_satisfaction ?? "-"}/5</span>
+                </div>
+            </div>
+        `;
+    }
+
+    _renderMetrics(metrics) {
+        if (!metrics) return "";
+
+        const fmt = (n) => (typeof n === "number" ? n.toFixed(1) : "-");
+
+        const wordCountRatio = metrics.word_count_ratio || 0;
+        const protagonistActionRatio = metrics.protagonist_action_ratio || 0;
+        const transitionCount = metrics.scene_transition_count || 0;
+        const dialogueRatio = metrics.dialogue_to_action_ratio || 0;
+        const expectedRatio = metrics.expected_dialogue_ratio || 0.4;
+
+        // 阈值标色
+        const ratioClass = (n) => n < 85 ? "metric-bad" : n > 110 ? "metric-warn" : "metric-good";
+        const actionClass = (n) => n < 30 ? "metric-warn" : "metric-good";
+        const transitionClass = (n) => n > 3 ? "metric-bad" : "metric-good";
+        const dialogueClass = (n) => {
+            const dev = Math.abs(n - expectedRatio);
+            return dev > 1.5 ? "metric-warn" : "metric-good";
+        };
+
+        return `
+            <div class="review-section">
+                <div class="review-section-header">
+                    <span class="review-toggle-icon">▼</span>
+                    <span class="review-section-title">量化指标</span>
+                </div>
+                <div class="review-section-body">
+                    <div class="review-metrics">
+                        <div class="review-metric-item">
+                            <span class="review-metric-label">字数利用率</span>
+                            <span class="review-metric-value ${ratioClass(wordCountRatio)}">${fmt(wordCountRatio)}%</span>
+                            <span class="review-metric-target">目标 ${metrics.target_word_count || 1200}</span>
+                        </div>
+                        <div class="review-metric-item">
+                            <span class="review-metric-label">主角动作占比</span>
+                            <span class="review-metric-value ${actionClass(protagonistActionRatio)}">${fmt(protagonistActionRatio)}%</span>
+                        </div>
+                        <div class="review-metric-item">
+                            <span class="review-metric-label">场景转换次数</span>
+                            <span class="review-metric-value ${transitionClass(transitionCount)}">${transitionCount}</span>
+                        </div>
+                        <div class="review-metric-item">
+                            <span class="review-metric-label">对话动作比</span>
+                            <span class="review-metric-value ${dialogueClass(dialogueRatio)}">${fmt(dialogueRatio)}</span>
+                            <span class="review-metric-target">预期 ${fmt(expectedRatio)}</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
@@ -288,6 +350,49 @@ class ReviewPanel extends HTMLElement {
                 </div>
             </div>
         `;
+    }
+
+    _renderActionBar() {
+        return `
+            <div class="review-action-bar">
+                <button class="review-btn review-btn-comment">💬 暂停并评论</button>
+                <button class="review-btn review-btn-accept">✅ 接受当前稿</button>
+                <button class="review-btn review-btn-rewrite">🔄 要求重写</button>
+            </div>
+        `;
+    }
+
+    _onComment() {
+        const comment = prompt("请输入您的评论或修改意见:");
+        if (comment === null) return;
+        const instruction = `暂停并评论: ${comment}`;
+        this._sendCommand(instruction);
+    }
+
+    _onAccept() {
+        if (!confirm("确认接受当前场景草稿？这将跳过重写直接继续。")) return;
+        this._sendCommand("接受当前场景,跳过重写");
+    }
+
+    _onRewrite() {
+        const comment = prompt("请输入重写补充意见(可选):");
+        const base = "触发重写,补充意见:";
+        const instruction = comment ? `${base} ${comment}` : base;
+        this._sendCommand(instruction);
+    }
+
+    async _sendCommand(instruction) {
+        if (!this._api || !this._projectId) {
+            alert("API 客户端未初始化");
+            return;
+        }
+        try {
+            const result = await this._api.sendCommand(this._projectId, instruction);
+            console.log("[review-panel] 指令已发送:", result);
+        } catch (err) {
+            console.error("[review-panel] 发送指令失败:", err);
+            alert(`发送指令失败: ${err.message}`);
+        }
     }
 
     _escapeHtml(text) {

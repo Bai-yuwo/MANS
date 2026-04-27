@@ -948,3 +948,79 @@ agent-stream {
     color: var(--text-secondary);
     white-space: pre-wrap;
 }
+
+/* ---------- review-panel metrics ---------- */
+.review-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.review-metric-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 4px 0;
+}
+
+.review-metric-label {
+    color: var(--text-muted);
+    min-width: 72px;
+}
+
+.review-metric-value {
+    font-weight: 600;
+    font-family: "SF Mono", Monaco, monospace;
+}
+
+.review-metric-value.metric-good {
+    color: var(--success);
+}
+
+.review-metric-value.metric-warn {
+    color: var(--warning);
+}
+
+.review-metric-value.metric-bad {
+    color: var(--error);
+}
+
+.review-metric-target {
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+/* ---------- review-panel action bar ---------- */
+.review-action-bar {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    justify-content: center;
+}
+
+.review-btn {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.review-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+
+.review-btn:active {
+    transform: translateY(1px);
+}

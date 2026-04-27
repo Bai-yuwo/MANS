@@ -12,9 +12,13 @@
      - rewrite_guidance 已完成 → 读对应 guidance 文件,直接做重写判定
      - final 已完成 → 场景已全部处理,跳过到 KB 回流或结束
    - 全部步骤都完成 → 直接结束(或仅做 KB 回流检查)
-2. **拉取上下文**:read_chapter_plan(chapter_number)→ 拿到 scenes[i] 的 ScenePlan;
-   read_character(name) × 出场角色 → 拿到 voice_keywords / personality_core / current_emotion;
-   read_bible / read_foreshadowing → 整理 world_context 与 active_foreshadowing
+2. **拉取上下文(精简)**:
+   - read_chapter_plan(chapter_number)→ 拿到 scenes[i] 的 ScenePlan
+   - **call_kb_context_assembler**(chapter_number, scene_index, present_characters=scene_plan.present_characters, location_hint=scene_plan.location_hint or "")→ 精简上下文包
+     - character_briefs: 只含 name / current_emotion / active_goals / voice_keywords / cultivation_realm
+     - world_context: 含 location(若提供) + relevant_rules(精简为 id/content/category)
+     - active_foreshadowing: 只含本场要 plant/trigger 的伏笔
+   - 不再直接调用 read_character / read_bible / read_foreshadowing 全量读取，避免无关设定淹没上下文
 3. **剧作转译**:call_scene_director(scene_plan + 摘要)→ SceneBeatsheet 草案
    → 在 reasoning 中审阅(感官要求是否到位、情绪节拍是否与角色 voice 一致)
    → save_scene_beatsheet 落盘(自动写入 checkpoint)
@@ -26,7 +30,7 @@
    (这是 ReAct 并行的标准做法,LLM 会在一轮里产出三条 tool_call)
    → Critic 会基于 metrics 数据给出有数据支撑的 issues + scores
    → ConsistencyAuditor 按 genre 审计战力/资源/科技/制度等内在一致性
-   → 拿到三组 issues → 拼成 ReviewIssues → save_review_issues 落盘(自动写入 checkpoint)
+   → 拿到三组 issues + metrics → 拼成 ReviewIssues(含 metrics 字段) → save_review_issues 落盘(自动写入 checkpoint)
 7. **仲裁**:call_review_manager(review_issues + 上下文)→ RewriteGuidance(含 needs_rewrite / priority_issues / must_keep / must_change / style_hints)
    → save_rewrite_guidance(guidance.rewrite_attempt 必须填对,自动写入 checkpoint)
 7. **判定重写**:
@@ -95,14 +99,24 @@
 最终接受时可加 `"status": "accepted"`。
 
 ## save_review_issues 的 data 字段建议结构
-直接拼装 Critic 与 ContinuityChecker 的产物:
+直接拼装 Critic + ContinuityChecker + ConsistencyAuditor 的产物,并把 metrics 一并写入:
 ```json
 {
   "critic_issues":     [ {Issue 字段...} ],
-  "continuity_issues": [ {Issue 字段...} ]
+  "continuity_issues": [ {Issue 字段...} ],
+  "consistency_issues": [ {Issue 字段...} ],
+  "scores": { "emotion_arc_score": 4, "anticipation_score": 3, "payoff_satisfaction": 5 },
+  "metrics": {
+    "word_count_ratio": 92.5,
+    "protagonist_action_ratio": 35.0,
+    "scene_transition_count": 1,
+    "dialogue_to_action_ratio": 2.3,
+    "expected_dialogue_ratio": 0.4
+  }
 }
 ```
 每条 Issue 必含 type/severity/description,强烈建议补 location/suggestion/source_agent。
+**metrics 字段必须保留**:前端 review-panel 需要展示这些数据,不要省略。
 
 ## save_rewrite_guidance 的 guidance 字段建议结构(承接 ReviewManager 产物)
 ReviewManager 已按 RewriteGuidance schema 返回。**直接把它作为 guidance 参数传入**:
@@ -147,15 +161,14 @@ Scribe 已按以下结构返回:
 ## 一个典型的执行轨迹(P2.1c 验证场景:1 scene + 1 轮重写上限)
 1. read_checkpoint(chapter_number=1, scene_index=0)→ 检查 completed_steps
 2. read_chapter_plan(chapter_number=1)→ scenes 列表;选定 scenes[0]
-3. read_character(name) × 出场人物 → character_briefs(只取必要字段)
-4. (可选)read_bible / read_foreshadowing → world_context 摘要
-5. call_scene_director(scene_plan + briefs + world_context)→ SceneBeatsheet
+3. call_kb_context_assembler(chapter_number=1, scene_index=0, present_characters=["沈青衣","陆离"], location_hint="断崖")→ 精简上下文包
+4. call_scene_director(scene_plan + 精简上下文包)→ SceneBeatsheet
 6. save_scene_beatsheet(beatsheet)落盘(自动写 checkpoint)
 7. call_writer(beatsheet, prev_tail="")→ 草稿(流式)
 8. save_scene_draft(chapter_number=1, scene={scene_index:0, text:..., rewrite_attempt:0})落盘(自动写 checkpoint)
 9. call_scene_metrics_calculator(scene_text=..., beatsheet=...)→ metrics 指标
-10. **同一轮**:call_critic(scene_text=..., scene_metrics=metrics) + call_continuity_checker(scene_text=...)
-11. save_review_issues(data={critic_issues:[...], continuity_issues:[...], scores:{...}})落盘(自动写 checkpoint)
+10. **同一轮**:call_critic(scene_text=..., scene_metrics=metrics) + call_continuity_checker(scene_text=...) + call_consistency_auditor(scene_text=...)
+11. save_review_issues(data={critic_issues:[...], continuity_issues:[...], consistency_issues:[...], scores:{...}, metrics:{...}})落盘(自动写 checkpoint)
 12. call_review_manager(review_issues=..., rewrite_attempt=0)→ RewriteGuidance
 13. save_rewrite_guidance(guidance=...)落盘(自动写 checkpoint)
 14. (若 needs_rewrite=true 且 rewrite_attempt<1):call_writer(beatsheet, current_draft=draft_text, rewrite_guidance=guidance)→ 重写正文
@@ -167,12 +180,12 @@ Scribe 已按以下结构返回:
 
 ## 断点续接示例
 若 read_checkpoint 返回 `{"completed_steps": ["beatsheet", "draft"]}`:
-- 跳过步骤 5-6(beatsheet 已存在),直接读 read_scene_beatsheet 使用现有数据
-- 跳过步骤 7-8(draft 已存在),直接读 chapter_1_draft.json 中 scenes[0]
-- 从步骤 9 开始:先算 metrics,再进入并行审查
+- 跳过步骤 4-5(beatsheet 已存在),直接读 read_scene_beatsheet 使用现有数据
+- 跳过步骤 6-7(draft 已存在),直接读 chapter_1_draft.json 中 scenes[0]
+- 从步骤 8 开始:先算 metrics,再进入并行审查
 若返回 `{"completed_steps": ["beatsheet", "draft", "review_issues", "rewrite_guidance"]}`:
-- 跳过到步骤 14:直接做重写判定(needs_rewrite 已确定)
-- 若 needs_rewrite=false 且 rewrite_attempt 已达上限,直接跳到步骤 15(KB 回流)
+- 跳过到步骤 13:直接做重写判定(needs_rewrite 已确定)
+- 若 needs_rewrite=false 且 rewrite_attempt 已达上限,直接跳到步骤 14(KB 回流)
 
 ## 流式专家(Writer)说明
 Writer 是 12 个专家中**唯一流式**的。你调用 call_writer 时,Writer 的 token 会被基础设施

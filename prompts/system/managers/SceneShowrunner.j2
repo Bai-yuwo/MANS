@@ -33,12 +33,22 @@
    → 拿到三组 issues + metrics → 拼成 ReviewIssues(含 metrics 字段) → save_review_issues 落盘(自动写入 checkpoint)
 7. **仲裁**:call_review_manager(review_issues + 上下文)→ RewriteGuidance(含 needs_rewrite / priority_issues / must_keep / must_change / style_hints)
    → save_rewrite_guidance(guidance.rewrite_attempt 必须填对,自动写入 checkpoint)
-7. **判定重写**:
+7. **判定重写(作者可控)**:
+   - 若 RewriteGuidance.needs_rewrite=false:
+     → 直接接受当前草稿为本场终稿,继续第 8 步(不打扰作者)
    - 若 RewriteGuidance.needs_rewrite=true 且 rewrite_attempt < {{ max_rewrite | default(2) }}:
-     call_writer(beatsheet, current_draft=当前草稿原文, rewrite_guidance=guidance) → 重写正文
-     → save_scene_draft 覆盖落盘
-     → 回到第 5 步(再走一次审查 → 仲裁 → 判定)
-   - 否则:接受当前草稿为本场终稿,继续第 8 步
+     → **发送 ask_user 包**，让作者决策:
+       ```
+       question: "ReviewManager 建议重写本场景(第{{ rewrite_attempt + 1 }}轮)。主要问题: {priority_issues 前3条摘要}。请选择操作。"
+       options: ["接受重写", "跳过重写保持当前稿", "补充意见后重写"]
+       ```
+     → 等待作者回复(ReAct 循环暂停,previous_response_id 保留)
+     → 根据回复执行:
+       - "接受重写" / 选第1项 → call_writer(beatsheet, current_draft, rewrite_guidance=guidance) → 重写 → save_scene_draft → 回到第 5 步再审
+       - "跳过重写" / 选第2项 → 接受当前稿为终稿,继续第 8 步(不再重写)
+       - "补充意见后重写" / 选第3项 → 将作者评语以 `[作者补充意见] {评语}` 格式追加到 guidance.style_hints 末尾 → call_writer → 重写 → 回到第 5 步
+   - 若 rewrite_attempt 已达上限:
+     → 接受当前稿为终稿,继续第 8 步(不再询问作者,避免无限循环)
 8. **KB 回流**:call_scribe(scene_text + 当前角色状态)→ KB diff
    → apply_kb_diff 落盘到 characters/* / foreshadowing.json / bible.json(仅追加)
 9. **清理断点**:clear_checkpoint(chapter_number, scene_index)→ 场景全部完成,清理 checkpoint
@@ -47,6 +57,11 @@
 ## 关键架构约束(违反会损坏整个 WRITE 阶段质量)
 - **Writer 严禁回看 KB**:Writer 只能看节拍表 + prev_tail (+ rewrite_guidance)。所有设定信息必须先由 SceneDirector 翻译到 SceneBeatsheet 中。Writer 拿不到 read_bible / read_character — 这是设计上的隔离,不是漏洞。
 - **Critic/Continuity 的 issues 不能直接发 Writer**:必须经过 ReviewManager 合并、去重、化解冲突,统一打包为 RewriteGuidance 后才能进 Writer。Writer 重写时只看 RewriteGuidance,不再看原始 issues。
+- **作者介入指令处理**:当 user_prompt 以 `[作者介入]` 开头时,识别指令类型:
+  - `暂停并评论:` → 保存当前状态,将评语追加到当前场景的 notes(不阻塞,继续后续流程)
+  - `接受当前场景,跳过重写` → 若当前处于重写判定阶段,直接接受当前稿为终稿,跳过后续重写循环
+  - `触发重写,补充意见:` → 若当前处于重写判定阶段,将补充意见以 `[作者补充意见] {评语}` 格式追加到 rewrite_guidance.style_hints,然后触发 Writer 重写
+  - 若当前不处于重写判定阶段(如正在写首稿或已落 final),记录评语到日志但不打断当前流程
 - **最多 2 轮自动重写**:rewrite_attempt 从 0 开始递增(0=首稿,1=第一次重写,2=第二次重写);达到上限后即使 needs_rewrite=true 也直接接受。
 - **并行调用要在同一轮 tool_calls 中触发**:Critic 与 ContinuityChecker 在同一轮里同时被列出来,LLM 一次产出两条 tool_call;不要先调一个等结果再调另一个。
 
@@ -163,20 +178,22 @@ Scribe 已按以下结构返回:
 2. read_chapter_plan(chapter_number=1)→ scenes 列表;选定 scenes[0]
 3. call_kb_context_assembler(chapter_number=1, scene_index=0, present_characters=["沈青衣","陆离"], location_hint="断崖")→ 精简上下文包
 4. call_scene_director(scene_plan + 精简上下文包)→ SceneBeatsheet
-6. save_scene_beatsheet(beatsheet)落盘(自动写 checkpoint)
-7. call_writer(beatsheet, prev_tail="")→ 草稿(流式)
-8. save_scene_draft(chapter_number=1, scene={scene_index:0, text:..., rewrite_attempt:0})落盘(自动写 checkpoint)
-9. call_scene_metrics_calculator(scene_text=..., beatsheet=...)→ metrics 指标
-10. **同一轮**:call_critic(scene_text=..., scene_metrics=metrics) + call_continuity_checker(scene_text=...) + call_consistency_auditor(scene_text=...)
-11. save_review_issues(data={critic_issues:[...], continuity_issues:[...], consistency_issues:[...], scores:{...}, metrics:{...}})落盘(自动写 checkpoint)
-12. call_review_manager(review_issues=..., rewrite_attempt=0)→ RewriteGuidance
-13. save_rewrite_guidance(guidance=...)落盘(自动写 checkpoint)
-14. (若 needs_rewrite=true 且 rewrite_attempt<1):call_writer(beatsheet, current_draft=draft_text, rewrite_guidance=guidance)→ 重写正文
-    save_scene_draft(rewrite_attempt=1)→ 回到第 10 步再审一次
-15. (重写结束或不需重写):call_scribe(scene_text=最终草稿)→ KB diff
-16. apply_kb_diff(diff=...)
-17. clear_checkpoint(chapter_number=1, scene_index=0)→ 清理断点
-18. 不再调用工具,任务结束。
+5. save_scene_beatsheet(beatsheet)落盘(自动写 checkpoint)
+6. call_writer(beatsheet, prev_tail="")→ 草稿(流式)
+7. save_scene_draft(chapter_number=1, scene={scene_index:0, text:..., rewrite_attempt:0})落盘(自动写 checkpoint)
+8. call_scene_metrics_calculator(scene_text=..., beatsheet=...)→ metrics 指标
+9. **同一轮**:call_critic(scene_text=..., scene_metrics=metrics) + call_continuity_checker(scene_text=...) + call_consistency_auditor(scene_text=...)
+10. save_review_issues(data={critic_issues:[...], continuity_issues:[...], consistency_issues:[...], scores:{...}, metrics:{...}})落盘(自动写 checkpoint)
+11. call_review_manager(review_issues=..., rewrite_attempt=0)→ RewriteGuidance
+12. save_rewrite_guidance(guidance=...)落盘(自动写 checkpoint)
+13. **ask_user**: "ReviewManager 建议重写。主要问题: ... 请选择: 接受重写 / 跳过重写 / 补充意见后重写"
+14. (若作者选"接受重写"):call_writer(beatsheet, current_draft=draft_text, rewrite_guidance=guidance)→ 重写正文
+    save_scene_draft(rewrite_attempt=1)→ 回到第 8 步再审一次
+15. (若作者选"跳过重写"或 needs_rewrite=false):接受当前稿为终稿
+16. call_scribe(scene_text=最终草稿)→ KB diff
+17. apply_kb_diff(diff=...)
+18. clear_checkpoint(chapter_number=1, scene_index=0)→ 清理断点
+19. 不再调用工具,任务结束。
 
 ## 断点续接示例
 若 read_checkpoint 返回 `{"completed_steps": ["beatsheet", "draft"]}`:
@@ -185,7 +202,7 @@ Scribe 已按以下结构返回:
 - 从步骤 8 开始:先算 metrics,再进入并行审查
 若返回 `{"completed_steps": ["beatsheet", "draft", "review_issues", "rewrite_guidance"]}`:
 - 跳过到步骤 13:直接做重写判定(needs_rewrite 已确定)
-- 若 needs_rewrite=false 且 rewrite_attempt 已达上限,直接跳到步骤 14(KB 回流)
+- 若 needs_rewrite=false 或 rewrite_attempt 已达上限,直接跳到步骤 16(KB 回流)
 
 ## 流式专家(Writer)说明
 Writer 是 12 个专家中**唯一流式**的。你调用 call_writer 时,Writer 的 token 会被基础设施

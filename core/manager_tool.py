@@ -175,9 +175,11 @@ class ManagerTool(BaseTool):
 
         try:
             async for packet in manager.run(user_prompt=user_prompt, **kwargs):
-                # 业务主管的确认请求也要透传,但 ManagerTool 把它吞掉自己处理
+                # confirm 属于阶段切换确认，由 Director 控制，子主管不应越权 → 吞掉
                 if packet.type == "confirm":
                     confirm_payload = packet.content
+                    continue
+                # ask_user 是子主管内部需要人类决策的场景 → 透传到 Director yield 流
                 if packet.type == "error":
                     has_error = True
                 await relay_sink(packet)

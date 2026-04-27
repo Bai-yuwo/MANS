@@ -22,6 +22,44 @@ class ReviewPanel extends HTMLElement {
         this._data = null;
         this._loading = false;
         this._api = typeof MANSApiClient !== "undefined" ? new MANSApiClient() : null;
+        this._waitingAskUser = false;
+        this._askUserData = null;
+    }
+
+    connectedCallback() {
+        this._projectId = this.getAttribute("project-id") || "";
+        this._chapterNumber = parseInt(this.getAttribute("chapter-number"), 10) || 1;
+        this._sceneIndex = parseInt(this.getAttribute("scene-index"), 10) || 0;
+        this._render();
+        if (this._projectId) {
+            this._loadData();
+        }
+        document.addEventListener("ask-user-arrived", (e) => this._onAskUserArrived(e));
+        document.addEventListener("ask-user-responded", (e) => this._onAskUserResponded(e));
+    }
+
+    _onAskUserArrived(e) {
+        const { projectId, data } = e.detail;
+        if (projectId !== this._projectId) return;
+        this._waitingAskUser = true;
+        this._askUserData = data;
+        this._updateButtonStates();
+    }
+
+    _onAskUserResponded(e) {
+        this._waitingAskUser = false;
+        this._askUserData = null;
+        this._updateButtonStates();
+    }
+
+    _updateButtonStates() {
+        const bar = this.querySelector(".review-action-bar");
+        if (!bar) return;
+        if (this._waitingAskUser) {
+            bar.classList.add("waiting-ask-user");
+        } else {
+            bar.classList.remove("waiting-ask-user");
+        }
     }
 
     static get observedAttributes() {
@@ -365,16 +403,29 @@ class ReviewPanel extends HTMLElement {
     _onComment() {
         const comment = prompt("请输入您的评论或修改意见:");
         if (comment === null) return;
-        const instruction = `暂停并评论: ${comment}`;
-        this._sendCommand(instruction);
+        if (this._waitingAskUser) {
+            // ask_user 等待中：以"补充意见后重写"回复
+            this._respond(`补充意见后重写: ${comment}`);
+        } else {
+            const instruction = `暂停并评论: ${comment}`;
+            this._sendCommand(instruction);
+        }
     }
 
     _onAccept() {
+        if (this._waitingAskUser) {
+            this._respond("跳过重写保持当前稿");
+            return;
+        }
         if (!confirm("确认接受当前场景草稿？这将跳过重写直接继续。")) return;
         this._sendCommand("接受当前场景,跳过重写");
     }
 
     _onRewrite() {
+        if (this._waitingAskUser) {
+            this._respond("接受重写");
+            return;
+        }
         const comment = prompt("请输入重写补充意见(可选):");
         const base = "触发重写,补充意见:";
         const instruction = comment ? `${base} ${comment}` : base;
@@ -392,6 +443,23 @@ class ReviewPanel extends HTMLElement {
         } catch (err) {
             console.error("[review-panel] 发送指令失败:", err);
             alert(`发送指令失败: ${err.message}`);
+        }
+    }
+
+    async _respond(reply) {
+        if (!this._api || !this._projectId) {
+            alert("API 客户端未初始化");
+            return;
+        }
+        try {
+            const result = await this._api.approve(this._projectId, reply);
+            console.log("[review-panel] 答复已发送:", result);
+            this._waitingAskUser = false;
+            this._askUserData = null;
+            this._updateButtonStates();
+        } catch (err) {
+            console.error("[review-panel] 发送答复失败:", err);
+            alert(`发送答复失败: ${err.message}`);
         }
     }
 

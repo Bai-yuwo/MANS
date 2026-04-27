@@ -1025,6 +1025,21 @@ agent-stream {
     transform: translateY(1px);
 }
 
+.review-action-bar.waiting-ask-user {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+.review-action-bar.waiting-ask-user .review-btn {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.review-action-bar.waiting-ask-user .review-btn:hover {
+    background: var(--accent);
+    color: white;
+}
+
 /* ---------- chapter review summary ---------- */
 .review-summary-panel {
     border: 1px solid var(--border);

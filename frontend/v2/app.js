@@ -106,11 +106,17 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // --------------------------------------------------------
-    // 阶段确认弹窗
+    // 阶段确认 / 用户询问弹窗
     // --------------------------------------------------------
     agentStream.addEventListener("stage-confirm", (e) => {
         const data = e.detail;
         confirmDialog.show(currentProjectId, data);
+        // 如果是 ask_user，额外广播给 review-panel 等组件
+        if (data.kind === "user_question") {
+            document.dispatchEvent(new CustomEvent("ask-user-arrived", {
+                detail: { projectId: currentProjectId, data },
+            }));
+        }
     });
 
     // --------------------------------------------------------
@@ -130,9 +136,13 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // --------------------------------------------------------
-    // 用户确认后续接
+    // 用户确认 / 答复后续接
     // --------------------------------------------------------
     confirmDialog.addEventListener("confirm-responded", async (e) => {
+        // 广播答复完成，各组件可清除 ask_user 等待状态
+        document.dispatchEvent(new CustomEvent("ask-user-responded", {
+            detail: e.detail,
+        }));
         const { projectId } = e.detail;
         // 重新连接 SSE 流(不清空之前内容)
         setTimeout(() => {

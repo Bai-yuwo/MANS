@@ -41,6 +41,14 @@
 【题材】{{ genre }}
 {% endif %}
 
+{% if style_examples %}
+【风格示范文本】(来自风格库,仅作语感参考,不要直接复制情节)
+{% for ex in style_examples %}
+--- 示例 {{ loop.index }} ---
+{{ ex }}
+{% endfor %}
+{% endif %}
+
 {% if rewrite_guidance %}
 {# === 重写模式 === #}
 【这是第 {{ rewrite_guidance.rewrite_attempt | default(0) }} 次重写,基于上次草稿改而非从零写】

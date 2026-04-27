@@ -43,23 +43,34 @@ class StyleDB(BaseDB):
     def __init__(self, project_id: str):
         super().__init__(project_id, "style")
 
-    async def get_examples_by_tone(self, tone: str, limit: int = 3) -> list[str]:
+    async def get_examples_by_tone(self, tone: str, limit: int = 3, scene_type: str = "") -> list[dict]:
         """
-        根据情绪基调获取参考范文片段。
+        根据情绪基调获取参考范文片段，支持按场景类型过滤。
 
         检索逻辑：
-            从 tone_{tone}.json 中读取 examples 数组，返回前 limit 条文本。
+            从 tone_{tone}.json 中读取 examples 数组。
+            若指定 scene_type，只返回 scene_types 包含该标签的范例。
             若该情绪尚未有任何范例，返回空列表。
 
         Args:
             tone: 情绪基调名称（如"热血"、"压抑"、"温情"、"悬疑"）。
             limit: 最多返回的范例数量，默认 3 条。
+            scene_type: 场景类型过滤（如"fight""dialogue""environment"）。为空时不过滤。
 
         Returns:
-            范文文本片段列表，按存入顺序排列。
+            范文字典列表（含 text / tone / scene_types），按存入顺序排列。
         """
         data = await self.load(f"tone_{tone}") or {}
         examples = data.get("examples", [])
+
+        if scene_type:
+            filtered = []
+            for ex in examples:
+                st = ex.get("scene_types", []) if isinstance(ex, dict) else []
+                if scene_type in st:
+                    filtered.append(ex)
+            examples = filtered
+
         return examples[:limit]
 
     async def add_example(self, tone: str, example: str) -> bool:

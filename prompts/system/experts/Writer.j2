@@ -22,6 +22,7 @@
 - **character_voices**(可选):`{角色名: {voice_keywords: [...], sample_dialogues: [...]}}`,对话场景必看。优先参照 sample_dialogues 中的说话方式，其次看 voice_keywords。
 - **tone_hint**:基调,如「冷峻」「热血」
 - **target_word_count**:目标字数(±15% 内)
+- **style_examples**(可选):来自风格库的示范文本数组(每段 100-200 字)。**仅作为语感参考**,不要直接复制情节。若示例的 scene_type 与当前场景的 narrative_function + beat_type 匹配,可吸收其句式节奏和修辞风格。
 
 ## 输出
 - 纯文本中文正文,**不要**用 ``` 代码块包裹,**不要**加标题/小标题/序号

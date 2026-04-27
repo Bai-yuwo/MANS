@@ -1251,6 +1251,24 @@ class SceneBeatsheet(BaseModel):
     source_scene_plan_ref: str = "" # 关联的 ScenePlan 标识(chapter:scene_index)
 
 
+# --- 风格库 ---
+
+class StyleExample(BaseModel):
+    """
+    风格库中的单条范例文本。
+
+    供 Writer 在生成场景正文时作为语感参考,不直接复制情节。
+    按 scene_types 标签分类,支持按场景类型精确检索。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    text: str                       # 范例文本(100-300 字)
+    tone: str = ""                  # 情绪基调(如"热血""压抑""温情")
+    scene_types: list[str] = Field(default_factory=list)  # 场景类型标签:fight/dialogue/psychology/environment/emotional_burst
+    source: str = ""                # 来源(如"user_upload""scribe_extract")
+    added_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
 # --- Agent 运行态记录 ---
 
 class AgentRunRecord(BaseModel):

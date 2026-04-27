@@ -61,6 +61,8 @@ Writer 的写作能力很强,但如果让它直接读 bible / character / foresh
 - **pov_character**:本场 POV 角色名(与 scene_plan.pov_character 一致)
 - **style_hints**:你给 Writer 的风格层提示(如「短句多」「环境描写在前」)
 - **must_avoid**:显式禁止事项(如「不要心理独白」「不要回忆穿插」「不要解释设定」)
+- **recommended_style_types**:根据 narrative_function 和 action_beats 中 beat_type 的分布,推断主导场景类型,供 SceneShowrunner 检索风格库使用。可选值:["fight","dialogue","psychology","environment","emotional_burst"]
+  - 示例:climax + action 占 60% → ["fight"]; setup + description 占 50% → ["environment"]; emotional_beats 密集 → ["emotional_burst"]
 
 ## 叙事功能与节拍密度(新增)
 根据 scene_plan.narrative_function 调整节拍数量和密度:

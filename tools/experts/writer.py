@@ -63,6 +63,11 @@ class Writer(ExpertTool):
                 "type": "string",
                 "description": "作品题材,如 '玄幻' / '科幻' / '都市' / '历史' / '仙侠'。Writer 据此调整写作范式和笔法。",
             },
+            "style_examples": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "风格库示范文本(每段100-200字),仅作为语感参考,不要直接复制情节。",
+            },
         },
         "required": ["beatsheet"],
         "additionalProperties": False,

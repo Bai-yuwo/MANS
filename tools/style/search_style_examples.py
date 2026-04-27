@@ -39,7 +39,11 @@ class SearchStyleExamples(BaseTool):
                 "properties": {
                     "tone": {
                         "type": "string",
-                        "description": "情绪基调名称。",
+                        "description": "情绪基调名称(如'热血'、'压抑'、'温情'、'悬疑')。",
+                    },
+                    "scene_type": {
+                        "type": "string",
+                        "description": "场景类型过滤(如'fight'、'dialogue'、'psychology'、'environment'、'emotional_burst')。为空时不过滤。",
                     },
                     "limit": {
                         "type": "integer",
@@ -53,7 +57,7 @@ class SearchStyleExamples(BaseTool):
             },
         }
 
-    async def execute(self, tone: str, limit: int = 3, **kwargs) -> str:
+    async def execute(self, tone: str, scene_type: str = "", limit: int = 3, **kwargs) -> str:
         if not tone:
             return json.dumps({"error": "tone 不能为空"}, ensure_ascii=False)
 
@@ -64,9 +68,15 @@ class SearchStyleExamples(BaseTool):
 
         try:
             db = StyleDB(pid)
-            examples = await db.get_examples_by_tone(tone, limit=max(1, min(10, int(limit))))
+            examples = await db.get_examples_by_tone(
+                tone,
+                limit=max(1, min(10, int(limit))),
+                scene_type=scene_type,
+            )
+            # 只返回 text 字段给 LLM,减少 token 消耗
+            texts = [ex["text"] if isinstance(ex, dict) and "text" in ex else str(ex) for ex in examples]
             return json.dumps(
-                {"tone": tone, "count": len(examples), "examples": examples},
+                {"tone": tone, "scene_type": scene_type, "count": len(texts), "examples": texts},
                 ensure_ascii=False,
             )
         except Exception as e:

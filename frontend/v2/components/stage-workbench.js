@@ -429,12 +429,77 @@ class StageWorkbench extends HTMLElement {
             area.innerHTML = `
                 <div class="kb-header">章节阅读</div>
                 <chapter-reader project-id="${this.projectId}" chapter-number="${chapter}"></chapter-reader>
+                <div id="chapter-review-summary" style="margin-top:12px;"></div>
                 <div class="kb-header" style="margin-top:12px;">审查记录</div>
                 <review-panel project-id="${this.projectId}" chapter-number="${chapter}" scene-index="0"></review-panel>
             `;
+            this._loadChapterReviewSummary(chapter);
         } else {
             area.innerHTML = "";
         }
+    }
+
+    async _loadChapterReviewSummary(chapterNumber) {
+        const container = this.querySelector("#chapter-review-summary");
+        if (!container) return;
+
+        try {
+            const data = await this.client.getChapterReviewSummary(this.projectId, chapterNumber);
+            container.innerHTML = this._renderSummaryHTML(data);
+        } catch (err) {
+            // 404 表示暂无审查记录，静默处理
+            if (err.message && err.message.includes("404")) {
+                container.innerHTML = "";
+                return;
+            }
+            console.error("加载章节审查摘要失败", err);
+            container.innerHTML = `<div class="review-summary-error">摘要加载失败</div>`;
+        }
+    }
+
+    _renderSummaryHTML(data) {
+        const star = (n) => {
+            if (n == null) return "—";
+            const full = Math.round(n);
+            return "★".repeat(full) + "☆".repeat(5 - full) + ` ${n.toFixed(1)}`;
+        };
+
+        const avg = data.avg_scores || {};
+        const counts = data.issue_counts || {};
+
+        const scoreItems = [
+            { label: "情绪曲线", key: "emotion_arc_score" },
+            { label: "期待感", key: "anticipation_score" },
+            { label: "爽点释放", key: "payoff_satisfaction" },
+        ].map(s => `
+            <div class="review-summary-score-item">
+                <span class="review-summary-score-label">${s.label}</span>
+                <span class="review-summary-score-stars">${star(avg[s.key])}</span>
+            </div>
+        `).join("");
+
+        const issueBadges = [];
+        if (counts.critical > 0) issueBadges.push(`<span class="review-summary-badge critical">${counts.critical} Critical</span>`);
+        if (counts.high > 0) issueBadges.push(`<span class="review-summary-badge high">${counts.high} High</span>`);
+        if (counts.medium > 0) issueBadges.push(`<span class="review-summary-badge medium">${counts.medium} Medium</span>`);
+        if (counts.low > 0) issueBadges.push(`<span class="review-summary-badge low">${counts.low} Low</span>`);
+        if (issueBadges.length === 0) issueBadges.push(`<span class="review-summary-badge ok">无问题</span>`);
+
+        const recs = (data.recommendations || []).map(r => `<div class="review-summary-rec">${r}</div>`).join("");
+
+        return `
+            <div class="review-summary-panel">
+                <div class="review-summary-header">
+                    <span class="review-summary-title">本章审查摘要</span>
+                    <span class="review-summary-meta">${data.scene_count || 0} 场景已审</span>
+                </div>
+                <div class="review-summary-body">
+                    <div class="review-summary-scores">${scoreItems}</div>
+                    <div class="review-summary-issues">${issueBadges.join("")}</div>
+                    <div class="review-summary-recommendations">${recs}</div>
+                </div>
+            </div>
+        `;
     }
 }
 

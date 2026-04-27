@@ -153,6 +153,106 @@ async def get_scene_review_history(
     }
 
 
+@router.get("/projects/{project_id}/chapters/{chapter_number}/review_summary")
+async def get_chapter_review_summary(project_id: str, chapter_number: int):
+    """
+    聚合单章所有场景的审查数据，产出章节级审查摘要。
+
+    返回:
+        - chapter_number
+        - scene_count: 本章有 review 数据的场景数
+        - avg_scores: { emotion_arc_score, anticipation_score, payoff_satisfaction }
+        - issue_counts: { critical, high, medium, low, total }
+        - scene_summaries: [{ scene_index, scores, issue_count, max_severity }]
+        - recommendations: 推荐操作列表
+    """
+    proj_dir = _project_path(project_id)
+    review_dir = proj_dir / "review"
+
+    if not review_dir.exists():
+        raise HTTPException(status_code=404, detail="审查记录不存在")
+
+    # 查找本章所有场景的 issues 文件
+    prefix = f"chapter_{chapter_number}_scene_"
+    scene_summaries = []
+    all_scores = []
+    issue_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
+    severity_order = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+
+    for issues_path in sorted(review_dir.glob(f"{prefix}*_issues.json")):
+        try:
+            async with aiofiles.open(issues_path, "r", encoding="utf-8") as f:
+                data = json.loads(await f.read())
+        except Exception as e:
+            logger.warning(f"读取 issues 失败 {issues_path.name}: {e}")
+            continue
+
+        # 解析 scene_index 从文件名
+        # chapter_{n}_scene_{i}_issues.json
+        parts = issues_path.stem.split("_")
+        try:
+            scene_index = int(parts[parts.index("scene") + 1])
+        except (ValueError, IndexError):
+            scene_index = -1
+
+        # 收集 scores
+        scores = data.get("scores")
+        if scores:
+            all_scores.append(scores)
+
+        # 统计 issues
+        issue_count = 0
+        max_sev_val = -1
+        max_sev_label = "none"
+        for key in ("critic_issues", "continuity_issues", "consistency_issues"):
+            for issue in data.get(key, []):
+                issue_count += 1
+                sev = (issue.get("severity") or "low").lower()
+                issue_counts[sev] = issue_counts.get(sev, 0) + 1
+                issue_counts["total"] += 1
+                sev_val = severity_order.get(sev, 0)
+                if sev_val > max_sev_val:
+                    max_sev_val = sev_val
+                    max_sev_label = sev
+
+        scene_summaries.append({
+            "scene_index": scene_index,
+            "scores": scores,
+            "issue_count": issue_count,
+            "max_severity": max_sev_label,
+        })
+
+    if not scene_summaries:
+        raise HTTPException(status_code=404, detail="该章节暂无审查记录")
+
+    # 计算平均分
+    avg_scores = {}
+    if all_scores:
+        for key in ("emotion_arc_score", "anticipation_score", "payoff_satisfaction"):
+            vals = [s.get(key) for s in all_scores if s.get(key) is not None]
+            avg_scores[key] = round(sum(vals) / len(vals), 1) if vals else None
+
+    # 推荐操作
+    recommendations = []
+    if issue_counts["critical"] == 0 and issue_counts["high"] == 0:
+        recommendations.append("本章审查通过，建议继续下一章")
+    if issue_counts["critical"] > 0:
+        recommendations.append(f"存在 {issue_counts['critical']} 个 critical 问题，建议回滚修改")
+    if issue_counts["high"] > 0:
+        recommendations.append(f"存在 {issue_counts['high']} 个 high 问题，建议检查关键场景")
+    if not recommendations:
+        recommendations.append("本章存在部分问题，可根据 review-panel 逐场景处理")
+
+    return {
+        "chapter_number": chapter_number,
+        "scene_count": len(scene_summaries),
+        "avg_scores": avg_scores,
+        "issue_counts": issue_counts,
+        "scene_summaries": scene_summaries,
+        "recommendations": recommendations,
+    }
+
+
 # --------------------------------------------------------
 # 项目管理
 # --------------------------------------------------------

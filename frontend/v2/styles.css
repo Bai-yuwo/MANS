@@ -1024,3 +1024,117 @@ agent-stream {
 .review-btn:active {
     transform: translateY(1px);
 }
+
+/* ---------- chapter review summary ---------- */
+.review-summary-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    overflow: hidden;
+}
+
+.review-summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-tertiary);
+}
+
+.review-summary-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.review-summary-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.review-summary-body {
+    padding: 10px 12px;
+}
+
+.review-summary-scores {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.review-summary-score-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+}
+
+.review-summary-score-label {
+    color: var(--text-secondary);
+}
+
+.review-summary-score-stars {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.review-summary-issues {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.review-summary-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+}
+
+.review-summary-badge.critical {
+    background: rgba(244, 67, 54, 0.15);
+    color: var(--error);
+}
+
+.review-summary-badge.high {
+    background: rgba(233, 69, 96, 0.15);
+    color: var(--accent);
+}
+
+.review-summary-badge.medium {
+    background: rgba(255, 152, 0, 0.15);
+    color: var(--warning);
+}
+
+.review-summary-badge.low {
+    background: var(--bg-primary);
+    color: var(--text-muted);
+}
+
+.review-summary-badge.ok {
+    background: rgba(76, 175, 80, 0.15);
+    color: var(--success);
+}
+
+.review-summary-recommendations {
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+}
+
+.review-summary-rec {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.review-summary-error {
+    font-size: 11px;
+    color: var(--danger);
+    text-align: center;
+    padding: 10px;
+}

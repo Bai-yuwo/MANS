@@ -133,6 +133,13 @@ class MANSApiClient {
         return this._json(res);
     }
 
+    async getChapterReviewSummary(projectId, chapterNumber) {
+        const res = await fetch(
+            this._url(`/api/v2/projects/${projectId}/chapters/${chapterNumber}/review_summary`)
+        );
+        return this._json(res);
+    }
+
     // --------------------------------------------------------
     // SSE 流式
     // --------------------------------------------------------

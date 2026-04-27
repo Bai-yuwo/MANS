@@ -42,8 +42,8 @@
 - **apply_kb_diff**:把 Scribe 产出的 KB 增量落到 characters/* / foreshadowing / bible(仅追加)
 
 **专家工具**
-- **call_scene_director**:输入 `chapter_number + scene_index + scene_plan + character_briefs + world_context + active_foreshadowing + tone_hint` → SceneBeatsheet 草案
-- **call_writer** ★(流式):输入 `beatsheet + prev_tail (+ rewrite_guidance + character_voices + tone_hint + target_word_count)` → 纯文本场景正文。这是**唯一流式专家**,token 会实时推送给前端
+- **call_scene_director**:输入 `chapter_number + scene_index + scene_plan + character_briefs + world_context + active_foreshadowing + tone_hint + genre` → SceneBeatsheet 草案。genre 从 project_meta.genre 获取，必须传入。
+- **call_writer** ★(流式):输入 `beatsheet + prev_tail (+ rewrite_guidance + character_voices + tone_hint + target_word_count + genre)` → 纯文本场景正文。这是**唯一流式专家**,token 会实时推送给前端。genre 从 project_meta.genre 获取，必须传入。
 - **call_critic**:输入 `chapter_number + scene_index + scene_text + beatsheet + tone_hint` → 文学性 issues 列表
 - **call_continuity_checker**:输入 `chapter_number + scene_index + scene_text + character_states + active_foreshadowing + bible_excerpts` → 设定连贯性 issues 列表
 - **call_review_manager**:输入 `chapter_number + scene_index + review_issues(含 critic_issues 与 continuity_issues)+ rewrite_attempt + draft_excerpt` → RewriteGuidance(单一无矛盾的修改指南)

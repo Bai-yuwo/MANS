@@ -51,6 +51,10 @@ class SceneDirector(ExpertTool):
                 "type": "string",
                 "description": "情绪基调,如 '压抑' / '热血'。可被 search_style_examples 引用。",
             },
+            "genre": {
+                "type": "string",
+                "description": "作品题材,如 '玄幻' / '科幻' / '都市' / '历史' / '仙侠'。SceneDirector 据此调整节拍风格。",
+            },
         },
         "required": ["chapter_number", "scene_index", "scene_plan"],
         "additionalProperties": False,

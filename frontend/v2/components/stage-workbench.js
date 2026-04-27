@@ -36,6 +36,7 @@ class StageWorkbench extends HTMLElement {
         this.project = project;
         this._render();
         this._loadOverview();
+        this._renderChapterReader();
     }
 
     _render() {
@@ -90,6 +91,8 @@ class StageWorkbench extends HTMLElement {
                     KB 数据加载中...
                 </div>
             </div>
+
+            <div id="chapter-reader-area" style="margin-top:16px;"></div>
         `;
 
         this._renderActions();
@@ -412,6 +415,24 @@ class StageWorkbench extends HTMLElement {
         if (status.bible) this._lastOverview = status;
         this._render();
         this._loadOverview();
+        this._renderChapterReader();
+    }
+
+    _renderChapterReader() {
+        const area = this.querySelector("#chapter-reader-area");
+        if (!area) return;
+
+        const stage = this.project?.stage || "";
+        const chapter = this.project?.current_chapter || 0;
+
+        if (stage === "WRITE" && chapter > 0) {
+            area.innerHTML = `
+                <div class="kb-header">章节阅读</div>
+                <chapter-reader project-id="${this.projectId}" chapter-number="${chapter}"></chapter-reader>
+            `;
+        } else {
+            area.innerHTML = "";
+        }
     }
 }
 

@@ -32,6 +32,10 @@
 【目标字数】{{ target_word_count }}
 {% endif %}
 
+{% if genre %}
+【题材】{{ genre }}
+{% endif %}
+
 {% if rewrite_guidance %}
 {# === 重写模式 === #}
 【这是第 {{ rewrite_guidance.rewrite_attempt | default(0) }} 次重写,基于上次草稿改而非从零写】

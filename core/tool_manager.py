@@ -20,6 +20,7 @@ core/tool_manager.py
 新增 tool_scope 过滤)。
 """
 
+import asyncio
 import inspect
 import json
 from typing import Iterable, Optional
@@ -215,20 +216,26 @@ class ToolManager:
         Returns:
             list[dict]: 可直接作为下一轮 stream_call 的 input_data。
 
-        注意:工具按声明顺序**串行执行**(顺序对部分 KB 写入工具有意义,
-        如先写主体再追加索引)。需要并行时调用方自行 asyncio.gather。
+        执行策略:
+            - 单工具调用:串行执行（避免不必要的并行开销）。
+            - 多工具调用:并行执行（asyncio.gather）。同一轮 tool_calls 中的调用
+              通常无数据依赖——LLM 在 reasoning 阶段已分轮处理有依赖的调用。
+              典型场景:Critic + ContinuityChecker 并行审查,耗时减半。
         """
-        outputs: list[dict] = []
-        for call in tool_calls:
+        async def _run_one(call: ToolCallData) -> dict:
             logger.info(f"工具调用 -> {call.name} (call_id={call.call_id})")
             output_str = await self._execute_single(call.name, call.arguments)
-            outputs.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": call.call_id,
-                    "output": output_str,
-                }
-            )
+            return {
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": output_str,
+            }
+
+        calls = list(tool_calls)
+        if len(calls) <= 1:
+            outputs = [await _run_one(call) for call in calls]
+        else:
+            outputs = await asyncio.gather(*(_run_one(call) for call in calls))
         return outputs
 
 

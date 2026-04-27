@@ -102,6 +102,28 @@ class MANSApiClient {
     }
 
     // --------------------------------------------------------
+    // 章节内容（阅读/编辑视图）
+    // --------------------------------------------------------
+    async getChapterContent(projectId, chapterNumber) {
+        const res = await fetch(
+            this._url(`/api/v2/projects/${projectId}/chapters/${chapterNumber}/content`)
+        );
+        return this._json(res);
+    }
+
+    async saveChapterContent(projectId, chapterNumber, data) {
+        const res = await fetch(
+            this._url(`/api/v2/projects/${projectId}/chapters/${chapterNumber}/content`),
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data),
+            }
+        );
+        return this._json(res);
+    }
+
+    // --------------------------------------------------------
     // SSE 流式
     // --------------------------------------------------------
     connectStream(projectId, onEvent) {

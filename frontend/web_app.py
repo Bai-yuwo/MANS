@@ -20,6 +20,7 @@ from core.logging_config import get_logger, setup_sse_logging
 
 # 新架构 v2 API
 from api.v2 import router as v2_router
+from api.session_manager import get_session_manager
 
 # 日志初始化
 logger = get_logger("frontend.web_app")
@@ -35,6 +36,13 @@ app = FastAPI(title="MANS - Multi-Agent Novel System (v2)")
 
 # 挂载新架构路由
 app.include_router(v2_router)
+
+
+@app.on_event("startup")
+async def _startup():
+    """启动后台清理协程,自动清理超时会话。"""
+    await get_session_manager().start_cleanup_loop()
+    logger.info("SessionManager cleanup loop 已启动")
 
 # ============================================================
 # 根入口

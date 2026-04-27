@@ -90,6 +90,11 @@ class CommandRequest(BaseModel):
     instruction: str = Field(..., description="用户给 Director 的任意指令,如'补充一个反派角色'或'跳过当前阶段'")
 
 
+class ChapterContentRequest(BaseModel):
+    full_text: str = Field(..., description="章节完整文本")
+    scene_texts: list[str] = Field(default_factory=list, description="各场景文本列表")
+
+
 # --------------------------------------------------------
 # 项目管理
 # --------------------------------------------------------
@@ -574,3 +579,110 @@ def _stream_packet_to_sse(pkt: StreamPacket) -> dict:
             "event": pkt.type,
             "data": json.dumps({**base, "content": str(pkt.content)}, ensure_ascii=False),
         }
+
+
+# --------------------------------------------------------
+# 章节内容读写（阅读/编辑视图）
+# --------------------------------------------------------
+
+@router.get("/projects/{project_id}/chapters/{chapter_number}/content")
+async def get_chapter_content(project_id: str, chapter_number: int):
+    """
+    读取章节完整内容（优先 final，其次 draft）。
+
+    返回:
+        - chapter_number: 章节号
+        - title: 章节标题
+        - full_text: 完整拼接文本
+        - scene_texts: 各场景文本列表
+        - is_final: 是否来自 final 文件
+    """
+    proj_dir = _project_path(project_id)
+
+    final_path = proj_dir / "chapters" / f"chapter_{chapter_number}_final.json"
+    draft_path = proj_dir / "chapters" / f"chapter_{chapter_number}_draft.json"
+
+    target_path = final_path if final_path.exists() else draft_path
+    is_final = final_path.exists()
+
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail=f"第{chapter_number}章内容不存在")
+
+    try:
+        async with aiofiles.open(target_path, "r", encoding="utf-8") as f:
+            data = json.loads(await f.read())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取章节内容失败: {e}")
+
+    # 兼容两种结构: ChapterFinal 模型 或 简单的 draft 结构
+    full_text = data.get("full_text", "")
+    scene_texts = data.get("scene_texts", [])
+    title = data.get("title", f"第{chapter_number}章")
+
+    # 如果没有 full_text 但有 scene_texts，自动拼接
+    if not full_text and scene_texts:
+        full_text = "\n\n".join(scene_texts)
+
+    return {
+        "chapter_number": chapter_number,
+        "title": title,
+        "full_text": full_text,
+        "scene_texts": scene_texts,
+        "is_final": is_final,
+    }
+
+
+@router.post("/projects/{project_id}/chapters/{chapter_number}/content")
+async def save_chapter_content(
+    project_id: str, chapter_number: int, request: ChapterContentRequest
+):
+    """
+    保存章节内容（编辑后回写）。
+
+    写入策略:
+        - 若已有 final 文件，更新 final。
+        - 若只有 draft，更新 draft。
+        - 使用临时文件 + rename 做原子写入。
+    """
+    import os
+
+    proj_dir = _project_path(project_id)
+
+    final_path = proj_dir / "chapters" / f"chapter_{chapter_number}_final.json"
+    draft_path = proj_dir / "chapters" / f"chapter_{chapter_number}_draft.json"
+
+    target_path = final_path if final_path.exists() else draft_path
+    if not target_path.exists():
+        # 都不存在时创建 draft
+        target_path = draft_path
+
+    # 读取现有数据以保留其他字段（如 title / summary / state_snapshot）
+    existing = {}
+    if target_path.exists():
+        try:
+            async with aiofiles.open(target_path, "r", encoding="utf-8") as f:
+                existing = json.loads(await f.read())
+        except Exception:
+            pass
+
+    # 更新文本字段
+    existing["full_text"] = request.full_text
+    existing["scene_texts"] = request.scene_texts
+    existing["updated_at"] = datetime.now().isoformat()
+
+    # 原子写入
+    tmp_path = target_path.with_suffix(".tmp")
+    try:
+        async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(existing, ensure_ascii=False, indent=2))
+        os.replace(str(tmp_path), str(target_path))
+    except Exception as e:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise HTTPException(status_code=500, detail=f"保存章节内容失败: {e}")
+
+    return {
+        "success": True,
+        "chapter_number": chapter_number,
+        "is_final": target_path == final_path,
+    }

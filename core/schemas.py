@@ -681,6 +681,10 @@ class ScenePlan(BaseModel):
     target_word_count: int = 1200       # 目标字数（Writer 生成时的参考长度）
     special_instructions: str = ""      # 特殊写作指示，如"注意节奏控制，不要拖沓"
 
+    # 叙事结构标记（新增）
+    narrative_function: Literal["setup", "rising_action", "climax", "falling_action", "resolution", "transition"] = "setup"
+    tension_level: int = Field(default=3, ge=1, le=5)  # 张力等级 1-5，climax 场景通常为 4-5
+
 
 class ChapterPlan(BaseModel):
     """
@@ -1129,12 +1133,22 @@ class ActionBeat(BaseModel):
 
     SceneDirector 把场景拆解成一系列「谁做了什么 → 带来什么后果」的节拍,
     Writer 按顺序把每个节拍展开成段落。
+
+    新增 beat_type 支持对话、描述、过渡等非动作节拍,
+    使 SceneBeatsheet 能覆盖对话密集型场景和过渡场景。
     """
     model_config = ConfigDict(extra="allow")
 
-    subject: str                    # 动作发出者(人物名 / 群体 / 环境)
-    action: str                     # 具体动作描述
-    impact: str                     # 对场景或他人的直接影响
+    beat_type: Literal["action", "dialogue", "description", "transition"] = "action"
+    subject: str = ""               # 动作发出者(人物名 / 群体 / 环境)
+    action: str = ""                # 具体动作描述(beat_type="action" 时必填)
+    impact: str = ""                # 对场景或他人的直接影响
+
+    # 对话节拍专用字段(beat_type="dialogue" 时使用)
+    speaker: str = ""               # 发言人
+    line: str = ""                  # 台词内容
+    subtext: str = ""               # 潜台词/言外之意
+    reaction: str = ""              # 听者反应
 
 
 class EmotionalBeat(BaseModel):
@@ -1177,6 +1191,10 @@ class SceneBeatsheet(BaseModel):
     # 节拍序列 —— Writer 按序号展开
     action_beats: list[ActionBeat] = Field(default_factory=list)
     emotional_beats: list[EmotionalBeat] = Field(default_factory=list)
+
+    # 场景钩子设计（新增）
+    opening_hook: str = ""          # 场景开头如何抓住读者（如"以一声惨叫开场"）
+    closing_hook: str = ""          # 场景结尾留下什么悬念或期待（如"主角发现玉佩在发光"）
 
     # 写作约束
     target_word_count: int = 1200

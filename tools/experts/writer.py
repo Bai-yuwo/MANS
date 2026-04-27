@@ -55,6 +55,10 @@ class Writer(ExpertTool):
             },
             "tone_hint": {"type": "string"},
             "target_word_count": {"type": "integer"},
+            "genre": {
+                "type": "string",
+                "description": "作品题材,如 '玄幻' / '科幻' / '都市' / '历史' / '仙侠'。Writer 据此调整写作范式和笔法。",
+            },
         },
         "required": ["beatsheet"],
         "additionalProperties": False,

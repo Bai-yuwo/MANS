@@ -351,3 +351,43 @@ class ForeshadowingDB(BaseDB):
             status=ForeshadowingStatus.PLANTED
         )
         return await self.append("items", item.model_dump())
+
+    # ── 向量同步 ──
+
+    async def _after_save(self, key: str, data: dict) -> None:
+        """保存后自动同步伏笔到向量库，并清理已删除伏笔的向量残留。"""
+        if key != "items" or "items" not in data:
+            return
+        try:
+            from vector_store.store import VectorStore
+            vs = VectorStore(self.project_id)
+
+            # 1. 清理已删除伏笔的向量残留
+            current_ids = {item.get("id", "") for item in data["items"]}
+            await vs.delete_except("foreshadowing", current_ids)
+
+            # 2. 同步当前伏笔
+            items = []
+            for item in data["items"]:
+                fs_id = item.get("id", "")
+                desc = item.get("description", "")
+                if desc:
+                    text = f"伏笔({item.get('type', '')}): {desc}"
+                    if item.get("resolution_description"):
+                        text += f"\n解决: {item['resolution_description']}"
+                    items.append({
+                        "id": fs_id,
+                        "text": text,
+                        "metadata": {
+                            "type": item.get("type", ""),
+                            "status": item.get("status", ""),
+                            "urgency": item.get("urgency", ""),
+                            "planted_chapter": item.get("planted_chapter", 0),
+                            "_content_hash": self._compute_hash(item),
+                        }
+                    })
+            if items:
+                await vs.upsert_batch("foreshadowing", items)
+                logger.info(f"伏笔向量同步: {len(items)} 条")
+        except Exception as e:
+            log_exception(logger, e, "伏笔向量同步失败")

@@ -1,0 +1,22 @@
+{# prompts/user/experts/RelationDesigner/design_relationships.j2
+   渲染变量(对齐 RelationDesigner.input_schema):
+     characters: list[{name, role_brief}] (required)
+     world_context: str
+     story_goal_hint: str
+   TODO P2:补充关系密度建议、立场张力指南 #}
+
+# 任务:为以下角色设计关系网
+
+角色列表:
+{% for c in characters %}
+- {{ c.name }}{% if c.role_brief %}({{ c.role_brief }}){% endif %}
+{% endfor %}
+
+{% if world_context %}
+世界观:{{ world_context }}
+{% endif %}
+{% if story_goal_hint %}
+核心冲突:{{ story_goal_hint }}
+{% endif %}
+
+请输出 {"relationships": [...]} 结构,Relationship 双向(A→B 与 B→A 单独存)。

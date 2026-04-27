@@ -1,0 +1,22 @@
+{# prompts/user/experts/PortraitDesigner/design_portrait.j2
+   渲染变量(对齐 PortraitDesigner.input_schema):
+     character_name: str (required)
+     role_brief: str (required)
+     world_context: str
+     is_protagonist: bool
+   TODO P2:补充角色立体度示例、动机层级模板 #}
+
+# 任务:为以下角色生成画像
+
+角色名:{{ character_name }}
+故事定位:{{ role_brief }}
+{% if is_protagonist %}
+**主角**(请在动机与缺陷设计上多花笔墨)
+{% endif %}
+
+{% if world_context %}
+世界观背景片段:
+{{ world_context }}
+{% endif %}
+
+请按 CharacterCard 结构返回。voice_keywords 字段必须填写,且能在对话中辨识出语气特征。

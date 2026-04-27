@@ -1,0 +1,72 @@
+{# prompts/user/experts/Writer/write_scene.j2 ★ 流式专家
+   渲染变量(对齐 Writer.input_schema):
+     beatsheet: dict (required)
+     prev_tail: str
+     current_draft: str (仅重写时)
+     rewrite_guidance: dict (仅重写时)
+     character_voices: dict
+     tone_hint: str
+     target_word_count: int
+#}
+
+# 任务:依节拍表创作场景正文
+
+【节拍表】
+{{ beatsheet | tojson }}
+
+{% if prev_tail %}
+【上文尾段】(承接语气)
+{{ prev_tail }}
+{% endif %}
+
+{% if character_voices %}
+【角色语气关键词】
+{{ character_voices | tojson }}
+{% endif %}
+
+{% if tone_hint %}
+【情绪基调】{{ tone_hint }}
+{% endif %}
+
+{% if target_word_count %}
+【目标字数】{{ target_word_count }}
+{% endif %}
+
+{% if rewrite_guidance %}
+{# === 重写模式 === #}
+【这是第 {{ rewrite_guidance.rewrite_attempt | default(0) }} 次重写,基于上次草稿改而非从零写】
+
+{% if current_draft %}
+【上次草稿原文】(请基于此修改,不要全部重写)
+{{ current_draft }}
+
+{% endif %}
+【必须保留的部分(must_keep)】
+{% for k in rewrite_guidance.must_keep or [] %}
+- {{ k }}
+{% endfor %}
+
+【必须修改的部分(must_change)】
+{% for c in rewrite_guidance.must_change or [] %}
+- {{ c }}
+{% endfor %}
+
+【优先解决的核心问题(priority_issues)】
+{% for i in rewrite_guidance.priority_issues or [] %}
+- {{ i | tojson }}
+{% endfor %}
+
+{% if rewrite_guidance.style_hints %}
+【风格层提示(style_hints)】
+{{ rewrite_guidance.style_hints }}
+{% endif %}
+
+{% if rewrite_guidance.conflicts_resolved %}
+【已仲裁的冲突(请按 chosen_direction 改,不要回到原版)】
+{% for c in rewrite_guidance.conflicts_resolved %}
+- {{ c | tojson }}
+{% endfor %}
+{% endif %}
+{% endif %}
+
+请直接产出场景正文,纯文本,不要 JSON 包裹,不要加标题/小标题/序号。

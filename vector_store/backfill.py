@@ -1,16 +1,21 @@
 """
 vector_store/backfill.py
-回填脚本：将已有项目中的 Bible、人物、伏笔等数据批量向量化
+[DEPRECATED] 一次性迁移脚本 — 用于将自动同步机制部署前写入的 JSON 数据批量回填到向量库。
+
+自 2026-04-27 重构后，所有 DB 类（BibleDB/CharacterDB/GeoDB/FactionDB/CultivationDB/ForeshadowingDB/StoryDB）
+已在 save/append 后自动同步到向量库，无需手动运行此脚本。
+
+仅在新部署节点式数据结构或向量同步机制时，用于回填历史项目数据。
 
 用法：
-    # 回填所有项目
+    # 回填所有项目（仅历史数据）
     python vector_store/backfill.py
-    
+
     # 回填指定项目
     python vector_store/backfill.py --project-id 395dcf64-1e8c-4a63-b57b-a743c0744646
-    
+
     # 只回填特定类型
-    python vector_store/backfill.py --type bible,characters
+    python vector_store/backfill.py --type bible,characters,geo,factions,cultivation
 """
 
 import sys

@@ -1,0 +1,25 @@
+{# prompts/user/experts/ChapterDesigner/design_chapter.j2
+   渲染变量(对齐 ChapterDesigner.input_schema):
+     chapter_number: int (required)
+     arc_plan: dict (required)
+     previous_chapter_summary: str
+     chapter_brief: str (required)
+     target_word_count: int
+   TODO P2:补充场景密度、字数预算分配模板 #}
+
+# 任务:为第 {{ chapter_number }} 章设计场景序列
+
+所属 arc 计划:
+{{ arc_plan | tojson }}
+
+{% if previous_chapter_summary %}
+上一章末尾摘要:
+{{ previous_chapter_summary }}
+{% endif %}
+
+本章核心目标:{{ chapter_brief }}
+{% if target_word_count %}
+目标字数:{{ target_word_count }}
+{% endif %}
+
+请输出符合 ChapterPlan 的 JSON,含 scenes:[ScenePlan...]。每场必须有清晰的目标与参与者。

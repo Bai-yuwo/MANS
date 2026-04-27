@@ -1,0 +1,21 @@
+{# prompts/user/experts/ArcDesigner/design_arc.j2
+   渲染变量(对齐 ArcDesigner.input_schema):
+     outline: dict (required)
+     arc_id: str (required)
+     arc_brief: str
+     chapter_range_hint: list[int]
+   TODO P2:补充节奏曲线模板、悬念布点示例 #}
+
+# 任务:设计故事弧 {{ arc_id }}
+
+全局大纲:
+{{ outline | tojson }}
+
+{% if arc_brief %}
+本 arc 简介:{{ arc_brief }}
+{% endif %}
+{% if chapter_range_hint %}
+章节范围提示:{{ chapter_range_hint[0] }} 至 {{ chapter_range_hint[1] }}
+{% endif %}
+
+请输出 arc 计划:主线节奏(铺垫/转折/高潮/收束)、关键事件、章节范围、情绪曲线。

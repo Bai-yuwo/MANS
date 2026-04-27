@@ -405,6 +405,76 @@ class VectorStore:
             logger.warning(f"获取 collection 数量失败: {e}")
             return 0
 
+    async def get_all_ids(self, collection: str) -> list[str]:
+        """
+        获取 collection 中所有文档 ID。
+
+        Args:
+            collection: collection 名称。
+
+        Returns:
+            ID 列表，获取失败返回空列表。
+        """
+        try:
+            coll = await self._get_or_create_collection(collection)
+            result = await asyncio.to_thread(
+                coll.get,
+                include=[],
+            )
+            return result.get("ids", [])
+        except Exception as e:
+            logger.warning(f"获取 collection IDs 失败: {e}")
+            return []
+
+    async def delete_except(self, collection: str, keep_ids: set[str]) -> int:
+        """
+        删除 collection 中不在 keep_ids 集合里的所有向量。
+
+        用于 JSON 数据删除后清理向量库中的残留文档。
+
+        Args:
+            collection: collection 名称。
+            keep_ids: 需要保留的 ID 集合。
+
+        Returns:
+            实际删除的向量数量。
+        """
+        try:
+            all_ids = await self.get_all_ids(collection)
+            to_delete = [vid for vid in all_ids if vid not in keep_ids]
+            if to_delete:
+                coll = await self._get_or_create_collection(collection)
+                await asyncio.to_thread(coll.delete, ids=to_delete)
+                logger.info(f"向量残留清理: {collection} 删除 {len(to_delete)} 条")
+            return len(to_delete)
+        except Exception as e:
+            logger.warning(f"向量残留清理失败 {collection}: {e}")
+            return 0
+
+    async def get_metadata(self, collection: str, doc_id: str) -> dict:
+        """
+        获取指定文档的元数据。
+
+        Args:
+            collection: collection 名称。
+            doc_id: 文档唯一标识。
+
+        Returns:
+            元数据字典，文档不存在或获取失败时返回空字典。
+        """
+        try:
+            coll = await self._get_or_create_collection(collection)
+            result = await asyncio.to_thread(
+                coll.get,
+                ids=[doc_id],
+                include=["metadatas"],
+            )
+            metadatas = result.get("metadatas", [])
+            return metadatas[0] if metadatas else {}
+        except Exception as e:
+            logger.warning(f"获取文档元数据失败 {collection}/{doc_id}: {e}")
+            return {}
+
     async def get_collection_info(self, collection: str) -> dict:
         """
         获取 collection 的统计信息。

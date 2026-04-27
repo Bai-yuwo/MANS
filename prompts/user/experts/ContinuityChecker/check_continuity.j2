@@ -1,0 +1,56 @@
+{# prompts/user/experts/ContinuityChecker/check_continuity.j2
+   渲染变量(对齐 ContinuityChecker.input_schema):
+     scene_text: str (required)
+     chapter_number: int (required)
+     scene_index: int (required)
+     character_states: list[dict]
+     active_foreshadowing: list[dict]
+     world_rules: list[dict]
+     previous_scene_summary: str
+     rewrite_attempt: int
+#}
+
+# 任务:审查以下场景的设定连贯性
+
+第 {{ chapter_number }} 章 第 {{ scene_index }} 场{% if rewrite_attempt is defined and rewrite_attempt > 0 %},这是第 {{ rewrite_attempt }} 次重写后的复审{% endif %}。
+
+【正文】
+{{ scene_text }}
+
+{% if character_states %}
+【KB 角色状态(本场前快照)】
+{% for c in character_states %}
+- {{ c | tojson }}
+{% endfor %}
+{% endif %}
+
+{% if active_foreshadowing %}
+【活跃伏笔】
+{% for f in active_foreshadowing %}
+- {{ f | tojson }}
+{% endfor %}
+{% endif %}
+
+{% if world_rules %}
+【相关世界规则】
+{% for r in world_rules %}
+- {{ r | tojson }}
+{% endfor %}
+{% endif %}
+
+{% if previous_scene_summary %}
+【上一场摘要】
+{{ previous_scene_summary }}
+{% endif %}
+
+{% if rewrite_attempt is defined and rewrite_attempt > 0 %}
+【重写后审查重点】
+- 这是第 {{ rewrite_attempt }} 次重写后的复审,Writer 已根据上一轮 RewriteGuidance 改稿
+- **请只检查上一轮 priority_issues 中的连贯性问题是否被解决**,以及重写是否引入了新的设定矛盾
+- 如果重写没有触碰 KB 设定字段,本轮可返回空数组
+{% endif %}
+
+请输出 {"issues": [...]} JSON。只关注硬错误(角色状态 / 修为 / 伏笔 / 世界规则 / 时间空间线)。
+每条 issue 必须给出 KB 字段证据(在 description 或 location 中引用 character[X].field / bible.rules[i] / foreshadowing[id])。
+每条 issue 必须填 type / severity / description,强烈建议补 location / suggestion / source_agent="ContinuityChecker"。
+没问题就返回空数组。

@@ -161,3 +161,39 @@ class BibleDB(BaseDB):
             if rule.id == rule_id:
                 return rule
         return None
+
+    # ── 向量同步 ──
+
+    async def _after_save(self, key: str, data: dict) -> None:
+        """保存后自动同步世界规则到向量库，并清理已删除规则的向量残留。"""
+        if key != "world_rules" or "items" not in data:
+            return
+        try:
+            from vector_store.store import VectorStore
+            vs = VectorStore(self.project_id)
+
+            # 1. 清理已删除规则的向量残留
+            current_ids = {item.get("id", "") for item in data["items"]}
+            await vs.delete_except("bible_rules", current_ids)
+
+            # 2. 同步当前规则
+            items = []
+            for item in data["items"]:
+                rule_id = item.get("id", "")
+                text = item.get("content", "")
+                if text:
+                    items.append({
+                        "id": rule_id,
+                        "text": text,
+                        "metadata": {
+                            "category": item.get("category", ""),
+                            "importance": item.get("importance", ""),
+                            "source_chapter": item.get("source_chapter", 0),
+                            "_content_hash": self._compute_hash(item),
+                        }
+                    })
+            if items:
+                await vs.upsert_batch("bible_rules", items)
+                logger.info(f"世界规则向量同步: {len(items)} 条规则")
+        except Exception as e:
+            log_exception(logger, e, "世界规则向量同步失败")

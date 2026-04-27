@@ -238,6 +238,16 @@ class CharacterCard(BaseModel):
     voice_keywords: list[str] = Field(default_factory=list)  # 声线关键词，如["愤怒时沉默", "开心时话多"]
     background: str = ""                # 背景设定（降级注入时可为空）
 
+    @field_validator("personality_core", mode="before")
+    @classmethod
+    def _coerce_personality_core(cls, v):
+        """兼容 LLM 把 personality_core 输出成列表的情况。"""
+        if v is None:
+            return ""
+        if isinstance(v, list):
+            return ", ".join(str(x) for x in v)
+        return v
+
     # 动态状态（每章可能更新）
     current_location: str = ""
     cultivation: Optional[CultivationLevel] = None
@@ -363,6 +373,128 @@ class CombatSystem(BaseModel):
     breakthrough_conditions: dict[str, str]  # 各境界突破条件，如{"练气": "需打通十二经脉"}
     special_abilities: list[str] = Field(default_factory=list)
     power_ceiling: str                  # 当前故事战力上限说明
+
+
+# ============================================================
+# 节点式世界观数据（图结构）
+# ============================================================
+# 地理、势力、修为三类天然具有"向外/向上扩展"属性的数据，
+# 使用节点+边的图结构存储，替代扁平数组。
+# ============================================================
+
+class GeoConnection(BaseModel):
+    """地理节点之间的连接关系（空间邻接、通道、包含等）。"""
+    model_config = ConfigDict(extra="allow")
+
+    target_id: str
+    relation_type: Literal["adjacent", "passage", "teleport", "border", "contains"] = "adjacent"
+    distance: Optional[str] = None       # "300里", "半日路程"
+    description: Optional[str] = None
+    bidirectional: bool = True
+
+
+class FactionPresence(BaseModel):
+    """某势力在特定地理节点上的存在情况。"""
+    model_config = ConfigDict(extra="allow")
+
+    faction_id: str
+    faction_name: str
+    strength: Literal["dominant", "strong", "moderate", "weak", "hidden", "contested"] = "moderate"
+    description: Optional[str] = None    # 如"总部所在地"、"秘密据点"
+
+
+class GeoNode(BaseModel):
+    """
+    地理节点 —— 层级树 + 连接图。
+
+    用 parent_id/child_ids 表达层级（大陆→区域→城邦→据点），
+    用 connections 表达空间连接（相邻、通道、传送等）。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=lambda: f"geo_{str(uuid.uuid4())[:6]}")
+    name: str
+    node_type: Literal["continent", "region", "state", "city", "district", "site", "realm", "secret_realm"] = "site"
+    parent_id: Optional[str] = None      # 上级区域 ID
+    child_ids: list[str] = Field(default_factory=list)   # 直接下级 ID 列表
+    connections: list[GeoConnection] = Field(default_factory=list)
+    description: str = ""
+    faction_presence: list[FactionPresence] = Field(default_factory=list)
+    depth_level: int = 0                 # 层级深度（大陆=0, 区域=1, 城邦=2...）
+    scale: str = ""                      # 大陆/区域/城邦/据点
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: Optional[str] = None
+
+
+class FactionRelation(BaseModel):
+    """势力之间的关系边。"""
+    model_config = ConfigDict(extra="allow")
+
+    target_faction_id: str
+    relation_type: Literal["rivalry", "alliance", "vassal", "hostile", "friendly", "neutral", "secret", "trade"] = "neutral"
+    intensity: Literal["low", "medium", "high", "critical"] = "medium"
+    description: Optional[str] = None
+    since_chapter: int = 0
+
+
+class FactionNode(BaseModel):
+    """
+    势力节点 —— 关系网。
+
+    用 parent_faction_id/sub_faction_ids 表达层级（总盟→分舵），
+    用 relations 表达与其他势力的关系边（敌对/同盟/隶属等）。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=lambda: f"fac_{str(uuid.uuid4())[:6]}")
+    name: str
+    node_type: Literal["sect", "dynasty", "guild", "clan", "secret_org", "alliance", "tribe", "council"] = "sect"
+    stance: Literal["righteous", "neutral", "evil", "gray"] = "neutral"
+    parent_faction_id: Optional[str] = None
+    sub_faction_ids: list[str] = Field(default_factory=list)
+    description: str = ""
+    leader: Optional[str] = None
+    relations: list[FactionRelation] = Field(default_factory=list)
+    controlled_territories: list[str] = Field(default_factory=list)  # geo_node id 列表
+    member_count_estimate: Optional[str] = None  # "数千", "未知"
+    founded_chapter: int = 0
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class CultivationNode(BaseModel):
+    """
+    修为节点 —— 递进链 + 分支。
+
+    用 parent_id/next_ids 表达境界递进（练气→筑基→金丹），
+    用 branch_from 表达分支（如体修/法修从同一境界分出）。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=lambda: f"cul_{str(uuid.uuid4())[:6]}")
+    name: str
+    tier: int = 1                        # 层级序号（越小越低）
+    node_type: Literal["realm", "stage", "breakthrough", "branch", "special"] = "realm"
+    parent_id: Optional[str] = None      # 上级境界 ID
+    next_ids: list[str] = Field(default_factory=list)    # 后续境界 ID 列表（可能有分支）
+    branch_from: Optional[str] = None    # 从哪个节点分出的分支
+    prerequisites: list[str] = Field(default_factory=list)
+    abilities: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    power_scale: Optional[int] = None    # 战力标尺（相对值）
+    description: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class CultivationChain(BaseModel):
+    """修为体系的整体定义（一根或多根链条的集合）。"""
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=lambda: f"chain_{str(uuid.uuid4())[:6]}")
+    name: str                            # 如"龙血修炼体系"
+    root_id: str                         # 根节点 ID
+    branch_ids: list[str] = Field(default_factory=list)  # 主要分支入口
+    description: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
 # ============================================================
@@ -764,3 +896,224 @@ class StreamEvent(BaseModel):
 
     type: Literal["token", "scene_start", "scene_complete", "chapter_review", "error", "done"]
     data: Any
+
+
+# ============================================================
+# 多 Agent 架构新增类型 (refactor 之后引入)
+# ============================================================
+#
+# 这一段是 14-Agent 重构后新增的数据契约,与上面的「注入式管线」类型并存。
+# 重构完成后,InjectionContext / ExtractedUpdates 等旧类型会随旧管线一起删除。
+# 当前阶段:旧类型仍被 generators/* 与 writer/* 使用,新类型供 agents/* 与 tools/* 消费。
+
+class IssueSeverity(str, Enum):
+    """
+    审查 Issue 严重等级。
+
+    决定 Writer 是否被触发重写:
+        LOW       — 风格层面建议,记录但不重写。
+        MEDIUM    — 触发一次重写。
+        HIGH      — 触发重写,最高优先级。
+        CRITICAL  — 触发重写;若仍未解决会上升至 Director,可能要求人工介入。
+    """
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class IssueType(str, Enum):
+    """审查 Issue 类型,用于 ReviewManager 分组与去重。"""
+    LITERARY = "literary"           # Critic 关注:文学性、节奏、人物刻画
+    CONTINUITY = "continuity"       # ContinuityChecker 关注:设定连贯性
+    FORESHADOWING = "foreshadowing" # 伏笔状态错位
+    PACING = "pacing"               # 节奏(可由 Critic 或 ContinuityChecker 提出)
+    TONE = "tone"                   # 基调一致性
+    CHARACTER_VOICE = "character_voice"  # 人物声线/对话口吻
+    OTHER = "other"
+
+
+class Issue(BaseModel):
+    """
+    单条审查问题。
+
+    Critic 与 ContinuityChecker 输出此类型;ReviewManager 在仲裁时合并、排序、去重。
+
+    字段约定:
+        type/severity 必填,location/suggestion 强烈建议填写以提高 Writer 重写命中率。
+        source_agent 由产出方填入,例如 'Critic' 或 'ContinuityChecker'。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    type: IssueType
+    severity: IssueSeverity
+    description: str
+    location: str = ""              # 文本内位置参考,如"第二段第3句"或"开头到'忽然'"
+    suggestion: str = ""            # 修改建议(自然语言)
+    source_agent: str = ""          # Issue 提出者
+
+
+class ReviewIssues(BaseModel):
+    """
+    Critic 与 ContinuityChecker 并行审查的结果汇总。
+
+    ReviewManager 接收本对象,执行去重 + 冲突化解 + 优先级排序,输出 RewriteGuidance。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    critic_issues: list[Issue] = Field(default_factory=list)
+    continuity_issues: list[Issue] = Field(default_factory=list)
+
+    @property
+    def all_issues(self) -> list[Issue]:
+        """合并两路 issues,顺序为 critic 在前。"""
+        return self.critic_issues + self.continuity_issues
+
+    @property
+    def max_severity(self) -> Optional[IssueSeverity]:
+        """
+        所有 issues 中的最高严重级别。无 issues 时返回 None。
+
+        Director 用此值决定是否进入 Writer 重写循环:
+            None / LOW         -> 不重写,直接落稿。
+            MEDIUM / HIGH / CRITICAL -> 触发 ReviewManager → Writer 重写。
+        """
+        if not self.all_issues:
+            return None
+        order = {
+            IssueSeverity.LOW: 0,
+            IssueSeverity.MEDIUM: 1,
+            IssueSeverity.HIGH: 2,
+            IssueSeverity.CRITICAL: 3,
+        }
+        return max(self.all_issues, key=lambda i: order[i.severity]).severity
+
+
+class ConflictResolution(BaseModel):
+    """
+    ReviewManager 化解 Critic 与 ContinuityChecker 之间冲突意见的过程记录。
+
+    场景:Critic 要求"加速节奏 → 删除冗长心理描写",
+         ContinuityChecker 同时要求"补充上一章遗漏的回忆细节"。
+         ReviewManager 必须做出取舍并解释。
+
+    用途:
+        1. 写入 RewriteGuidance.conflicts_resolved,Writer 看到化解结论。
+        2. 落盘到日志,便于人工复盘 ReviewManager 的判断质量。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    conflicting_issues: list[Issue] = Field(default_factory=list)
+    resolution: str = ""            # 化解结论(自然语言)
+    chosen_direction: str = ""      # 最终选定的修改方向
+
+
+class RewriteGuidance(BaseModel):
+    """
+    ReviewManager 仲裁后输出的统一《修改指导意见》。
+
+    Writer 重写时不再回看原始 issues,而是通过 get_rewrite_guidance tool 拉取本对象。
+    设计目标:让 Writer 接受到的指令是「一份」、「无矛盾」、「带优先级」的。
+
+    needs_rewrite 为 False 时,本对象仅作为审查留档存在,不会触发 Writer 重写。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    needs_rewrite: bool
+    priority_issues: list[Issue] = Field(default_factory=list)  # 排序后的核心问题(高优先级在前)
+    must_keep: list[str] = Field(default_factory=list)          # 重写时不得丢失的元素(原文亮点)
+    must_change: list[str] = Field(default_factory=list)        # 重写时必须修改的元素
+    style_hints: str = ""           # 风格层面的提示(如"减少排比"、"加强感官细节")
+    conflicts_resolved: list[ConflictResolution] = Field(default_factory=list)
+    rewrite_attempt: int = 0        # 当前重写轮次(0 = 首稿,1 = 第一次重写,2 = 第二次重写)
+
+
+# --- 剧作转译层(Dramaturg)产物 ---
+
+class ActionBeat(BaseModel):
+    """
+    单个动作节拍。
+
+    SceneDirector 把场景拆解成一系列「谁做了什么 → 带来什么后果」的节拍,
+    Writer 按顺序把每个节拍展开成段落。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    subject: str                    # 动作发出者(人物名 / 群体 / 环境)
+    action: str                     # 具体动作描述
+    impact: str                     # 对场景或他人的直接影响
+
+
+class EmotionalBeat(BaseModel):
+    """
+    单个情绪节拍。
+
+    与 ActionBeat 平行,用于约束人物的内心节奏,避免 Writer 写出"工具人式"对话。
+    emotion 可以是动态描述,如"恐惧逐渐转为决绝"。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    character: str                  # 情绪主体
+    emotion: str                    # 情绪类型/演变
+    trigger: str                    # 触发因素
+
+
+class SceneBeatsheet(BaseModel):
+    """
+    剧作转译层(SceneDirector)的产物。
+
+    Writer 严格只读这一份数据 + 上一场景尾段 + RewriteGuidance(若重写),
+    禁止直接读 Bible / Character / Foreshadowing 等设定数据库。
+
+    如此保证:
+        1. Writer 看到的是已经"舞台化"的指令,而非干瘪的字典。
+        2. 同一份 SceneBeatsheet 被 Writer 写两次时,产出可比较(便于 A/B)。
+        3. 设定数据的呈现方式由 SceneDirector 控制,Writer 不需要做"翻译"工作。
+
+    sensory_requirements 推荐键:
+        sight / sound / smell / touch / taste / atmosphere / weather
+    """
+    model_config = ConfigDict(extra="allow")
+
+    chapter_number: int
+    scene_index: int
+
+    # 视觉/感官要求 —— 强制 Writer 落实"五感体验"
+    sensory_requirements: dict[str, str] = Field(default_factory=dict)
+
+    # 节拍序列 —— Writer 按序号展开
+    action_beats: list[ActionBeat] = Field(default_factory=list)
+    emotional_beats: list[EmotionalBeat] = Field(default_factory=list)
+
+    # 写作约束
+    target_word_count: int = 1200
+    pov_character: str = ""
+    style_hints: str = ""           # SceneDirector 给 Writer 的风格层提示
+    must_avoid: list[str] = Field(default_factory=list)  # 显式禁止的事项(如"不要心理描写")
+
+    # 元信息
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    source_scene_plan_ref: str = "" # 关联的 ScenePlan 标识(chapter:scene_index)
+
+
+# --- Agent 运行态记录 ---
+
+class AgentRunRecord(BaseModel):
+    """
+    单次 Agent 调用的运行审计记录。
+
+    Director / Orchestrator 在调度每个 Agent 后落盘一条,便于:
+        1. 排查 ReAct 循环失控(turns 异常多)。
+        2. 统计 token 消耗。
+        3. 用 final_response_id 在 ARK 后台续接调试。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    agent_name: str
+    started_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    finished_at: str = ""
+    turns: int = 0
+    total_tokens: int = 0
+    final_response_id: str = ""
+    tool_calls_count: int = 0
+    error: Optional[str] = None

@@ -1,0 +1,24 @@
+{# prompts/user/experts/RuleSmith/design_rules.j2
+   渲染变量(对齐 RuleSmith.input_schema):
+     world_brief: str (required)
+     power_genre: str
+     cultivation_hint: str
+     themes: list[str]
+   TODO P2:补充规则严密性约束、修炼境界递进示例 #}
+
+# 任务:设计世界规则与战斗体系
+
+世界观纲要:
+{{ world_brief }}
+
+{% if power_genre %}
+力量类型:{{ power_genre }}
+{% endif %}
+{% if cultivation_hint %}
+修炼体系提示:{{ cultivation_hint }}
+{% endif %}
+{% if themes %}
+主题:{{ themes | join("、") }}
+{% endif %}
+
+请产出 list[WorldRule] + cultivation_levels + combat_system 草案。

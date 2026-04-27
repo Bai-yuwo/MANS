@@ -24,5 +24,6 @@ if __name__ == "__main__":
         "frontend.web_app:app",
         host="127.0.0.1",
         port=666,
-        reload=True
+        reload=True,
+        reload_excludes=["workspace/*", "*.log", "logs/*", "*.tmp"],
     )

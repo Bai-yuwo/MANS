@@ -1,0 +1,48 @@
+{# prompts/user/experts/Critic/review_scene.j2
+   渲染变量(对齐 Critic.input_schema):
+     scene_text: str (required)
+     beatsheet: dict (required)
+     chapter_number: int
+     scene_index: int
+     character_voices: dict
+     tone_hint: str
+     prev_tail: str
+     rewrite_attempt: int
+#}
+
+# 任务:审查以下场景正文的文学性
+
+{% if chapter_number is defined and scene_index is defined %}
+第 {{ chapter_number }} 章 第 {{ scene_index }} 场{% if rewrite_attempt is defined and rewrite_attempt > 0 %},这是第 {{ rewrite_attempt }} 次重写后的复审{% endif %}。
+{% endif %}
+
+【正文】
+{{ scene_text }}
+
+【对照节拍表】
+{{ beatsheet | tojson }}
+
+{% if character_voices %}
+【角色语气关键词】
+{{ character_voices | tojson }}
+{% endif %}
+
+{% if tone_hint %}
+【应有情绪基调】{{ tone_hint }}
+{% endif %}
+
+{% if prev_tail %}
+【上文尾段】(用于审视语气承接)
+{{ prev_tail }}
+{% endif %}
+
+{% if rewrite_attempt is defined and rewrite_attempt > 0 %}
+【重写后审查重点】
+- 这是第 {{ rewrite_attempt }} 次重写后的复审,Writer 已根据上一轮 RewriteGuidance 改稿
+- **请只检查上一轮 priority_issues 是否被解决**,不要新提与 priority_issues 无关的问题
+- 如果新引入了文学性问题(节奏/人物/描写/文风),仍可标注,但严格控制数量
+{% endif %}
+
+请输出 {"issues": [...]} JSON,关注节奏 / 人物刻画 / 描写浓度 / 文风 / 节拍命中度 / AI 味道。
+不要重复 ContinuityChecker 的工作(设定连贯归他)。没问题就返回空数组。
+每条 issue 必须填 type / severity / description,强烈建议补 location / suggestion / source_agent="Critic"。

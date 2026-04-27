@@ -1,0 +1,39 @@
+{# prompts/user/experts/SceneDirector/translate_scene.j2
+   渲染变量(对齐 SceneDirector.input_schema):
+     chapter_number: int (required)
+     scene_index: int (required)
+     scene_plan: dict (required)
+     character_briefs: list[dict]
+     world_context: str
+     active_foreshadowing: list[dict]
+     tone_hint: str
+   TODO P2:补充节拍粒度示例、五感平衡指南 #}
+
+# 任务:把第 {{ chapter_number }} 章第 {{ scene_index }} 场场景规划翻译成节拍表
+
+场景规划:
+{{ scene_plan | tojson }}
+
+{% if character_briefs %}
+出场角色当前状态:
+{% for c in character_briefs %}
+- {{ c | tojson }}
+{% endfor %}
+{% endif %}
+
+{% if world_context %}
+世界观片段:{{ world_context }}
+{% endif %}
+
+{% if active_foreshadowing %}
+本章应触发或维持的伏笔:
+{% for f in active_foreshadowing %}
+- {{ f | tojson }}
+{% endfor %}
+{% endif %}
+
+{% if tone_hint %}
+情绪基调:{{ tone_hint }}
+{% endif %}
+
+请输出 SceneBeatsheet:sensory_requirements / action_beats / emotional_beats。

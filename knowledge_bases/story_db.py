@@ -435,3 +435,57 @@ class StoryDB(BaseDB):
                 chapter_draft["chapter_number"] = chapter_number
 
             return await self._save_no_lock(key, chapter_draft)
+
+    # ── 向量同步 ──
+
+    async def _after_save(self, key: str, data: dict) -> None:
+        """保存后自动同步故事数据到向量库。"""
+        try:
+            from vector_store.store import VectorStore
+            vs = VectorStore(self.project_id)
+
+            if key == "outline":
+                text = self._outline_to_text(data)
+                if text:
+                    await vs.upsert("outlines", "outline", text, {})
+                    logger.info("大纲向量同步完成")
+
+            elif key.startswith("chapter_") and key.endswith("_plan"):
+                chapter_num = data.get("chapter_number", 0)
+                text = self._chapter_plan_to_text(data)
+                if text:
+                    await vs.upsert(
+                        "chapter_scenes",
+                        f"plan_{chapter_num}",
+                        text,
+                        {"chapter_number": chapter_num, "type": "plan"}
+                    )
+                    logger.info(f"章节规划向量同步: 第{chapter_num}章")
+
+        except Exception as e:
+            log_exception(logger, e, f"故事数据向量同步失败 {key}")
+
+    @staticmethod
+    def _outline_to_text(data: dict) -> str:
+        parts = ["故事大纲"]
+        if data.get("title"):
+            parts.append(f"标题: {data['title']}")
+        if data.get("summary"):
+            parts.append(f"概要: {data['summary']}")
+        if data.get("acts"):
+            for act in data["acts"]:
+                parts.append(f"幕: {act.get('name', '')} - {act.get('summary', '')}")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _chapter_plan_to_text(data: dict) -> str:
+        parts = [f"第{data.get('chapter_number', 0)}章规划"]
+        if data.get("title"):
+            parts.append(f"标题: {data['title']}")
+        if data.get("chapter_goal"):
+            parts.append(f"目标: {data['chapter_goal']}")
+        if data.get("emotional_arc"):
+            parts.append(f"情绪: {data['emotional_arc']}")
+        for scene in data.get("scenes", []):
+            parts.append(f"场景: {scene.get('intent', '')}")
+        return "\n".join(parts)

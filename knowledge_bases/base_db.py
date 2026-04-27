@@ -31,6 +31,7 @@ knowledge_bases/base_db.py
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -355,6 +356,12 @@ class BaseDB:
             async with aiofiles.open(temp_path, 'w', encoding='utf-8') as f:
                 await f.write(json.dumps(data, ensure_ascii=False, indent=2))
             os.replace(str(temp_path), str(file_path))
+            try:
+                await self._after_save(key, data)
+                await self._drain_pending_sync()
+            except Exception as e:
+                log_exception(logger, e, f"_after_save 失败，已记录 pending_sync: {key}")
+                await self._record_pending_sync(key)
             return True
         except IOError as e:
             logger.error(f"无锁保存数据失败 {key}: {e}")
@@ -410,6 +417,113 @@ class BaseDB:
             data[field] = value
             return await self._save_no_lock(key, data)
 
+    @staticmethod
+    def _compute_hash(data: dict) -> str:
+        """
+        计算数据字典的内容哈希（用于向量同步校验）。
+
+        使用规范 JSON（键排序、无空格、ensure_ascii=False）计算 MD5，
+        确保相同语义内容产生相同哈希值，不受字典遍历顺序影响。
+
+        Args:
+            data: 要计算哈希的数据字典。
+
+        Returns:
+            32 位十六进制哈希字符串。
+        """
+        canonical = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        return hashlib.md5(canonical.encode('utf-8')).hexdigest()
+
+    async def _record_pending_sync(self, key: str) -> None:
+        """
+        记录同步失败的 key，供后续自动重试。
+
+        写入 workspace/{project_id}/.pending_sync.json：
+            {db_name: [key1, key2, ...]}
+
+        Args:
+            key: 同步失败的数据标识。
+        """
+        pending_path = self.base_path / ".pending_sync.json"
+        pending = {}
+        try:
+            if pending_path.exists():
+                async with aiofiles.open(pending_path, 'r', encoding='utf-8') as f:
+                    pending = json.loads(await f.read())
+        except Exception:
+            pass
+
+        db_pending = pending.setdefault(self.db_name, [])
+        if key not in db_pending:
+            db_pending.append(key)
+
+        try:
+            async with aiofiles.open(pending_path, 'w', encoding='utf-8') as f:
+                await f.write(json.dumps(pending, ensure_ascii=False, indent=2))
+        except Exception as e:
+            logger.error(f"记录 pending_sync 失败: {e}")
+
+    async def _drain_pending_sync(self) -> None:
+        """
+        重试当前 db_name 下所有 pending 的同步。
+
+        读取 .pending_sync.json，对当前 db_name 的每个 key：
+            1. 重新加载 JSON 数据。
+            2. 调用 _after_save 重试向量同步。
+            3. 成功的移除，失败的保留。
+
+        此方法在每次 save 成功后自动调用，实现自愈。
+        """
+        pending_path = self.base_path / ".pending_sync.json"
+        if not pending_path.exists():
+            return
+
+        pending = {}
+        try:
+            async with aiofiles.open(pending_path, 'r', encoding='utf-8') as f:
+                pending = json.loads(await f.read())
+        except Exception:
+            return
+
+        db_pending = pending.get(self.db_name, [])
+        if not db_pending:
+            return
+
+        failed = []
+        for key in db_pending:
+            data = await self.load(key)
+            if not data:
+                continue
+            try:
+                await self._after_save(key, data)
+            except Exception as e:
+                log_exception(logger, e, f"pending_sync 重试失败: {key}")
+                failed.append(key)
+
+        if failed:
+            pending[self.db_name] = failed
+        else:
+            pending.pop(self.db_name, None)
+
+        try:
+            async with aiofiles.open(pending_path, 'w', encoding='utf-8') as f:
+                await f.write(json.dumps(pending, ensure_ascii=False, indent=2))
+        except Exception as e:
+            logger.error(f"更新 pending_sync 失败: {e}")
+
+    async def _after_save(self, key: str, data: dict) -> None:
+        """
+        保存成功后的副作用钩子。
+
+        子类可覆盖此方法，在 save/append 成功后执行额外操作
+        （如自动同步到向量库）。默认实现为空。
+
+        Args:
+            key: 被保存的数据标识。
+            data: 已保存的完整数据字典。
+        """
+        pass
+
     async def list_keys(self) -> list[str]:
         """
         列出当前知识库中所有已保存的数据 key。
@@ -432,6 +546,7 @@ class BaseDB:
         删除指定 key 的数据文件。
 
         使用显式文件锁防止删除与其他写入操作并发执行。
+        删除成功后调用 _after_delete 钩子，供子类同步清理向量库。
 
         Args:
             key: 要删除的数据标识。
@@ -445,7 +560,20 @@ class BaseDB:
             try:
                 if file_path.exists():
                     file_path.unlink()
+                await self._after_delete(key)
                 return True
             except IOError as e:
                 logger.error(f"删除数据失败 {key}: {e}")
                 return False
+
+    async def _after_delete(self, key: str) -> None:
+        """
+        删除成功后的副作用钩子。
+
+        子类可覆盖此方法，在 delete 成功后执行额外操作
+        （如从向量库删除对应文档）。默认实现为空。
+
+        Args:
+            key: 被删除的数据标识。
+        """
+        pass

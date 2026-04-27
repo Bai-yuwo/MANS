@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MANS v2 — 17-Agent 协作写作系统</title>
+    <link rel="stylesheet" href="/frontend/v2/styles.css">
+</head>
+<body>
+    <div id="app" class="app-container">
+        <!-- 左栏: 项目导航 -->
+        <aside class="panel panel-left">
+            <project-panel id="project-panel"></project-panel>
+        </aside>
+
+        <!-- 中栏: 阶段工作台 -->
+        <main class="panel panel-center">
+            <stage-workbench id="stage-workbench"></stage-workbench>
+        </main>
+
+        <!-- 右栏: Agent 实时流 -->
+        <aside class="panel panel-right">
+            <agent-stream id="agent-stream"></agent-stream>
+        </aside>
+    </div>
+
+    <!-- 确认弹窗(全局覆盖) -->
+    <confirm-dialog id="confirm-dialog"></confirm-dialog>
+
+    <!-- 加载顺序: 基础工具 -> 组件 -> 应用 -->
+    <script src="/frontend/v2/api-client.js"></script>
+    <script src="/frontend/v2/components/project-panel.js"></script>
+    <script src="/frontend/v2/components/stage-workbench.js"></script>
+    <script src="/frontend/v2/components/agent-stream.js"></script>
+    <script src="/frontend/v2/components/confirm-dialog.js"></script>
+    <script src="/frontend/v2/app.js"></script>
+</body>
+</html>

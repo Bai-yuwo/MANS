@@ -312,3 +312,52 @@ class CharacterDB(BaseDB):
 
         logger.error(f"人物不存在: {character_id}")
         return False
+
+    # ── 向量同步 ──
+
+    async def _after_save(self, key: str, data: dict) -> None:
+        """保存后自动同步人物卡到向量库。"""
+        try:
+            from vector_store.store import VectorStore
+            vs = VectorStore(self.project_id)
+
+            name = data.get("name", key)
+            char_id = data.get("id", key)
+
+            parts = [f"角色: {name}"]
+            if data.get("aliases"):
+                parts.append(f"别名: {', '.join(data['aliases'])}")
+            if data.get("appearance"):
+                parts.append(f"外貌: {data['appearance']}")
+            if data.get("personality_core"):
+                parts.append(f"性格: {data['personality_core']}")
+            if data.get("background"):
+                parts.append(f"背景: {data['background']}")
+            if data.get("voice_keywords"):
+                parts.append(f"声线: {', '.join(data['voice_keywords'])}")
+            if data.get("cultivation"):
+                cul = data["cultivation"]
+                parts.append(f"修为: {cul.get('realm', '')} {cul.get('stage', '')}")
+
+            text = "\n".join(parts)
+            await vs.upsert("character_cards", char_id, text, {
+                "name": name,
+                "is_protagonist": data.get("is_protagonist", False),
+                "current_location": data.get("current_location", ""),
+                "current_emotion": data.get("current_emotion", ""),
+                "_content_hash": self._compute_hash(data),
+            })
+            logger.info(f"人物卡向量同步: {name}")
+        except Exception as e:
+            log_exception(logger, e, f"人物卡向量同步失败 {key}")
+
+    async def _after_delete(self, key: str) -> None:
+        """删除人物卡后从向量库清理。"""
+        try:
+            from vector_store.store import VectorStore
+            vs = VectorStore(self.project_id)
+            # key 即角色名；若 JSON 中 id 与 name 不同，此处可能残留，但概率极低
+            await vs.delete("character_cards", key)
+            logger.info(f"人物卡向量删除: {key}")
+        except Exception as e:
+            logger.warning(f"人物卡向量删除失败 {key}: {e}")

@@ -1,0 +1,55 @@
+{# prompts/user/experts/ReviewManager/arbitrate.j2
+   渲染变量(对齐 ReviewManager.input_schema):
+     chapter_number: int (required)
+     scene_index: int (required)
+     rewrite_attempt: int (required)
+     scene_text: str (required)
+     critic_issues: list[dict] (required)
+     continuity_issues: list[dict] (required)
+     beatsheet: dict
+#}
+
+# 任务:仲裁审查 issues 并产出 RewriteGuidance
+
+第 {{ chapter_number }} 章 第 {{ scene_index }} 场。**当前是第 {{ rewrite_attempt }} 次审查**(0=首稿审查,1=第一次重写后审查,2=第二次重写后审查)。
+
+【当前正文】
+{{ scene_text }}
+
+{% if beatsheet %}
+【节拍表】(用于判断 must_keep 与节拍命中)
+{{ beatsheet | tojson }}
+{% endif %}
+
+【Critic 提出的问题(文学性)】
+{% if critic_issues %}
+{% for i in critic_issues %}
+- {{ i | tojson }}
+{% endfor %}
+{% else %}
+(无)
+{% endif %}
+
+【ContinuityChecker 提出的问题(设定连贯)】
+{% if continuity_issues %}
+{% for i in continuity_issues %}
+- {{ i | tojson }}
+{% endfor %}
+{% else %}
+(无)
+{% endif %}
+
+请输出 RewriteGuidance JSON,严格遵守:
+1. **rewrite_attempt 字段直接填 {{ rewrite_attempt }}**(照搬输入,不要 +1)
+2. needs_rewrite 判定:
+   - 任何 critical / high → true
+   - ≥ 2 条 medium 同位置 → true
+   - 否则 → false(零 issues 时也输出完整 RewriteGuidance,needs_rewrite=false)
+3. 去重:location 重叠 + description 类似 → 合并;severity 取较高;source_agent 拼成 "Critic+ContinuityChecker"
+4. 冲突化解(conflicts_resolved):同一段两专家方向相反时记录;CRITICAL>HIGH>MEDIUM>LOW;同级倾向 Continuity(硬错误优先);beatsheet 合同优先
+5. priority_issues:本轮必须解决的(critical / high / 触发重写的同位 medium),按重要度排序
+6. must_keep:节拍表中已实现的亮点(2-5 条)
+7. must_change:必改要点(2-5 条),与 priority_issues 对应
+8. style_hints:**单段字符串** ≤ 200 字,语气/风格层提示,不要重复 must_change
+
+主管会用 rewrite_attempt 决定是否触发下一轮重写,所以 rewrite_attempt 填错会破坏循环计数。

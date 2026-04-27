@@ -1,0 +1,20 @@
+{# prompts/user/experts/Geographer/design_world_map.j2
+   渲染变量(对齐 Geographer.input_schema):
+     world_brief: str (required)
+     themes: list[str]
+     scale_hint: str
+   TODO P2:补充任务表述、输出 schema、风格示例、约束条件 #}
+
+# 任务:为以下世界设计地理地图与势力组织
+
+世界观纲要:
+{{ world_brief }}
+
+{% if themes %}
+主题关键词:{{ themes | join("、") }}
+{% endif %}
+{% if scale_hint %}
+规模提示:{{ scale_hint }}
+{% endif %}
+
+请产出 location_set 与 organization_set 草案,按 ExpertTool.output_schema 返回。

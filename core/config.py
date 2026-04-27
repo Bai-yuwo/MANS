@@ -1,125 +1,222 @@
 """
 core/config.py
 
-全局配置管理模块，提供 MANS 系统运行所需的全部配置项。
+MANS 全局配置(主管-专家二级架构重构后)。
 
-职责边界：
-    - 作为系统唯一的配置入口，禁止任何模块直接读取 os.environ。
-    - 支持多 LLM Provider 的模型映射，当前仅激活 doubao，其余预留扩展。
-    - 环境变量优先于代码默认值，便于不同部署环境（开发/测试/生产）切换。
-    - 启动时执行完整性校验，缺失必要配置立即报错，避免运行时才发现。
+核心变更(相比旧的 role-based 设计):
+    - 旧设计:writer / generator / trim / extract / embed 5 个 role,每个 provider 各配一组模型
+    - 新设计:17 个 agent(5 主管 + 12 专家)→ 三档 role 模板(creator / generator / reviewer),
+      Provider 单一化为 ARK,每个 agent 还带 kind 字段(manager | expert)区分调用模式
 
-典型用法：
+为什么这样设计:
+    1. **单一 Provider**:.env 实际只有 ARK(火山引擎)的 key,旧代码里的 qwen/glm/openai 4 个槽位
+       从未启用,徒增配置噪音;ARK 已经能跑 doubao / deepseek / glm 三家模型,统一一个 base_url 即可。
+    2. **Agent 优先于 Role**:同样是"reviewer",Director 和 Critic 的提示词长度、推理深度差异巨大,
+       未来很可能针对单个 agent 调温度/换模型;角色化映射(role→model)无法表达这种细粒度。
+    3. **三档 Role 默认值**:仍保留 role 概念作为"默认值的快速分组",新增 agent 时只需指定它属于哪档。
+
+环境变量优先级(高→低):
+    1. `{AGENT_NAME_UPPER}_MODEL` / `_TEMP` / `_MAX_TOKENS`(单 agent 精细覆盖,如 `WRITER_TEMP=0.8`)
+    2. ROLE_DEFAULTS(代码内三档默认)
+
+ARK 凭据 fallback 链:
+    api_key  : ARK_API_KEY → DOUBAO_API_KEY(.env 历史变量名,保持兼容)
+    base_url : ARK_BASE_URL → DOUBAO_BASE_URL → 默认 https://ark.cn-beijing.volces.com/api/v3
+
+向后兼容:
+    旧代码(generators/ writer/ web_app)仍调用 get_model_for_role("writer") 等接口。
+    新 Config 提供 LEGACY_ROLE_TO_AGENT 映射 + get_model_for_role shim,把 role 翻译成 agent
+    再走新路径,保证旧调用方不需改动也能跑。
+
+典型用法(新代码):
     from core.config import get_config
     cfg = get_config()
-    provider = cfg.get_active_provider()
-    model, provider_cfg = cfg.get_model_for_role("writer")
+    rt = cfg.get_for_agent("Writer")
+    # rt.model / rt.temperature / rt.max_tokens / rt.role
+    # cfg.ark_provider.api_key / .base_url
 """
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-from dataclasses import dataclass, field
+
 from dotenv import load_dotenv
 
 
-# 加载项目根目录下的 .env 文件，将环境变量注入到当前进程。
-# 这一步必须在 Config 类定义之前执行，确保 __post_init__ 能读取到环境变量。
+# 在类定义之前注入 .env 到进程环境,确保 dataclass 默认值与 __post_init__ 都能读到。
 load_dotenv()
 
 
-@dataclass
-class ProviderConfig:
-    """
-    单个 LLM Provider 的完整配置。
+# ============================================================
+# Agent 与 Role 映射表(系统真相源,不要在其他文件重复)
+# ============================================================
 
-    MANS 为不同任务角色分配不同模型，以在成本与质量之间取得平衡：
-        - writer：正文生成，对创意和文笔要求最高，分配最强模型。
-        - generator：项目初始化（Bible、人物、大纲等），对结构化输出要求高。
-        - trim：上下文裁剪，需要快速响应，分配轻量模型。
-        - extract：从文本中提取状态变更，需要稳定的结构化输出能力。
-        - embed：文本向量化，通常由专门的 Embedding 模型承担。
+# 三档 Role 默认值。新增 agent 时挑一档即可,不需要每个 agent 单独配模型。
+ROLE_DEFAULTS: dict[str, dict] = {
+    # 创作档:Writer 唯一占用,温度高、上下文留给场景文笔
+    "creator": {
+        "model": "glm-4-7-251222",
+        "temperature": 0.7,
+        "max_tokens": 3000,
+    },
+    # 生成档:世界观、大纲、角色、场景节拍表等结构化产物,需要"花火"但不能太散
+    "generator": {
+        "model": "deepseek-v3-2-251201",
+        "temperature": 0.4,
+        "max_tokens": 8000,
+    },
+    # 审查/调度档:Critic / Continuity / ReviewManager / Director / Scribe,要求确定性
+    "reviewer": {
+        "model": "doubao-seed-2-0-pro-260215",
+        "temperature": 0.15,
+        "max_tokens": 4000,
+    },
+}
+
+# 17 个 Agent 的 role 与 kind 归属。键值对必须与 CLAUDE.md 中的 Agent 表保持一致。
+#
+# kind 取值:
+#   - "manager":主管。跑 ReAct 循环,持 tool_scope,负责编排专家与 KB 写入。
+#   - "expert" :专家。被主管以 tool 形式调用,内部一次 LLM 调用拿结果就返回,不跑 ReAct,不写 KB。
+#
+# Writer 在专家集合里是唯一的"流式专家"——它的 output token 必须实时推送给前端;
+# 其他专家同步返回 JSON 字符串。这个流式属性不放在 AGENT_DEFINITIONS,而由 ExpertTool 子类
+# 通过 streaming = True 显式声明,避免配置层污染框架职责。
+AGENT_DEFINITIONS: dict[str, dict] = {
+    # ── 5 主管 ──
+    "Director":          {"role": "reviewer",  "kind": "manager"},
+    "WorldArchitect":    {"role": "generator", "kind": "manager"},
+    "CastingDirector":   {"role": "generator", "kind": "manager"},
+    "PlotArchitect":     {"role": "generator", "kind": "manager"},
+    "SceneShowrunner":   {"role": "reviewer",  "kind": "manager"},
+
+    # ── 12 专家 ──
+    # INIT 阶段(归 WorldArchitect / CastingDirector)
+    "Geographer":        {"role": "generator", "kind": "expert"},
+    "RuleSmith":         {"role": "generator", "kind": "expert"},
+    "PortraitDesigner":  {"role": "generator", "kind": "expert"},
+    "RelationDesigner":  {"role": "generator", "kind": "expert"},
+    # PLAN 阶段(归 PlotArchitect)
+    "ArcDesigner":       {"role": "generator", "kind": "expert"},
+    "ChapterDesigner":   {"role": "generator", "kind": "expert"},
+    # WRITE 阶段(归 SceneShowrunner)
+    "SceneDirector":     {"role": "generator", "kind": "expert"},
+    "Writer":            {"role": "creator",   "kind": "expert"},   # 唯一流式专家
+    "Critic":            {"role": "reviewer",  "kind": "expert"},
+    "ContinuityChecker": {"role": "reviewer",  "kind": "expert"},
+    "Scribe":            {"role": "reviewer",  "kind": "expert"},
+    "ReviewManager":     {"role": "reviewer",  "kind": "expert"},
+}
+
+# 旧 role 名 → 新 agent 名的兼容映射。仅用于 get_model_for_role / get_temperature_for_role
+# 等 backward-compat shim,不应在新代码中使用。
+#
+# 选择代表 agent 的依据:挑一个 role 档位匹配且功能上接近 legacy 用途的。
+#   writer    → Writer        创作档,唯一选择
+#   generator → ArcDesigner   generator 档代表(Outliner 已并入 PlotArchitect 主管)
+#   trim      → ContinuityChecker  reviewer 档,旧 trim 是裁剪上下文,语义最近
+#   extract   → Scribe        reviewer 档,旧 extract 就是状态抽取
+LEGACY_ROLE_TO_AGENT: dict[str, str] = {
+    "writer":    "Writer",
+    "generator": "ArcDesigner",
+    "trim":      "ContinuityChecker",
+    "extract":   "Scribe",
+}
+
+
+# ============================================================
+# 数据类:运行时所需的配置切片
+# ============================================================
+
+@dataclass
+class AgentRuntime:
+    """
+    单个 agent 的运行时配置切片。
+
+    通过 `Config.get_for_agent(name)` 构造,屏蔽"agent → role → model"的查找细节。
+    主管在自己的 ReAct 循环里只读这个对象,专家在 ExpertTool 基类里读它来调 LLM。
 
     Attributes:
-        name: Provider 的显示名称（如"豆包"），仅用于日志输出。
-        api_key: 访问 Provider API 所需的密钥。
-        base_url: Provider 的 API 基础地址。
-        writer_model: 正文生成角色使用的模型 ID。
-        generator_model: 初始化生成角色使用的模型 ID。
-        trim_model: 上下文裁剪角色使用的模型 ID。
-        extract_model: 状态提取角色使用的模型 ID。
-        embed_model: 向量化角色使用的模型 ID。
+        agent_name: agent 的 PascalCase 名称(如 "Writer"、"SceneShowrunner")。
+        role: agent 在三档分类中的归属(creator / generator / reviewer),决定默认模型与温度。
+        kind: 调用模式分类:
+            - "manager":主管,跑 ReAct,持 tool_scope。
+            - "expert" :专家,内部一次 LLM 调用,不跑 ReAct,不写 KB。
+        model: 实际调用的模型 ID。
+        temperature: 采样温度。
+        max_tokens: 单次输出上限。
     """
+    agent_name: str
+    role: str
+    kind: str
+    model: str
+    temperature: float
+    max_tokens: int
 
-    name: str = ""
+
+@dataclass
+class ARKProvider:
+    """
+    ARK 平台凭据(火山引擎,OpenAI 兼容 responses API)。
+
+    单一 Provider:旧 4-provider 设计(doubao/qwen/glm/openai)在 MANS 中从未真正启用,
+    所有模型(glm-4-7 / deepseek-v3-2 / doubao-seed-2-0-pro)都跑在 ARK 上,改成单一
+    Provider 配置噪音少 90%。
+
+    name 字段保留是为了 logging/调试时能区分将来可能加入的其他 Provider,
+    但当前实现里它永远是 "ark"。
+
+    embed_model 单独留字段:Embedding 通常走本地 bge-m3,而非 ARK,但保留 ARK 端的
+    embed_model 配置作为 fallback。
+    """
+    name: str = "ark"
     api_key: str = ""
     base_url: str = ""
-    writer_model: str = ""
-    generator_model: str = ""
-    trim_model: str = ""
-    extract_model: str = ""
     embed_model: str = ""
 
     def is_configured(self) -> bool:
-        """
-        判断当前 Provider 是否已配置 API Key。
-
-        未配置 API Key 的 Provider 不会被使用，但会保留在 PROVIDERS 字典中，
-        方便用户切换 Provider 时无需重新启动服务。
-        """
+        """检查 ARK 凭据是否齐全。`base_url` 有内置默认值,所以只判 api_key 即可。"""
         return bool(self.api_key)
 
+
+# ============================================================
+# 全局 Config
+# ============================================================
 
 @dataclass
 class Config:
     """
-    MANS 全局配置类，通过 dataclass 统一管理所有配置项。
+    MANS 全局配置(单例,通过 `get_config()` 获取)。
 
-    配置加载顺序（优先级从高到低）：
-        1. 环境变量（通过 os.getenv 读取）
-        2. 代码中的默认值（dataclass field default）
-        3. 运行时动态修改（直接修改实例属性）
+    职责边界:
+        - 只读环境变量与代码默认值,不持有任何运行时状态。
+        - 不维护 LLM client / agent 实例(那是 LLMClient / Orchestrator 的事)。
+        - 提供 `get_for_agent(name)` 作为新代码的主入口。
+        - 提供 `get_model_for_role(role)` 等 shim 兼容旧代码。
 
-    配置分组说明：
-        - 环境配置：区分开发/生产环境，控制调试模式开关。
-        - 服务配置：HTTP 服务的监听地址和端口。
-        - 存储配置：项目数据、向量库的持久化路径。
-        - Token 预算配置：Injection Engine 和 Writer 的 token 上限，防止上下文爆炸。
-        - Provider 配置：多 LLM Provider 的模型映射表。
-        - 功能开关：控制流式输出、异步更新、向量检索等特性的启用状态。
-        - 向量模型配置：本地 Embedding 模型的选择和缓存路径。
-        - 日志配置：日志级别和输出文件路径。
-
-    Attributes:
-        ENV: 运行环境标识，取值 "development" 或 "production"。
-        DEBUG: 调试模式开关，开启后会输出更详细的日志。
-        HOST: HTTP 服务监听地址，默认仅监听本地回环。
-        PORT: HTTP 服务监听端口。
-        WORKSPACE_PATH: 项目数据持久化的根目录，每个项目在该目录下拥有独立子目录。
-        VECTOR_STORE_TYPE: 向量数据库类型，当前仅支持 "chromadb"。
-        INJECTION_TOKEN_BUDGET: Injection Engine 组装上下文时的总 token 预算上限。
-            超过此预算会触发裁剪层，调用 trim 模型进行智能裁剪。
-        INJECTION_MAX_CHARACTERS: 单场景最大出场人物数，超过此数量的角色会被忽略。
-        INJECTION_MAX_FORESHADOWING: 单场景最大激活伏笔数，超出部分不会注入上下文。
-        WRITER_MAX_TOKENS: Writer 单次生成的最大 token 数，控制单次输出的篇幅上限。
-        ACTIVE_PROVIDER: 当前激活的 LLM Provider 名称，必须在 PROVIDERS 中存在。
-        PROVIDERS: 所有支持的 Provider 配置字典，键为 Provider 标识名。
-        ENABLE_STREAMING: 是否启用 SSE 流式输出，关闭则所有生成以同步方式返回。
-        ENABLE_ASYNC_UPDATE: 是否启用异步知识库更新，关闭则 UpdateExtractor 同步执行。
-        ENABLE_VECTOR_SEARCH: 是否启用向量语义检索，关闭则 Injection Engine 的检索层跳过。
-        VECTOR_MODEL_SOURCE: 向量模型来源，"local" 使用本地 bge-m3，"cloud" 调用 API。
-        LOCAL_EMBED_MODEL: 本地 Embedding 模型名称，当前固定为 "bge-m3"。
-        LOCAL_EMBED_CACHE_DIR: 本地模型缓存目录，None 表示使用 HuggingFace 默认缓存路径。
-        LOG_LEVEL: 全局日志级别，取值 DEBUG/INFO/WARNING/ERROR/CRITICAL。
-        LOG_FILE: 日志文件路径，None 表示仅输出到控制台。
+    重要的"非 agent" 字段保留原因:
+        - INJECTION_TOKEN_BUDGET / WRITER_MAX_TOKENS:旧 InjectionEngine 与 web_app 仍引用,
+          重构期间不能直接删,新代码不要再读这些。
+        - RATE_LIMIT / ENABLE_STREAMING:LLMClient 直接消费,与 agent 无关。
+        - VECTOR_STORE_TYPE / LOCAL_EMBED_MODEL:KB 与向量层使用,生命周期独立于 LLM。
     """
 
+    # ── 环境与服务 ──
     ENV: str = "development"
     DEBUG: bool = True
     HOST: str = "127.0.0.1"
     PORT: int = 666
+
+    # ── 存储 ──
     WORKSPACE_PATH: str = "workspace"
     VECTOR_STORE_TYPE: str = "chromadb"
+
+    # ── LLM 调用控制 ──
+    RATE_LIMIT: int = 2
+    ENABLE_STREAMING: bool = True
+
+    # ── 旧字段(backward-compat,新代码不要直接读)──
     INJECTION_TOKEN_BUDGET: int = 8000
     INJECTION_MAX_CHARACTERS: int = 3
     INJECTION_MAX_FORESHADOWING: int = 2
@@ -127,45 +224,46 @@ class Config:
     GENERATOR_MAX_TOKENS: int = 8000
     TRIM_MAX_TOKENS: int = 2000
     EXTRACT_MAX_TOKENS: int = 2000
-    RATE_LIMIT: int = 2
-    WRITER_TEMPERATURE: float = 0.75
-    GENERATOR_TEMPERATURE: float = 0.3
-    TRIM_TEMPERATURE: float = 0.1
-    EXTRACT_TEMPERATURE: float = 0.3
-    ACTIVE_PROVIDER: str = "doubao"
-    PROVIDERS: dict[str, ProviderConfig] = field(default_factory=dict)
-    ENABLE_STREAMING: bool = True
+
+    # ── 功能开关 ──
     ENABLE_ASYNC_UPDATE: bool = True
     ENABLE_VECTOR_SEARCH: bool = True
+
+    # ── 向量模型 ──
     VECTOR_MODEL_SOURCE: str = "local"
     LOCAL_EMBED_MODEL: str = "bge-m3"
     LOCAL_EMBED_CACHE_DIR: Optional[str] = None
+
+    # ── 日志 ──
     LOG_LEVEL: str = "INFO"
     LOG_FILE: Optional[str] = None
 
-    def __post_init__(self):
-        """
-        dataclass 初始化后的回调方法。
+    # ── Provider(单一)──
+    ark_provider: ARKProvider = field(default_factory=ARKProvider)
 
-        负责从环境变量加载配置并填充 PROVIDERS 字典。
-        此方法在 dataclass 的 __init__ 执行完毕后自动调用。
-        """
+    # ── Agent 运行时缓存(__post_init__ 填充)──
+    _agent_runtimes: dict[str, AgentRuntime] = field(default_factory=dict)
+
+    # ============================================================
+    # 初始化
+    # ============================================================
+    def __post_init__(self):
+        """从环境变量加载所有字段,并预生成 14 个 AgentRuntime 缓存。"""
         self._load_basic_config()
-        self._load_providers_config()
+        self._load_ark_provider()
+        self._load_agent_runtimes()
 
     def _load_basic_config(self):
-        """
-        从环境变量加载基础配置项。
-
-        读取规则：若环境变量存在则覆盖默认值，否则保留默认值。
-        布尔类型通过字符串比较 "true"/"false" 转换，兼容不同大小写写法。
-        """
+        """从环境变量覆盖基础配置。布尔值通过字符串 'true'/'false' 比较,大小写不敏感。"""
         self.ENV = os.getenv("ENV", self.ENV)
         self.DEBUG = os.getenv("DEBUG", str(self.DEBUG)).lower() == "true"
         self.HOST = os.getenv("HOST", self.HOST)
         self.PORT = int(os.getenv("PORT", self.PORT))
         self.WORKSPACE_PATH = os.getenv("WORKSPACE_PATH", self.WORKSPACE_PATH)
         self.VECTOR_STORE_TYPE = os.getenv("VECTOR_STORE_TYPE", self.VECTOR_STORE_TYPE)
+        self.RATE_LIMIT = int(os.getenv("RATE_LIMIT", self.RATE_LIMIT))
+        self.ENABLE_STREAMING = os.getenv("ENABLE_STREAMING", str(self.ENABLE_STREAMING)).lower() == "true"
+
         self.INJECTION_TOKEN_BUDGET = int(os.getenv("INJECTION_TOKEN_BUDGET", self.INJECTION_TOKEN_BUDGET))
         self.INJECTION_MAX_CHARACTERS = int(os.getenv("INJECTION_MAX_CHARACTERS", self.INJECTION_MAX_CHARACTERS))
         self.INJECTION_MAX_FORESHADOWING = int(os.getenv("INJECTION_MAX_FORESHADOWING", self.INJECTION_MAX_FORESHADOWING))
@@ -173,202 +271,202 @@ class Config:
         self.GENERATOR_MAX_TOKENS = int(os.getenv("GENERATOR_MAX_TOKENS", self.GENERATOR_MAX_TOKENS))
         self.TRIM_MAX_TOKENS = int(os.getenv("TRIM_MAX_TOKENS", self.TRIM_MAX_TOKENS))
         self.EXTRACT_MAX_TOKENS = int(os.getenv("EXTRACT_MAX_TOKENS", self.EXTRACT_MAX_TOKENS))
-        self.RATE_LIMIT = int(os.getenv("RATE_LIMIT", self.RATE_LIMIT))
-        self.WRITER_TEMPERATURE = float(os.getenv("WRITER_TEMPERATURE", self.WRITER_TEMPERATURE))
-        self.GENERATOR_TEMPERATURE = float(os.getenv("GENERATOR_TEMPERATURE", self.GENERATOR_TEMPERATURE))
-        self.TRIM_TEMPERATURE = float(os.getenv("TRIM_TEMPERATURE", self.TRIM_TEMPERATURE))
-        self.EXTRACT_TEMPERATURE = float(os.getenv("EXTRACT_TEMPERATURE", self.EXTRACT_TEMPERATURE))
-        self.ACTIVE_PROVIDER = os.getenv("ACTIVE_PROVIDER", self.ACTIVE_PROVIDER)
-        self.ENABLE_STREAMING = os.getenv("ENABLE_STREAMING", str(self.ENABLE_STREAMING)).lower() == "true"
+
         self.ENABLE_ASYNC_UPDATE = os.getenv("ENABLE_ASYNC_UPDATE", str(self.ENABLE_ASYNC_UPDATE)).lower() == "true"
         self.ENABLE_VECTOR_SEARCH = os.getenv("ENABLE_VECTOR_SEARCH", str(self.ENABLE_VECTOR_SEARCH)).lower() == "true"
+
         self.VECTOR_MODEL_SOURCE = os.getenv("VECTOR_MODEL_SOURCE", self.VECTOR_MODEL_SOURCE)
         self.LOCAL_EMBED_MODEL = os.getenv("LOCAL_EMBED_MODEL", self.LOCAL_EMBED_MODEL)
         self.LOCAL_EMBED_CACHE_DIR = os.getenv("LOCAL_EMBED_CACHE_DIR", self.LOCAL_EMBED_CACHE_DIR)
+
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", self.LOG_LEVEL)
         self.LOG_FILE = os.getenv("LOG_FILE", self.LOG_FILE)
 
-    def _load_providers_config(self):
+    def _load_ark_provider(self):
         """
-        从环境变量加载所有 Provider 的配置。
-
-        为每个支持的 Provider 读取对应的 API Key、Base URL 和各角色模型。
-        环境变量命名规范：{PROVIDER}_{SETTING}，如 DOUBAO_API_KEY、QWEN_WRITER_MODEL。
-
-        即使某个 Provider 未配置 API Key，也会保留其完整结构，方便运行时切换。
+        加载 ARK 凭据。fallback 链 ARK_* → DOUBAO_*,允许用户保留 .env 中的旧变量名。
+        base_url 提供内置默认值,即使两个变量都没设也能跑(虽然没 key 还是会校验失败)。
         """
-        self.PROVIDERS = {
-            "doubao": ProviderConfig(
-                name="豆包",
-                api_key=os.getenv("DOUBAO_API_KEY", ""),
-                base_url=os.getenv("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
-                writer_model=os.getenv("DOUBAO_WRITER_MODEL", "doubao-pro-128k"),
-                generator_model=os.getenv("DOUBAO_GENERATOR_MODEL", "doubao-pro-128k"),
-                trim_model=os.getenv("DOUBAO_TRIM_MODEL", "doubao-lite-32k"),
-                extract_model=os.getenv("DOUBAO_EXTRACT_MODEL", "doubao-pro-32k"),
-                embed_model=os.getenv("DOUBAO_EMBED_MODEL", "doubao-embedding"),
-            ),
-            "qwen": ProviderConfig(
-                name="通义千问",
-                api_key=os.getenv("QWEN_API_KEY", ""),
-                base_url=os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/api/v1"),
-                writer_model=os.getenv("QWEN_WRITER_MODEL", "qwen-max"),
-                generator_model=os.getenv("QWEN_GENERATOR_MODEL", "qwen-max"),
-                trim_model=os.getenv("QWEN_TRIM_MODEL", "qwen-turbo"),
-                extract_model=os.getenv("QWEN_EXTRACT_MODEL", "qwen-plus"),
-                embed_model=os.getenv("QWEN_EMBED_MODEL", "text-embedding-v3"),
-            ),
-            "glm": ProviderConfig(
-                name="智谱 GLM",
-                api_key=os.getenv("GLM_API_KEY", ""),
-                base_url=os.getenv("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
-                writer_model=os.getenv("GLM_WRITER_MODEL", "glm-4"),
-                generator_model=os.getenv("GLM_GENERATOR_MODEL", "glm-4"),
-                trim_model=os.getenv("GLM_TRIM_MODEL", "glm-4-flash"),
-                extract_model=os.getenv("GLM_EXTRACT_MODEL", "glm-4-air"),
-                embed_model=os.getenv("GLM_EMBED_MODEL", "embedding-3"),
-            ),
-            "openai": ProviderConfig(
-                name="OpenAI",
-                api_key=os.getenv("OPENAI_API_KEY", ""),
-                base_url=os.getenv("OPENAI_BASE_URL", ""),
-                writer_model=os.getenv("OPENAI_WRITER_MODEL", "gpt-4o"),
-                generator_model=os.getenv("OPENAI_GENERATOR_MODEL", "gpt-4o"),
-                trim_model=os.getenv("OPENAI_TRIM_MODEL", "gpt-4o-mini"),
-                extract_model=os.getenv("OPENAI_EXTRACT_MODEL", "gpt-4o"),
-                embed_model=os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
-            ),
-        }
+        api_key = os.getenv("ARK_API_KEY") or os.getenv("DOUBAO_API_KEY", "")
+        base_url = (
+            os.getenv("ARK_BASE_URL")
+            or os.getenv("DOUBAO_BASE_URL")
+            or "https://ark.cn-beijing.volces.com/api/v3"
+        )
+        embed_model = os.getenv("ARK_EMBED_MODEL") or os.getenv("DOUBAO_EMBED_MODEL", "")
 
-    def get_active_provider(self) -> ProviderConfig:
+        self.ark_provider = ARKProvider(
+            name="ark",
+            api_key=api_key,
+            base_url=base_url,
+            embed_model=embed_model,
+        )
+
+    def _load_agent_runtimes(self):
         """
-        获取当前激活的 Provider 配置。
+        为 17 个 agent 预生成 AgentRuntime。
+
+        每个 agent 走两层覆盖:
+            1. ROLE_DEFAULTS[role]   — 三档默认(由 AGENT_DEFINITIONS 中的 role 决定)
+            2. ENV `{AGENT_UPPER}_MODEL` / `_TEMP` / `_MAX_TOKENS` — 单 agent 覆盖
+
+        kind 字段直接从 AGENT_DEFINITIONS 透传到 AgentRuntime,不可被环境变量覆盖
+        (kind 是架构事实,不应运行时切换)。
+
+        预生成而非懒加载是因为启动时一次性把全部 17 项算出来,后续 get_for_agent O(1)
+        且方便 to_dict 调试输出全貌。
+        """
+        for agent_name, spec in AGENT_DEFINITIONS.items():
+            role = spec["role"]
+            kind = spec["kind"]
+            defaults = ROLE_DEFAULTS[role]
+            upper = agent_name.upper()
+            def _env_or_default(key: str, default):
+                val = os.getenv(key)
+                return default if val is None or val.strip() == "" else val
+
+            model = _env_or_default(f"{upper}_MODEL", defaults["model"])
+            temperature = float(_env_or_default(f"{upper}_TEMP", defaults["temperature"]))
+            max_tokens = int(_env_or_default(f"{upper}_MAX_TOKENS", defaults["max_tokens"]))
+
+            self._agent_runtimes[agent_name] = AgentRuntime(
+                agent_name=agent_name,
+                role=role,
+                kind=kind,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    # ============================================================
+    # 主接口(新代码使用)
+    # ============================================================
+    def get_for_agent(self, agent_name: str) -> AgentRuntime:
+        """
+        获取指定 agent 的运行时配置。
+
+        Args:
+            agent_name: agent 的 PascalCase 名称,必须在 AGENT_DEFINITIONS 中。
 
         Returns:
-            ProviderConfig 实例。
+            AgentRuntime 切片(只读)。
 
         Raises:
-            ValueError: 当 ACTIVE_PROVIDER 不在 PROVIDERS 中时抛出。
+            ValueError: agent_name 未注册时抛出。
         """
-        if self.ACTIVE_PROVIDER not in self.PROVIDERS:
+        if agent_name not in self._agent_runtimes:
             raise ValueError(
-                f"未知的 Provider: {self.ACTIVE_PROVIDER}，"
-                f"可用选项: {list(self.PROVIDERS.keys())}"
+                f"未注册的 agent '{agent_name}',"
+                f"已注册:{list(self._agent_runtimes.keys())}"
             )
-        return self.PROVIDERS[self.ACTIVE_PROVIDER]
+        return self._agent_runtimes[agent_name]
+
+    def list_agents(self) -> list[str]:
+        """列出所有已注册 agent 名,供 CLI/debug 使用。"""
+        return list(self._agent_runtimes.keys())
+
+    def list_managers(self) -> list[str]:
+        """列出所有主管(kind == 'manager')。Director / 4 业务主管。"""
+        return [
+            name for name, rt in self._agent_runtimes.items() if rt.kind == "manager"
+        ]
+
+    def list_experts(self) -> list[str]:
+        """列出所有专家(kind == 'expert')。12 个,被主管以 ExpertTool 形式调用。"""
+        return [
+            name for name, rt in self._agent_runtimes.items() if rt.kind == "expert"
+        ]
+
+    # ============================================================
+    # Backward-compat(旧 role-based 调用方仍可工作)
+    # ============================================================
+    def get_active_provider(self) -> ARKProvider:
+        """旧接口:返回当前 Provider。新代码请直接读 cfg.ark_provider。"""
+        return self.ark_provider
+
+    def get_model_for_role(self, role: str) -> tuple[str, ARKProvider]:
+        """
+        旧接口:role → (model, provider)。
+
+        新代码请改用 `get_for_agent`。本方法仅作 backward-compat shim,通过
+        LEGACY_ROLE_TO_AGENT 把 role 翻译成 agent 后查 _agent_runtimes。
+        """
+        role = role.lower()
+        if role == "embed":
+            return self.ark_provider.embed_model, self.ark_provider
+
+        agent_name = LEGACY_ROLE_TO_AGENT.get(role)
+        if agent_name is None:
+            raise ValueError(
+                f"未知的 legacy role '{role}',"
+                f"可用 legacy role:{list(LEGACY_ROLE_TO_AGENT.keys())} + 'embed'"
+            )
+        return self._agent_runtimes[agent_name].model, self.ark_provider
 
     def get_temperature_for_role(self, role: str) -> float:
-        """
-        根据角色获取默认温度。
-
-        各角色的温度设计逻辑：
-            - writer (0.75): 正文生成需要一定创意，允许较高温度。
-            - generator (0.3): 结构化输出需要稳定性，温度较低。
-            - trim (0.1): 上下文裁剪需要确定性，温度最低。
-            - extract (0.3): 状态提取需要一致性，温度较低。
-
-        Args:
-            role: 任务角色标识。
-
-        Returns:
-            该角色的默认温度值。
-        """
+        """旧接口:role → temperature。"""
         role = role.lower()
-        temp_map = {
-            "writer": self.WRITER_TEMPERATURE,
-            "generator": self.GENERATOR_TEMPERATURE,
-            "trim": self.TRIM_TEMPERATURE,
-            "extract": self.EXTRACT_TEMPERATURE,
-        }
-        return temp_map.get(role, 0.7)
+        agent_name = LEGACY_ROLE_TO_AGENT.get(role)
+        if agent_name is None:
+            return 0.7
+        return self._agent_runtimes[agent_name].temperature
 
     def get_max_tokens_for_role(self, role: str) -> int:
-        """
-        根据角色获取默认最大输出 token 数。
-
-        各角色的 token 预算设计逻辑：
-            - writer (3000): 单次场景正文，约 1500-2000 中文字符。
-            - generator (8000): Bible/大纲等结构化数据生成，内容量大。
-            - trim (2000): 上下文裁剪输出，通常较短。
-            - extract (2000): 状态提取输出，结构化 JSON，不需要太长。
-
-        Args:
-            role: 任务角色标识。
-
-        Returns:
-            该角色的默认 max_tokens 值。
-        """
+        """旧接口:role → max_tokens。"""
         role = role.lower()
-        tokens_map = {
-            "writer": self.WRITER_MAX_TOKENS,
-            "generator": self.GENERATOR_MAX_TOKENS,
-            "trim": self.TRIM_MAX_TOKENS,
-            "extract": self.EXTRACT_MAX_TOKENS,
-        }
-        return tokens_map.get(role, 4000)
+        agent_name = LEGACY_ROLE_TO_AGENT.get(role)
+        if agent_name is None:
+            return 4000
+        return self._agent_runtimes[agent_name].max_tokens
 
-    def get_model_for_role(self, role: str) -> tuple[str, ProviderConfig]:
-        """
-        根据任务角色获取对应的模型 ID 和 Provider 配置。
+    @property
+    def ACTIVE_PROVIDER(self) -> str:
+        """旧字段:当前 Provider 名(单一化后永远是 'ark')。"""
+        return self.ark_provider.name
 
-        MANS 采用角色化模型分配策略，不同任务使用不同模型，
-        以在生成质量、响应速度和成本之间取得平衡。
+    @property
+    def PROVIDERS(self) -> dict[str, ARKProvider]:
+        """旧字段:Provider 字典。重构后只剩一个 ARK,但保留 dict 形态兼容旧调用。"""
+        return {"ark": self.ark_provider, "doubao": self.ark_provider}
 
-        Args:
-            role: 任务角色标识，取值范围为：
-                - "writer"：正文生成，对创意和文笔要求最高
-                - "generator"：项目初始化生成，需要强结构化输出能力
-                - "trim"：上下文裁剪，需要快速响应
-                - "extract"：状态提取，需要稳定的 JSON 输出
-                - "embed"：文本向量化
+    # 旧的温度/max_tokens 属性,某些旧文件直接 `cfg.WRITER_TEMPERATURE` 读取
+    @property
+    def WRITER_TEMPERATURE(self) -> float:
+        return self._agent_runtimes["Writer"].temperature
 
-        Returns:
-            (model_id, provider_config) 元组，model_id 为模型标识字符串。
+    @property
+    def GENERATOR_TEMPERATURE(self) -> float:
+        return self._agent_runtimes["ArcDesigner"].temperature
 
-        Raises:
-            ValueError: 当 role 不在支持的列表中时抛出。
-        """
-        provider = self.get_active_provider()
-        role = role.lower()
+    @property
+    def TRIM_TEMPERATURE(self) -> float:
+        return self._agent_runtimes["ContinuityChecker"].temperature
 
-        model_map = {
-            "writer": provider.writer_model,
-            "generator": provider.generator_model,
-            "trim": provider.trim_model,
-            "extract": provider.extract_model,
-            "embed": provider.embed_model,
-        }
+    @property
+    def EXTRACT_TEMPERATURE(self) -> float:
+        return self._agent_runtimes["Scribe"].temperature
 
-        if role not in model_map:
-            raise ValueError(
-                f"未知的角色: {role}，"
-                f"可用选项: {list(model_map.keys())}"
-            )
-
-        return model_map[role], provider
-
+    # ============================================================
+    # 校验与导出
+    # ============================================================
     def validate(self) -> list[str]:
         """
-        校验配置完整性，返回所有发现的问题。
-
-        校验项：
-            1. 当前激活的 Provider 是否已配置 API Key。
-            2. 工作目录是否存在或可创建。
+        启动时调用,检查必要配置完备性。
 
         Returns:
-            错误信息列表。空列表表示所有校验通过，配置可用。
+            错误信息列表。空表示全通过。
+
+        校验项:
+            1. ARK API key 是否设置
+            2. workspace 目录是否可访问/创建
+            3. 14 个 agent runtime 是否齐备(防止 AGENT_DEFINITIONS 写残)
         """
         errors = []
 
-        try:
-            active = self.get_active_provider()
-            if not active.is_configured():
-                errors.append(
-                    f"当前激活的 Provider '{self.ACTIVE_PROVIDER}' 未配置 API Key，"
-                    f"请设置 {self.ACTIVE_PROVIDER.upper()}_API_KEY"
-                )
-        except ValueError as e:
-            errors.append(str(e))
+        if not self.ark_provider.is_configured():
+            errors.append(
+                "ARK API key 未设置,请在 .env 中设置 ARK_API_KEY 或 DOUBAO_API_KEY"
+            )
 
         workspace = Path(self.WORKSPACE_PATH)
         if not workspace.exists():
@@ -377,75 +475,62 @@ class Config:
             except Exception as e:
                 errors.append(f"无法创建工作目录 '{self.WORKSPACE_PATH}': {e}")
 
+        missing_agents = set(AGENT_DEFINITIONS) - set(self._agent_runtimes)
+        if missing_agents:
+            errors.append(f"AgentRuntime 缺失:{sorted(missing_agents)}")
+
         return errors
 
     def is_production(self) -> bool:
-        """
-        判断当前是否为生产环境。
-
-        生产环境下会关闭调试输出，减少日志量，提升性能。
-        """
         return self.ENV.lower() == "production"
 
     def to_dict(self) -> dict:
         """
-        将配置导出为字典，用于调试接口或日志记录。
-
-        安全说明：
-            导出结果中隐藏了 API Key，避免敏感信息泄露到日志或前端。
-
-        Returns:
-            包含当前配置状态的字典，API Key 被替换为"已配置"/"未配置"状态。
+        导出当前配置快照,API key 被隐藏(仅显示是否已配置),用于日志或调试接口。
         """
-        active = self.get_active_provider()
         return {
             "ENV": self.ENV,
             "DEBUG": self.DEBUG,
             "HOST": self.HOST,
             "PORT": self.PORT,
-            "ACTIVE_PROVIDER": self.ACTIVE_PROVIDER,
-            "ACTIVE_MODELS": {
-                "writer": active.writer_model,
-                "generator": active.generator_model,
-                "trim": active.trim_model,
-                "extract": active.extract_model,
-                "embed": active.embed_model,
-            },
             "WORKSPACE_PATH": self.WORKSPACE_PATH,
-            "INJECTION_TOKEN_BUDGET": self.INJECTION_TOKEN_BUDGET,
-            "WRITER_MAX_TOKENS": self.WRITER_MAX_TOKENS,
-            "GENERATOR_MAX_TOKENS": self.GENERATOR_MAX_TOKENS,
-            "TRIM_MAX_TOKENS": self.TRIM_MAX_TOKENS,
-            "EXTRACT_MAX_TOKENS": self.EXTRACT_MAX_TOKENS,
             "RATE_LIMIT": self.RATE_LIMIT,
-            "TEMPERATURES": {
-                "writer": self.WRITER_TEMPERATURE,
-                "generator": self.GENERATOR_TEMPERATURE,
-                "trim": self.TRIM_TEMPERATURE,
-                "extract": self.EXTRACT_TEMPERATURE,
+            "ENABLE_STREAMING": self.ENABLE_STREAMING,
+            "ARK": {
+                "name": self.ark_provider.name,
+                "base_url": self.ark_provider.base_url,
+                "api_key": "已配置" if self.ark_provider.is_configured() else "未配置",
+                "embed_model": self.ark_provider.embed_model or "(未配置,使用本地)",
             },
-            "PROVIDERS_STATUS": {
-                name: "已配置" if cfg.is_configured() else "未配置"
-                for name, cfg in self.PROVIDERS.items()
+            "AGENTS": {
+                name: {
+                    "role": rt.role,
+                    "kind": rt.kind,
+                    "model": rt.model,
+                    "temperature": rt.temperature,
+                    "max_tokens": rt.max_tokens,
+                }
+                for name, rt in self._agent_runtimes.items()
+            },
+            "VECTOR": {
+                "store": self.VECTOR_STORE_TYPE,
+                "model_source": self.VECTOR_MODEL_SOURCE,
+                "local_embed_model": self.LOCAL_EMBED_MODEL,
             },
         }
 
 
-# 模块级别的全局配置实例缓存。
-# 使用单例模式避免重复解析环境变量，提升性能。
-# 若需要热重载配置，调用 reload_config() 重置此缓存。
+# ============================================================
+# 单例与代理
+# ============================================================
+
 _config: Optional[Config] = None
 
 
 def get_config() -> Config:
     """
-    获取全局配置单例。
-
-    首次调用时创建 Config 实例并缓存，后续调用直接返回缓存实例。
-    这是整个系统获取配置的唯一推荐入口。
-
-    Returns:
-        Config 全局配置实例。
+    获取全局 Config 单例。首次调用时初始化(读 .env、构建 14 AgentRuntime),后续返回缓存。
+    所有模块**必须**通过此函数获取配置,禁止直接 `os.getenv`。
     """
     global _config
     if _config is None:
@@ -455,14 +540,13 @@ def get_config() -> Config:
 
 def reload_config() -> Config:
     """
-    重新加载配置，丢弃缓存并创建新的 Config 实例。
+    丢弃缓存,强制重新读取 .env 与环境变量。
 
-    适用场景：
-        - 修改了 .env 文件后需要热更新配置。
-        - 测试用例中需要切换不同的配置环境。
+    适用场景:
+        - 修改了 .env 后想热更新
+        - 测试用例切换不同环境
 
-    Returns:
-        重新创建后的 Config 实例。
+    注意:已经持有旧 Config 引用的对象不会自动更新,需要重新调用 get_config()。
     """
     global _config
     _config = Config()
@@ -471,17 +555,11 @@ def reload_config() -> Config:
 
 def __getattr__(name: str):
     """
-    动态属性代理，允许通过 core.config.XXX 直接访问 Config 实例的属性。
+    模块级动态属性代理:`from core.config import HOST` 等价于 `get_config().HOST`。
 
-    例如：
-        from core.config import INJECTION_TOKEN_BUDGET
-
-    等效于：
-        from core.config import get_config
-        get_config().INJECTION_TOKEN_BUDGET
-
-    Raises:
-        AttributeError: 当访问的属性不存在于 Config 中时抛出。
+    覆盖范围:Config 实例上**所有**字段与属性(包括 backward-compat 的 PROVIDERS、
+    ACTIVE_PROVIDER、WRITER_TEMPERATURE 等),以及 AGENT_DEFINITIONS / ROLE_DEFAULTS
+    这些模块级常量(直接由 Python import 机制处理,不进入 __getattr__)。
     """
     cfg = get_config()
     if hasattr(cfg, name):

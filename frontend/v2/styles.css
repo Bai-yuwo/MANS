@@ -13,6 +13,7 @@
     --success: #4caf50;
     --warning: #ff9800;
     --error: #f44336;
+    --danger: #dc4446;
     --info: #2196f3;
     --border: #2a2a4a;
     --radius: 6px;
@@ -140,6 +141,30 @@ body {
 .card-meta {
     font-size: 11px;
     color: var(--text-secondary);
+}
+
+.btn-delete-project {
+    width: 20px;
+    height: 20px;
+    line-height: 18px;
+    padding: 0;
+    margin: -4px -4px 0 4px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+.card:hover .btn-delete-project {
+    opacity: 1;
+}
+.btn-delete-project:hover {
+    background: var(--danger);
+    color: white;
 }
 
 /* 表单 */

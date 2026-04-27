@@ -75,7 +75,10 @@ class ProjectPanel extends HTMLElement {
         }
         container.innerHTML = this.projects.map(p => `
             <div class="card ${p.id === this.selectedProjectId ? 'active' : ''}" data-id="${p.id}">
-                <div class="card-title">${this._esc(p.name)}</div>
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div class="card-title" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">${this._esc(p.name)}</div>
+                    <button class="btn-delete-project" data-id="${p.id}" title="删除项目">×</button>
+                </div>
                 <div class="card-meta">
                     <span class="stage-badge ${p.stage?.toLowerCase()}">${p.stage}</span>
                     ${p.genre} · 第${p.current_chapter}章
@@ -84,9 +87,19 @@ class ProjectPanel extends HTMLElement {
         `).join("");
 
         container.querySelectorAll(".card").forEach(card => {
-            card.addEventListener("click", () => {
+            card.addEventListener("click", (e) => {
+                // 点击删除按钮时不触发项目切换
+                if (e.target.closest('.btn-delete-project')) return;
                 const pid = card.dataset.id;
                 this.selectProject(pid);
+            });
+        });
+
+        container.querySelectorAll(".btn-delete-project").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const pid = btn.dataset.id;
+                this._deleteProject(pid);
             });
         });
     }
@@ -126,6 +139,30 @@ class ProjectPanel extends HTMLElement {
             this.selectProject(result.project_id);
         } catch (e) {
             alert("创建失败: " + e.message);
+        }
+    }
+
+    async _deleteProject(projectId) {
+        const project = this.projects.find(p => p.id === projectId);
+        const name = project ? project.name : projectId;
+
+        const confirmed = confirm(`确定要删除项目「${name}」吗？\n\n此操作不可恢复，所有世界观、角色、大纲和章节数据都将被永久删除。`);
+        if (!confirmed) return;
+
+        try {
+            await this.client.deleteProject(projectId);
+            // 如果删除的是当前选中的项目，清除选中状态
+            if (this.selectedProjectId === projectId) {
+                this.selectedProjectId = null;
+                localStorage.removeItem("mans:lastProjectId");
+                this.dispatchEvent(new CustomEvent("project-selected", {
+                    detail: { projectId: null, project: null },
+                    bubbles: true,
+                }));
+            }
+            await this.loadProjects();
+        } catch (e) {
+            alert("删除失败: " + e.message);
         }
     }
 

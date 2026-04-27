@@ -107,25 +107,43 @@ class StageWorkbench extends HTMLElement {
             buttons = `<button class="btn btn-primary" disabled>等待用户确认...</button>`;
         } else if (stage === "INIT") {
             const hasData = this._hasPartialInitData();
-            buttons = `<button class="btn btn-primary" id="btn-start-init">${hasData ? "继续 INIT 阶段" : "开始 INIT 阶段"}</button>`;
+            if (hasData) {
+                buttons = `
+                    <button class="btn btn-primary" id="btn-start-init" style="flex:1;">继续完善设定</button>
+                    <button class="btn btn-secondary" id="btn-advance-plan" style="flex:1;">进入 PLAN 阶段</button>
+                `;
+            } else {
+                buttons = `<button class="btn btn-primary" id="btn-start-init" style="width:100%;">开始构建世界观</button>`;
+            }
         } else if (stage === "PLAN") {
             const hasData = this._hasPartialPlanData();
-            buttons = `<button class="btn btn-primary" id="btn-start-plan">${hasData ? "继续 PLAN 阶段" : "开始 PLAN 阶段"}</button>`;
+            if (hasData) {
+                buttons = `
+                    <button class="btn btn-primary" id="btn-start-plan" style="flex:1;">继续规划章节</button>
+                    <button class="btn btn-secondary" id="btn-advance-write" style="flex:1;">进入 WRITE 阶段</button>
+                `;
+            } else {
+                buttons = `<button class="btn btn-primary" id="btn-start-plan" style="width:100%;">开始设计大纲</button>`;
+            }
         } else if (stage === "WRITE") {
-            buttons = `<button class="btn btn-primary" id="btn-start-write">开始 WRITE 阶段</button>`;
+            buttons = `<button class="btn btn-primary" id="btn-start-write" style="width:100%;">开始写作</button>`;
         } else if (stage === "COMPLETED") {
             buttons = `<div style="color:var(--success);font-size:12px;">项目已完成</div>`;
         }
 
-        actionsDiv.innerHTML = buttons;
+        actionsDiv.innerHTML = `<div style="display:flex;gap:8px;">${buttons}</div>`;
 
         const btnInit = actionsDiv.querySelector("#btn-start-init");
         const btnPlan = actionsDiv.querySelector("#btn-start-plan");
         const btnWrite = actionsDiv.querySelector("#btn-start-write");
+        const btnAdvancePlan = actionsDiv.querySelector("#btn-advance-plan");
+        const btnAdvanceWrite = actionsDiv.querySelector("#btn-advance-write");
 
         if (btnInit) btnInit.addEventListener("click", () => this._startStage("INIT"));
         if (btnPlan) btnPlan.addEventListener("click", () => this._startStage("PLAN"));
         if (btnWrite) btnWrite.addEventListener("click", () => this._startStage("WRITE"));
+        if (btnAdvancePlan) btnAdvancePlan.addEventListener("click", () => this._requestAdvance("PLAN"));
+        if (btnAdvanceWrite) btnAdvanceWrite.addEventListener("click", () => this._requestAdvance("WRITE"));
     }
 
     _hasPartialInitData() {
@@ -163,6 +181,22 @@ class StageWorkbench extends HTMLElement {
 
         this.dispatchEvent(new CustomEvent("start-stage", {
             detail: { projectId: this.projectId, userPrompt, stage, isResume },
+            bubbles: true,
+        }));
+    }
+
+    _requestAdvance(targetStage) {
+        if (!this.projectId) return;
+
+        const currentStage = this.project?.stage || "INIT";
+        const prompts = {
+            INIT: `当前 INIT 阶段的数据已就绪，请 Director 评估是否可以推进到 PLAN 阶段。调用 confirm_stage_advance 请求用户确认。`,
+            PLAN: `当前 PLAN 阶段的数据已就绪，请 Director 评估是否可以推进到 WRITE 阶段。调用 confirm_stage_advance 请求用户确认。`,
+        };
+        const userPrompt = prompts[currentStage] || `请 Director 推进到 ${targetStage} 阶段。`;
+
+        this.dispatchEvent(new CustomEvent("start-stage", {
+            detail: { projectId: this.projectId, userPrompt, stage: currentStage, isResume: false, isAdvance: true },
             bubbles: true,
         }));
     }

@@ -25,9 +25,17 @@ document.addEventListener("DOMContentLoaded", () => {
     projectPanel.addEventListener("project-selected", async (e) => {
         const { projectId, project } = e.detail;
         currentProjectId = projectId;
+
+        if (!projectId) {
+            // 项目被删除或取消选择
+            localStorage.removeItem("mans:lastProjectId");
+            stageWorkbench.setProject(null, null);
+            return;
+        }
+
         localStorage.setItem("mans:lastProjectId", projectId);
         stageWorkbench.setProject(projectId, project);
-        console.log("选中项目:", projectId, project.name);
+        console.log("选中项目:", projectId, project?.name);
 
         // 查询最新状态(可能后台正在运行或等待确认)
         try {

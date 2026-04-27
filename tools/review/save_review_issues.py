@@ -15,6 +15,7 @@ from core.base_tool import BaseTool
 from core.context import require_current_project_id
 from core.logging_config import get_logger
 from core.schemas import ReviewIssues
+from knowledge_bases.checkpoint_db import SceneShowrunnerCheckpointDB
 
 logger = get_logger("tools.review.save_review_issues")
 
@@ -76,6 +77,12 @@ class SaveReviewIssues(BaseTool):
             db = BaseDB(pid, "review")
             key = f"chapter_{chapter_number}_scene_{scene_index}_issues"
             ok = await db.save(key, obj.model_dump())
+            if ok:
+                await SceneShowrunnerCheckpointDB(pid).save_checkpoint(
+                    chapter_number=chapter_number,
+                    scene_index=scene_index,
+                    step="review_issues",
+                )
             return json.dumps(
                 {
                     "saved": ok,

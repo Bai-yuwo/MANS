@@ -13,6 +13,7 @@ from core.base_tool import BaseTool
 from core.context import require_current_project_id
 from core.logging_config import get_logger
 from core.schemas import ChapterFinal
+from knowledge_bases.checkpoint_db import SceneShowrunnerCheckpointDB
 from knowledge_bases.story_db import StoryDB
 
 logger = get_logger("tools.writer.save_scene_final")
@@ -70,6 +71,13 @@ class SaveSceneFinal(BaseTool):
 
         try:
             ok = await StoryDB(pid).save_chapter_final(obj)
+            if ok:
+                for idx, _ in enumerate(obj.scene_texts or []):
+                    await SceneShowrunnerCheckpointDB(pid).save_checkpoint(
+                        chapter_number=obj.chapter_number,
+                        scene_index=idx,
+                        step="final",
+                    )
             return json.dumps(
                 {
                     "saved": ok,

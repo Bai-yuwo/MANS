@@ -88,6 +88,9 @@ class SceneShowrunner(BaseAgent):
         "save_review_issues",
         "save_rewrite_guidance",
         "apply_kb_diff",
+        # 断点续接
+        "read_checkpoint",
+        "clear_checkpoint",
         # 6 个 WRITE 专家
         "call_scene_director",
         "call_writer",

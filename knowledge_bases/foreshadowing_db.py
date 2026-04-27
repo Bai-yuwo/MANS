@@ -137,12 +137,60 @@ class ForeshadowingDB(BaseDB):
 
         return active
 
+    async def get_active_for_scene(
+        self,
+        chapter_number: int,
+        scene_index: int,
+        trigger_ids: list[str] = None,
+    ) -> list[ForeshadowingItem]:
+        """
+        按场景精确获取需要处理的伏笔（场景级过滤）。
+
+        激活条件（满足其一即可）：
+            1. 该伏笔 ID 显式出现在 trigger_ids 列表中。
+            2. 伏笔的 trigger_scene_ref 匹配当前场景（"chapter_number:scene_index"）。
+            3. 伏笔处于 planted/hinted 状态，且当前章节落在 trigger_range 内
+               （当 trigger_scene_ref 为空时的回退兼容）。
+
+        Args:
+            chapter_number: 当前章节号。
+            scene_index: 当前场景索引。
+            trigger_ids: 本场景计划显式触发或埋入的伏笔 ID 列表。
+
+        Returns:
+            需要处理的伏笔列表，已按 urgency 排序。
+        """
+        scene_ref = f"{chapter_number}:{scene_index}"
+        items = await self.get_all_items()
+        active = []
+
+        for item in items:
+            if item.status == ForeshadowingStatus.RESOLVED:
+                continue
+
+            if trigger_ids and item.id in trigger_ids:
+                active.append(item)
+                continue
+
+            if item.trigger_scene_ref and item.trigger_scene_ref == scene_ref:
+                active.append(item)
+                continue
+
+            if item.status in (ForeshadowingStatus.PLANTED, ForeshadowingStatus.HINTED) \
+                    and item.can_trigger_in_chapter(chapter_number):
+                active.append(item)
+
+        urgency_order = {"high": 0, "medium": 1, "low": 2}
+        active.sort(key=lambda x: urgency_order.get(x.urgency, 1))
+        return active
+
     async def update_status(
         self,
         fs_id: str,
         new_status: str,
         notes: str = "",
-        triggered_chapter: int = 0
+        triggered_chapter: int = 0,
+        triggered_scene_ref: str = "",
     ) -> bool:
         """
         更新伏笔状态。
@@ -152,14 +200,15 @@ class ForeshadowingDB(BaseDB):
             非法状态会被拒绝并记录错误日志。
 
         触发记录：
-            若 new_status 为 "triggered"，自动记录 actual_trigger_chapter 字段，
-            便于后续审计和回滚。
+            若 new_status 为 "triggered"，自动记录 actual_trigger_chapter 和
+            actual_trigger_scene_ref 字段，便于后续审计和回滚。
 
         Args:
             fs_id: 伏笔唯一标识。
             new_status: 新状态（hinted / triggered / resolved）。
             notes: 状态变化的说明文字。
             triggered_chapter: 实际触发的章节号（仅在 triggered 状态时有效）。
+            triggered_scene_ref: 实际触发场景引用，格式 "chapter:scene_index"。
 
         Returns:
             是否更新成功。伏笔不存在或状态无效时返回 False。
@@ -177,6 +226,8 @@ class ForeshadowingDB(BaseDB):
 
                 if new_status == "triggered":
                     item.actual_trigger_chapter = triggered_chapter
+                    if triggered_scene_ref:
+                        item.actual_trigger_scene_ref = triggered_scene_ref
 
                 return await self._save_all_items(items)
 

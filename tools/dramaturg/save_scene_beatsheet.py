@@ -10,6 +10,7 @@ SceneShowrunner 主管在调用 SceneDirector 拿到 dict 后,经过审阅再调
 import json
 
 from knowledge_bases.base_db import BaseDB
+from knowledge_bases.checkpoint_db import SceneShowrunnerCheckpointDB
 
 from core.base_tool import BaseTool
 from core.context import require_current_project_id
@@ -73,6 +74,12 @@ class SaveSceneBeatsheet(BaseTool):
         try:
             db = BaseDB(pid, "chapters/scene_beatsheets")
             ok = await db.save(f"scene_{obj.scene_index}", obj.model_dump())
+            if ok:
+                await SceneShowrunnerCheckpointDB(pid).save_checkpoint(
+                    chapter_number=obj.chapter_number,
+                    scene_index=obj.scene_index,
+                    step="beatsheet",
+                )
             return json.dumps(
                 {"saved": ok, "scene_index": obj.scene_index},
                 ensure_ascii=False,

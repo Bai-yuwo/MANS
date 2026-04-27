@@ -13,6 +13,7 @@ import json
 from core.base_tool import BaseTool
 from core.context import require_current_project_id
 from core.logging_config import get_logger
+from knowledge_bases.checkpoint_db import SceneShowrunnerCheckpointDB
 from knowledge_bases.story_db import StoryDB
 
 logger = get_logger("tools.writer.save_scene_draft")
@@ -72,6 +73,13 @@ class SaveSceneDraft(BaseTool):
             ok = await StoryDB(pid).update_scene_in_draft(
                 chapter_number, scene
             )
+            if ok:
+                await SceneShowrunnerCheckpointDB(pid).save_checkpoint(
+                    chapter_number=chapter_number,
+                    scene_index=scene["scene_index"],
+                    step="draft",
+                    extra={"rewrite_attempt": scene.get("rewrite_attempt", 0)},
+                )
             return json.dumps(
                 {
                     "saved": ok,

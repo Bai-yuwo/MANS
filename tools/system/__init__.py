@@ -12,9 +12,10 @@ tools/system/
 """
 
 from .apply_kb_diff import ApplyKBDiff
+from .checkpoint_tools import ClearCheckpoint, ReadCheckpoint
 from .confirm_stage_advance import ConfirmStageAdvance
 from .ask_user import AskUser
 from .log_run_record import LogRunRecord
 from .write_project_meta import WriteProjectMeta
 
-__all__ = ["ApplyKBDiff", "ConfirmStageAdvance", "AskUser", "LogRunRecord", "WriteProjectMeta"]
+__all__ = ["ApplyKBDiff", "ClearCheckpoint", "ConfirmStageAdvance", "AskUser", "LogRunRecord", "ReadCheckpoint", "WriteProjectMeta"]

@@ -109,6 +109,7 @@ class Scribe(ExpertTool):
                                     },
                                     "notes": {"type": "string"},
                                     "triggered_chapter": {"type": "integer"},
+                                    "actual_trigger_scene_ref": {"type": "string", "description": "实际触发场景引用，格式 'chapter:scene_index'"},
                                 },
                                 "required": ["id", "status"],
                                 "additionalProperties": True,

@@ -196,6 +196,12 @@ class SessionManager:
                     if sess:
                         sess.close()
                         logger.info(f"会话超时清理: {pid}")
+                        # 同时清理子主管实例缓存
+                        try:
+                            from core.manager_tool import ManagerTool
+                            ManagerTool.clear_cache(pid)
+                        except Exception:
+                            pass
 
 
 # 全局单例

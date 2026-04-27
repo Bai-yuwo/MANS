@@ -26,10 +26,12 @@ ManagerTool 基类 — 把子主管(BaseAgent)包装成一个可调用工具,供
 """
 
 import asyncio
+import time
 from typing import Awaitable, Callable, ClassVar, Optional, Type
 
 from core.base_tool import BaseTool
 from core.base_agent import BaseAgent
+from core.context import require_current_project_id
 from core.logging_config import get_logger
 from core.stream_packet import CompletedPayload, StreamPacket
 from core.expert_tool import _to_snake_case
@@ -64,6 +66,13 @@ class ManagerTool(BaseTool):
 
     # 固定为 True:子主管可能内含 Writer 流式专家,token 必须透传
     streaming: ClassVar[bool] = True
+
+    # 类级实例缓存: {cache_key: BaseAgent}
+    # 按 project_id 缓存子主管实例,同一项目内重复调用时复用,
+    # 保留对话状态(last_response_id / last_total_tokens / last_turns)。
+    _manager_instances: ClassVar[dict[str, BaseAgent]] = {}
+    _instance_access_ts: ClassVar[dict[str, float]] = {}
+    _MAX_CACHED_INSTANCES: ClassVar[int] = 20
 
     def __init__(self):
         self._validate_class_attrs()
@@ -106,6 +115,11 @@ class ManagerTool(BaseTool):
         """
         驱动子主管完整 ReAct 循环,实时透传 packets,最终返回文本摘要。
 
+        实例缓存:
+            按 project_id 复用子主管实例,保留对话状态供 ReAct 续接。
+            缓存键: "{tool_name}:{project_id}"。
+            LRU 淘汰:超过 _MAX_CACHED_INSTANCES 时移除最久未访问实例。
+
         Args:
             user_prompt: 给子主管的 user prompt
             **kwargs: 子主管 run() 的额外参数(如 project_id context)
@@ -115,7 +129,38 @@ class ManagerTool(BaseTool):
         """
         import json
 
-        manager = self.target_manager_class()
+        # 获取 project_id 以构建缓存键
+        try:
+            pid = require_current_project_id()
+        except Exception:
+            pid = "_unknown_"
+        cache_key = f"{self.name}:{pid}"
+
+        # LRU 淘汰检查
+        if len(self._manager_instances) >= self._MAX_CACHED_INSTANCES:
+            # 移除最久未访问的实例
+            if self._instance_access_ts:
+                oldest_key = min(
+                    self._instance_access_ts, key=self._instance_access_ts.get
+                )
+                self._manager_instances.pop(oldest_key, None)
+                self._instance_access_ts.pop(oldest_key, None)
+                logger.info(f"ManagerTool 缓存淘汰: {oldest_key}")
+
+        # 复用或创建实例
+        manager = self._manager_instances.get(cache_key)
+        if manager is not None:
+            logger.info(
+                f"ManagerTool 复用子主管实例: {cache_key} "
+                f"(res_id={'有' if manager.last_response_id else '无'}, turns={manager.last_turns})"
+            )
+        else:
+            manager = self.target_manager_class()
+            self._manager_instances[cache_key] = manager
+            logger.info(f"ManagerTool 创建子主管实例: {cache_key}")
+
+        # 更新访问时间戳
+        self._instance_access_ts[cache_key] = time.time()
 
         turns = 0
         total_tokens = 0
@@ -176,3 +221,28 @@ class ManagerTool(BaseTool):
             }
 
         return json.dumps(result, ensure_ascii=False)
+
+    # --------------------------------------------------------
+    # 缓存管理
+    # --------------------------------------------------------
+    @classmethod
+    def clear_cache(cls, project_id: Optional[str] = None) -> None:
+        """
+        清理子主管实例缓存。
+
+        Args:
+            project_id: 若指定,只清理该项目的缓存;若为 None,清理全部缓存。
+        """
+        if project_id is None:
+            cls._manager_instances.clear()
+            cls._instance_access_ts.clear()
+            logger.info("ManagerTool 全部缓存已清理")
+            return
+
+        keys_to_remove = [
+            k for k in cls._manager_instances.keys() if k.endswith(f":{project_id}")
+        ]
+        for k in keys_to_remove:
+            cls._manager_instances.pop(k, None)
+            cls._instance_access_ts.pop(k, None)
+        logger.info(f"ManagerTool 项目缓存已清理: {project_id} ({len(keys_to_remove)} 个实例)")

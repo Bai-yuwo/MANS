@@ -15,6 +15,7 @@ from core.base_tool import BaseTool
 from core.context import require_current_project_id
 from core.logging_config import get_logger
 from core.schemas import RewriteGuidance
+from knowledge_bases.checkpoint_db import SceneShowrunnerCheckpointDB
 
 logger = get_logger("tools.review.save_rewrite_guidance")
 
@@ -79,6 +80,13 @@ class SaveRewriteGuidance(BaseTool):
                 f"_guidance_attempt_{obj.rewrite_attempt}"
             )
             ok = await db.save(key, obj.model_dump())
+            if ok:
+                await SceneShowrunnerCheckpointDB(pid).save_checkpoint(
+                    chapter_number=chapter_number,
+                    scene_index=scene_index,
+                    step="rewrite_guidance",
+                    extra={"rewrite_attempt": obj.rewrite_attempt},
+                )
             return json.dumps(
                 {
                     "saved": ok,

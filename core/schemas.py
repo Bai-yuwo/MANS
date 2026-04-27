@@ -626,8 +626,13 @@ class ForeshadowingItem(BaseModel):
     resolution_description: Optional[str] = None
     urgency: Literal["low", "medium", "high"] = "medium"
 
+    # 场景级引用（新增）：精确到场景而非仅章节
+    planted_scene_ref: str = ""         # 埋下场景引用，格式 "chapter:scene_index"
+    trigger_scene_ref: str = ""         # 计划触发场景引用，格式 "chapter:scene_index"
+
     # 扩展：实际触发信息（用于审计和回滚）
     actual_trigger_chapter: Optional[int] = None
+    actual_trigger_scene_ref: str = ""  # 实际触发场景引用（新增）
     actual_resolution_chapter: Optional[int] = None
 
     def can_trigger_in_chapter(self, chapter: int) -> bool:

@@ -269,8 +269,10 @@ async def delete_project_v2(project_id: str):
         raise HTTPException(status_code=404, detail="项目不存在")
     try:
         shutil.rmtree(proj_dir)
-        # 同时清理会话
+        # 同时清理会话和子主管缓存
         await get_session_manager().remove(project_id)
+        from core.manager_tool import ManagerTool
+        ManagerTool.clear_cache(project_id)
         return {"success": True, "message": "项目已删除"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除失败: {e}")

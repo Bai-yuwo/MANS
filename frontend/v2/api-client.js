@@ -124,6 +124,16 @@ class MANSApiClient {
     }
 
     // --------------------------------------------------------
+    // 审查历史
+    // --------------------------------------------------------
+    async getSceneReviewHistory(projectId, chapterNumber, sceneIndex) {
+        const res = await fetch(
+            this._url(`/api/v2/projects/${projectId}/chapters/${chapterNumber}/scenes/${sceneIndex}/review`)
+        );
+        return this._json(res);
+    }
+
+    // --------------------------------------------------------
     // SSE 流式
     // --------------------------------------------------------
     connectStream(projectId, onEvent) {

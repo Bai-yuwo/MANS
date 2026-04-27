@@ -21,6 +21,7 @@ SSE 事件格式:
     event: error       data: {"error": "..."}
 """
 
+import asyncio
 import json
 import shutil
 import uuid
@@ -93,6 +94,63 @@ class CommandRequest(BaseModel):
 class ChapterContentRequest(BaseModel):
     full_text: str = Field(..., description="章节完整文本")
     scene_texts: list[str] = Field(default_factory=list, description="各场景文本列表")
+
+
+# --------------------------------------------------------
+# 审查历史读取
+# --------------------------------------------------------
+
+@router.get("/projects/{project_id}/chapters/{chapter_number}/scenes/{scene_index}/review")
+async def get_scene_review_history(
+    project_id: str, chapter_number: int, scene_index: int
+):
+    """
+    读取单场景的多轮审查历史。
+
+    返回:
+        - chapter_number / scene_index
+        - issues: Critic + Continuity 合并后的 ReviewIssues
+        - guidance_history: 按 rewrite_attempt 排序的 Guidance 列表
+    """
+    proj_dir = _project_path(project_id)
+    review_dir = proj_dir / "review"
+
+    if not review_dir.exists():
+        raise HTTPException(status_code=404, detail="审查记录不存在")
+
+    # 读取 issues
+    issues_key = f"chapter_{chapter_number}_scene_{scene_index}_issues"
+    issues_path = review_dir / f"{issues_key}.json"
+    issues_data = None
+    if issues_path.exists():
+        try:
+            async with aiofiles.open(issues_path, "r", encoding="utf-8") as f:
+                issues_data = json.loads(await f.read())
+        except Exception as e:
+            logger.warning(f"读取 issues 失败: {e}")
+
+    # 读取所有 guidance（按 rewrite_attempt 排序）
+    guidance_prefix = f"chapter_{chapter_number}_scene_{scene_index}_guidance_attempt_"
+    guidance_history = []
+    try:
+        for p in sorted(review_dir.glob(f"{guidance_prefix}*.json")):
+            try:
+                async with aiofiles.open(p, "r", encoding="utf-8") as f:
+                    guidance_history.append(json.loads(await f.read()))
+            except Exception as e:
+                logger.warning(f"读取 guidance 失败 {p.name}: {e}")
+    except Exception as e:
+        logger.warning(f"遍历 guidance 文件失败: {e}")
+
+    if issues_data is None and not guidance_history:
+        raise HTTPException(status_code=404, detail="该场景暂无审查记录")
+
+    return {
+        "chapter_number": chapter_number,
+        "scene_index": scene_index,
+        "issues": issues_data,
+        "guidance_history": guidance_history,
+    }
 
 
 # --------------------------------------------------------
@@ -614,10 +672,16 @@ async def get_chapter_content(project_id: str, chapter_number: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"读取章节内容失败: {e}")
 
-    # 兼容两种结构: ChapterFinal 模型 或 简单的 draft 结构
+    # 兼容两种结构: ChapterFinal 模型 或 draft 的 scenes 对象数组
     full_text = data.get("full_text", "")
     scene_texts = data.get("scene_texts", [])
     title = data.get("title", f"第{chapter_number}章")
+
+    # 若 scene_texts 为空，尝试从 scenes 对象数组中提取文本
+    if not scene_texts:
+        scenes = data.get("scenes", [])
+        if isinstance(scenes, list):
+            scene_texts = [s.get("text", "") for s in scenes if isinstance(s, dict) and s.get("text")]
 
     # 如果没有 full_text 但有 scene_texts，自动拼接
     if not full_text and scene_texts:

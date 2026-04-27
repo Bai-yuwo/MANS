@@ -41,6 +41,10 @@ class Writer(ExpertTool):
                 "type": "string",
                 "description": "上一场或上一章末尾的最后 1-2 段,用于语气承接。",
             },
+            "transition_from_prev": {
+                "type": "string",
+                "description": "SceneDirector 给出的与上一场衔接提示(时间/空间/情绪连续)。若存在，Writer 需在开头 50 字内自然体现承接关系。",
+            },
             "current_draft": {
                 "type": "string",
                 "description": "重写时主管把上次草稿原文作为 current_draft 传入,Writer 基于现有结构改而非从零写。仅在 rewrite_guidance 存在时使用。",

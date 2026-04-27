@@ -429,6 +429,8 @@ class StageWorkbench extends HTMLElement {
             area.innerHTML = `
                 <div class="kb-header">章节阅读</div>
                 <chapter-reader project-id="${this.projectId}" chapter-number="${chapter}"></chapter-reader>
+                <div class="kb-header" style="margin-top:12px;">审查记录</div>
+                <review-panel project-id="${this.projectId}" chapter-number="${chapter}" scene-index="0"></review-panel>
             `;
         } else {
             area.innerHTML = "";

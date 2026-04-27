@@ -43,6 +43,6 @@
 - 如果新引入了文学性问题(节奏/人物/描写/文风),仍可标注,但严格控制数量
 {% endif %}
 
-请输出 {"issues": [...]} JSON,关注节奏 / 人物刻画 / 描写浓度 / 文风 / 节拍命中度 / AI 味道。
+请输出 {"issues": [...]} JSON,关注节奏 / 人物刻画 / 描写浓度 / 文风 / 节拍命中度 / AI 味道 / HOOK(开头抓人度) / EXPECTATION(结尾期待感)。
 不要重复 ContinuityChecker 的工作(设定连贯归他)。没问题就返回空数组。
 每条 issue 必须填 type / severity / description,强烈建议补 location / suggestion / source_agent="Critic"。

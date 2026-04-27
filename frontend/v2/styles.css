@@ -111,6 +111,12 @@ body {
 }
 .btn-secondary:hover { background: var(--bg-hover); }
 
+.btn-danger {
+    background: var(--danger);
+    color: white;
+}
+.btn-danger:hover { background: #e53935; }
+
 .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -630,4 +636,315 @@ agent-stream {
 
 .chapter-error {
     color: var(--danger);
+}
+
+/* ---------- 场景拆分视图 ---------- */
+.chapter-actions .btn-split {
+    padding: 3px 10px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.chapter-actions .btn-split:hover,
+.chapter-actions .btn-split.active {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+
+.scene-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    margin-bottom: 10px;
+    overflow: hidden;
+}
+
+.scene-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+}
+
+.scene-index {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.scene-wordcount {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.scene-card-body {
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text-primary);
+}
+
+.scene-card-body p {
+    margin: 0 0 8px 0;
+    text-indent: 2em;
+}
+
+.scene-card-body p:last-child {
+    margin-bottom: 0;
+}
+
+.scene-card.editing {
+    border-color: var(--accent);
+}
+
+.scene-editor {
+    width: 100%;
+    min-height: 120px;
+    font-size: 12px;
+    line-height: 1.7;
+    padding: 10px;
+    border: none;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    resize: vertical;
+    font-family: inherit;
+}
+
+.scene-editor:focus {
+    outline: none;
+}
+
+/* ---------- 审查面板 (review-panel) ---------- */
+.review-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    overflow: hidden;
+    margin-top: 10px;
+}
+
+.review-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-tertiary);
+}
+
+.review-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.review-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.review-loading,
+.review-empty {
+    text-align: center;
+    padding: 30px 20px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.review-body {
+    padding: 8px;
+}
+
+.review-section {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.review-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12px;
+    background: var(--bg-tertiary);
+    transition: background 0.15s;
+}
+
+.review-section-header:hover {
+    background: var(--bg-hover);
+}
+
+.review-section-header.collapsed .review-toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.review-toggle-icon {
+    font-size: 10px;
+    color: var(--text-muted);
+    width: 12px;
+    text-align: center;
+    flex-shrink: 0;
+    transition: transform 0.15s;
+}
+
+.review-section-title {
+    font-weight: 600;
+    flex: 1;
+    color: var(--text-primary);
+}
+
+.review-section-count {
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--bg-primary);
+    padding: 1px 6px;
+    border-radius: 10px;
+}
+
+.review-section-body {
+    padding: 8px 10px 8px 30px;
+    font-size: 11px;
+    line-height: 1.6;
+    border-top: 1px solid var(--border);
+}
+
+.review-section-body.collapsed {
+    display: none;
+}
+
+.review-subheader {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin: 10px 0 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.review-issue {
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.review-issue:last-child {
+    border-bottom: none;
+}
+
+.review-issue-header {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.review-issue-type {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.review-issue-sev {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 8px;
+    font-weight: 600;
+}
+
+.sev-critical { background: rgba(244,67,54,0.15); color: var(--error); }
+.sev-high     { background: rgba(233,69,96,0.15); color: var(--accent); }
+.sev-medium   { background: rgba(255,152,0,0.15); color: var(--warning); }
+.sev-low      { background: var(--bg-primary); color: var(--text-muted); }
+
+.review-issue-desc {
+    color: var(--text-primary);
+    margin-bottom: 3px;
+}
+
+.review-issue-loc,
+.review-issue-suggestion {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.review-guidance {
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.review-guidance:last-child {
+    border-bottom: none;
+}
+
+.review-guidance-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.review-guidance-status {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-weight: 600;
+}
+
+.review-guidance-status.rewrite-needed {
+    background: rgba(244,67,54,0.15);
+    color: var(--error);
+}
+
+.review-guidance-status.rewrite-ok {
+    background: rgba(76,175,80,0.15);
+    color: var(--success);
+}
+
+.review-guidance-block {
+    margin-bottom: 6px;
+}
+
+.review-guidance-label {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+}
+
+.review-guidance-block ul {
+    margin: 0;
+    padding-left: 16px;
+    color: var(--text-secondary);
+}
+
+.review-guidance-block li {
+    margin-bottom: 2px;
+}
+
+.review-guidance-text {
+    color: var(--text-secondary);
+    white-space: pre-wrap;
 }

@@ -19,6 +19,11 @@
 {{ prev_tail }}
 {% endif %}
 
+{% if transition_from_prev %}
+【与上一场衔接提示】(由 SceneDirector 给出)
+{{ transition_from_prev }}
+{% endif %}
+
 {% if character_voices %}
 【角色语气关键词】
 {{ character_voices | tojson }}

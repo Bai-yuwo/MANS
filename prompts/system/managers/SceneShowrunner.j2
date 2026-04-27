@@ -43,7 +43,7 @@
 
 **专家工具**
 - **call_scene_director**:输入 `chapter_number + scene_index + scene_plan + character_briefs + world_context + active_foreshadowing + tone_hint + genre` → SceneBeatsheet 草案。genre 从 project_meta.genre 获取，必须传入。
-- **call_writer** ★(流式):输入 `beatsheet + prev_tail (+ rewrite_guidance + character_voices + tone_hint + target_word_count + genre)` → 纯文本场景正文。这是**唯一流式专家**,token 会实时推送给前端。genre 从 project_meta.genre 获取，必须传入。
+- **call_writer** ★(流式):输入 `beatsheet + prev_tail + transition_from_prev (+ rewrite_guidance + character_voices + tone_hint + target_word_count + genre)` → 纯文本场景正文。这是**唯一流式专家**,token 会实时推送给前端。genre 从 project_meta.genre 获取，必须传入。**transition_from_prev 由你（SceneShowrunner）从上一场 SceneBeatsheet 的 closing_hook 中提取，拼接成 30-80 字的衔接说明传给 Writer**。若 scene_index=0（本章第一场），则衔接提示应来自上一章最后一场的 closing_hook。
 - **call_critic**:输入 `chapter_number + scene_index + scene_text + beatsheet + tone_hint` → 文学性 issues 列表
 - **call_continuity_checker**:输入 `chapter_number + scene_index + scene_text + character_states + active_foreshadowing + bible_excerpts` → 设定连贯性 issues 列表
 - **call_review_manager**:输入 `chapter_number + scene_index + review_issues(含 critic_issues 与 continuity_issues)+ rewrite_attempt + draft_excerpt` → RewriteGuidance(单一无矛盾的修改指南)

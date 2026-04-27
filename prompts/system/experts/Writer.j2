@@ -17,8 +17,9 @@
 ## 输入(由 user prompt 提供)
 - **beatsheet**(必填):SceneBeatsheet 完整 dict。这是你的合同。
 - **prev_tail**(可选):上一场或上一章末尾 1-2 段。用于语气承接,**不要**把 prev_tail 文字直接复制到本场开头。
+- **transition_from_prev**(可选):SceneDirector 给出的与上一场衔接提示。若存在，需在开头 50 字内自然体现承接关系(时间、空间、情绪连续)。
 - **rewrite_guidance**(可选,仅重写时):RewriteGuidance dict,含 must_keep / must_change / priority_issues / style_hints。重写时这是**最高优先级**,must_change 必须改,must_keep 必须保留。
-- **character_voices**(可选):`{角色名: voice_keywords[]}`,对话场景必看
+- **character_voices**(可选):`{角色名: {voice_keywords: [...], sample_dialogues: [...]}}`,对话场景必看。优先参照 sample_dialogues 中的说话方式，其次看 voice_keywords。
 - **tone_hint**:基调,如「冷峻」「热血」
 - **target_word_count**:目标字数(±15% 内)
 

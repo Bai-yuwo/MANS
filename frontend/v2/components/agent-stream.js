@@ -43,11 +43,13 @@ class AgentStream extends HTMLElement {
             <div style="padding:10px;border-top:1px solid var(--border);display:flex;gap:6px;">
                 <button class="btn btn-secondary" id="btn-clear" style="flex:1;font-size:11px;">清空</button>
                 <button class="btn btn-secondary" id="btn-pause" style="flex:1;font-size:11px;">暂停</button>
+                <button class="btn btn-danger" id="btn-stop" style="flex:1;font-size:11px;">停止</button>
             </div>
         `;
 
         this.querySelector("#btn-clear").addEventListener("click", () => this.clear());
         this.querySelector("#btn-pause").addEventListener("click", () => this.togglePause());
+        this.querySelector("#btn-stop").addEventListener("click", () => this._onStop());
     }
 
     start(projectId, options = {}) {
@@ -167,6 +169,20 @@ class AgentStream extends HTMLElement {
             btn.textContent = "暂停";
             this._setStatus("运行中");
         }
+    }
+
+    async _onStop() {
+        if (!this.isRunning || !this.projectId) {
+            this.stop();
+            return;
+        }
+        try {
+            this._setStatus("正在停止...");
+            await this.client.sendCommand(this.projectId, "停止当前执行");
+        } catch (e) {
+            console.error("发送停止指令失败", e);
+        }
+        this.stop();
     }
 
     _handleEvent(event) {

@@ -236,6 +236,7 @@ class CharacterCard(BaseModel):
     appearance: str = ""                # 外貌描述（降级注入时可为空）
     personality_core: str = ""          # 性格核心关键词（3-5个词，降级注入时可为空）
     voice_keywords: list[str] = Field(default_factory=list)  # 声线关键词，如["愤怒时沉默", "开心时话多"]
+    sample_dialogues: list[dict] = Field(default_factory=list)  # 对话示例，覆盖不同情绪状态（平静/愤怒/惊讶/讽刺等），每项含说话对象、场景上下文、台词
     background: str = ""                # 背景设定（降级注入时可为空）
 
     @field_validator("personality_core", mode="before")
@@ -1027,6 +1028,8 @@ class IssueType(str, Enum):
     PACING = "pacing"               # 节奏(可由 Critic 或 ContinuityChecker 提出)
     TONE = "tone"                   # 基调一致性
     CHARACTER_VOICE = "character_voice"  # 人物声线/对话口吻
+    HOOK = "hook"                   # 开头抓人度（场景开头是否在100字内抓住读者）
+    EXPECTATION = "expectation"     # 结尾期待感（场景是否制造翻页冲动）
     OTHER = "other"
 
 

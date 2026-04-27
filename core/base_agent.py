@@ -32,6 +32,7 @@ core/base_agent.py
 """
 
 import asyncio
+import json
 from typing import AsyncIterator, ClassVar, Optional
 
 from core.base_tool import BaseTool
@@ -99,6 +100,9 @@ class BaseAgent:
         self.last_turns: int = 0
         # _dispatch_tools 与 run 之间的临时存储,实例级避免并发主管互相覆盖
         self._last_dispatch_outputs: list[dict] = []
+        # 同一工具连续失败计数(熔断保护)
+        self._tool_failure_counts: dict[str, int] = {}
+        self._max_tool_failures: int = 3
 
     # --------------------------------------------------------
     # 启动期校验
@@ -225,6 +229,39 @@ class BaseAgent:
                     yield relay
                     if relay.type in ("confirm", "ask_user"):
                         confirm_emitted = True
+
+                # 工具失败计数与熔断保护
+                if not confirm_emitted and self._last_dispatch_outputs:
+                    call_id_to_name = {
+                        tc.call_id: tc.name for tc in last_completed.tool_calls
+                    }
+                    for output_item in self._last_dispatch_outputs:
+                        call_id = output_item.get("call_id")
+                        output_str = output_item.get("output", "")
+                        tool_name = call_id_to_name.get(call_id, "unknown")
+
+                        is_error = False
+                        try:
+                            parsed = json.loads(output_str)
+                            if isinstance(parsed, dict) and "error" in parsed:
+                                is_error = True
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                        if is_error:
+                            self._tool_failure_counts[tool_name] = (
+                                self._tool_failure_counts.get(tool_name, 0) + 1
+                            )
+                            if self._tool_failure_counts[tool_name] >= self._max_tool_failures:
+                                msg = (
+                                    f"工具 '{tool_name}' 连续失败 {self._max_tool_failures} 次，"
+                                    f"触发熔断保护，任务终止"
+                                )
+                                logger.error(f"{self.agent_name}: {msg}")
+                                yield StreamPacket(type="error", content=msg)
+                                return
+                        else:
+                            self._tool_failure_counts[tool_name] = 0
 
                 if confirm_emitted:
                     # Director 发出阶段确认/用户询问请求,中止 ReAct 等待用户,保存状态供 Orchestrator 续会话

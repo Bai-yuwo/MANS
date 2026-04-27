@@ -48,12 +48,20 @@ class WorldArchitect(BaseAgent):
         "read_faction_node",
         "read_cultivation_chain",
         "read_cultivation_node",
+        # 新增图/树查询（题材感知节点）
+        "read_tech_tree",
+        "read_social_system",
+        "read_setting",
         # 自身写组
         "save_bible",
         "append_foreshadowing",
         "save_geo_node",
         "save_faction_node",
         "save_cultivation_node",
+        # 新增写入工具（题材感知节点）
+        "save_tech_node",
+        "save_social_node",
+        "save_setting_node",
         # 可调专家
         "call_geographer",
         "call_rule_smith",

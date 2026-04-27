@@ -15,6 +15,9 @@ knowledge_bases/
     - geo_db: 地理节点图存储，层级树 + 空间连接图。
     - faction_db: 势力节点网存储，关系网 + 层级结构。
     - cultivation_db: 修为节点链存储，递进链 + 分支结构。
+    - tech_db: 科技树节点存储，递进链 + 分支结构。
+    - social_db: 社会制度节点存储，层级树结构。
+    - setting_db: 通用设定节点存储，扁平分类结构。
 
 存储约定：
     每个知识库在 workspace/{project_id}/ 下拥有独立的子目录，
@@ -28,8 +31,11 @@ from .cultivation_db import CultivationDB
 from .faction_db import FactionDB
 from .foreshadowing_db import ForeshadowingDB
 from .geo_db import GeoDB
+from .setting_db import SettingDB
+from .social_db import SocialDB
 from .story_db import StoryDB
 from .style_db import StyleDB
+from .tech_db import TechTreeDB
 
 __all__ = [
     "BaseDB",
@@ -39,6 +45,9 @@ __all__ = [
     "FactionDB",
     "ForeshadowingDB",
     "GeoDB",
+    "SettingDB",
+    "SocialDB",
     "StoryDB",
     "StyleDB",
+    "TechTreeDB",
 ]

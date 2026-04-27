@@ -498,6 +498,99 @@ class CultivationChain(BaseModel):
 
 
 # ============================================================
+# 科技树/技术体系节点（科幻、未来、蒸汽朋克等题材）
+# ============================================================
+
+class TechNode(BaseModel):
+    """
+    科技/技术节点 —— 递进链 + 分支。
+    与 CultivationNode 结构类似但语义不同：表示技术等级而非修为境界。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=lambda: f"tech_{str(uuid.uuid4())[:6]}")
+    name: str
+    tier: int = 1                        # 技术等级序号
+    node_type: Literal["tech", "milestone", "branch", "special"] = "tech"
+    parent_id: Optional[str] = None      # 前置技术 ID
+    next_ids: list[str] = Field(default_factory=list)    # 后续技术 ID 列表
+    branch_from: Optional[str] = None    # 从哪个节点分出的分支
+    prerequisites: list[str] = Field(default_factory=list)  # 研发前置条件
+    effects: list[str] = Field(default_factory=list)       # 技术效果/应用
+    limitations: list[str] = Field(default_factory=list)   # 技术限制/副作用
+    research_cost: Optional[str] = None  # 研发代价（时间/资源/人力）
+    description: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class TechTree(BaseModel):
+    """科技体系的整体定义。"""
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=lambda: f"ttree_{str(uuid.uuid4())[:6]}")
+    name: str                            # 如"星际航行技术体系"
+    root_id: str                         # 根节点 ID
+    branch_ids: list[str] = Field(default_factory=list)
+    description: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+# ============================================================
+# 社会制度/阶层节点（历史、都市、现实主义题材）
+# ============================================================
+
+class SocialNode(BaseModel):
+    """
+    社会制度节点 —— 层级树。
+    表示社会阶层、法律制度、文化传统、职业角色等。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=lambda: f"soc_{str(uuid.uuid4())[:6]}")
+    name: str
+    node_type: Literal["class", "institution", "law", "tradition", "role"] = "class"
+    parent_id: Optional[str] = None      # 上级阶层/制度 ID
+    sub_ids: list[str] = Field(default_factory=list)       # 下级/子制度 ID 列表
+    description: str = ""
+    influence_scope: str = ""            # 影响范围
+    privileges: list[str] = Field(default_factory=list)    # 特权/权利
+    obligations: list[str] = Field(default_factory=list)   # 义务/约束
+    related_faction_ids: list[str] = Field(default_factory=list)  # 关联势力 ID
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class SocialSystem(BaseModel):
+    """社会体系的整体定义。"""
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=lambda: f"ssys_{str(uuid.uuid4())[:6]}")
+    name: str                            # 如"大周王朝社会制度"
+    root_id: str                         # 根节点 ID
+    description: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+# ============================================================
+# 通用设定节点（所有题材都可用）
+# ============================================================
+
+class SettingNode(BaseModel):
+    """
+    通用设定节点 —— 用于不便归入上述分类的零散设定。
+    如魔法细则、物理定律、经济体系、文化习俗等。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    id: str = Field(default_factory=lambda: f"set_{str(uuid.uuid4())[:6]}")
+    name: str
+    category: Literal["magic", "physics", "economy", "culture", "custom", "other"] = "other"
+    description: str = ""
+    importance: Literal["critical", "major", "minor"] = "major"
+    related_node_ids: list[str] = Field(default_factory=list)
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+# ============================================================
 # 伏笔相关
 # ============================================================
 

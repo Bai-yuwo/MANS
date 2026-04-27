@@ -13,6 +13,7 @@ tools/kb_query/
     read_geo_graph / read_geo_node / traverse_geo
     read_faction_network / read_faction_node
     read_cultivation_chain / read_cultivation_node
+    read_tech_tree / read_social_system / read_setting
 
 实现要点:
     - 全部为 BaseTool 直接子类(不调 LLM,纯 IO)。
@@ -39,6 +40,9 @@ from .read_outline import ReadOutline
 from .read_project_meta import ReadProjectMeta
 from .read_relationships import ReadRelationships
 from .read_scene_beatsheet import ReadSceneBeatsheet
+from .read_setting import ReadSetting
+from .read_social_system import ReadSocialSystem
+from .read_tech_tree import ReadTechTree
 from .search_kb_text import SearchKBText
 from .traverse_geo import TraverseGeo
 from .vector_search import VectorSearch
@@ -63,6 +67,9 @@ __all__ = [
     "ReadProjectMeta",
     "ReadRelationships",
     "ReadSceneBeatsheet",
+    "ReadSetting",
+    "ReadSocialSystem",
+    "ReadTechTree",
     "SearchKBText",
     "TraverseGeo",
     "VectorSearch",

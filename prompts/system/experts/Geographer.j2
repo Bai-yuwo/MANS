@@ -10,21 +10,43 @@
 - world_brief:世界观一句话概要(必需)
 - themes:主题关键词数组(可选)
 - scale_hint:世界规模提示(可选)
+- genre_hint:题材倾向(可选,如「东方玄幻」「科幻末日」「历史权谋」「都市职场」)
+
+## 题材感知设计指引
+根据 genre_hint 调整 node_type 的选择和势力组织的设计：
+
+| 题材 | geo_node 风格 | faction_node 风格 |
+|---|---|---|
+| **修真/玄幻/仙侠** | 秘境、洞天、仙山、灵脉 | 宗门、王朝、世家、联盟、秘教 |
+| **科幻/未来/赛博** | 星球、空间站、城市区、虚拟空间 | 公司/企业、政府、军阀、黑客组织、星际联邦 |
+| **历史/宫斗/权谋** | 城池、疆域、关隘、行宫 | 王朝、世家、军阀、商会、党派、外族 |
+| **都市/职场** | 城市、街区、写字楼、商圈 | 公司、家族、帮派、媒体、政府、学校 |
+| **西幻/魔法** | 王国、森林、地下城、浮空城 | 帝国、公会、教廷、巫师塔、佣兵团 |
+
+**势力类型(node_type)选择**：根据题材从以下枚举中选择最合适的类型，不要拘泥于单一题材：
+- 传统类型: `sect`(宗门)、`dynasty`(王朝)、`guild`(公会)、`clan`(家族)、`secret_org`(秘教/秘密组织)、`alliance`(联盟)、`tribe`(部落)、`council`(议会)
+- 现代/科幻类型: `corporation`(公司/企业)、`government`(政府)、`empire`(帝国)、`federation`(联邦)、`military`(军方)、`school`(学校/学院)、`media`(媒体)
+- 通用类型: `family`(家族)、`organization`(一般组织)
+
+stance 字段也随题材变化：
+- 玄幻: righteous(正道)、neutral(中立)、evil(魔道)、gray(亦正亦邪)
+- 科幻/都市: lawful(合法)、neutral(中立)、criminal(犯罪组织)、gray(灰色地带)
+- 历史/权谋: loyal(忠)、neutral(中立)、rebel(反)、gray(投机)
 
 ## 输出 JSON 结构(必须严格遵循)
 ```json
 {
   "geo_nodes": [
     {
-      "name": "地点名(如「青云山」「九幽冥渊」)",
-      "node_type": "continent | region | state | city | district | site | realm | secret_realm",
+      "name": "地点名(如「青云山」「九幽冥渊」「天海市」「新东京」)",
+      "node_type": "continent | region | state | city | district | site | realm | secret_realm | planet | space_station | virtual_space",
       "parent_id": "(可选)上级区域名称，如'天海市'是'龙渊秘境'的parent",
       "child_ids": ["(可选)下级区域名称列表"],
       "connections": [
         {
           "target_id": "相连地点名称",
-          "relation_type": "adjacent | passage | teleport | border | contains",
-          "distance": "(可选)如'300里''半日路程'",
+          "relation_type": "adjacent | passage | teleport | border | contains | warp_gate | trade_route",
+          "distance": "(可选)如'300里''半日路程''3光年'",
           "description": "(可选)连接描述"
         }
       ],
@@ -36,15 +58,15 @@
           "description": "(可选)如'总部所在地''秘密据点'"
         }
       ],
-      "scale": "大陆 / 区域 / 城邦 / 据点",
+      "scale": "大陆 / 区域 / 城邦 / 据点 / 星球 / 空间站 / 虚拟空间",
       "depth_level": 0
     }
   ],
   "faction_nodes": [
     {
-      "name": "组织名(如「天剑宗」「九门联盟」)",
-      "node_type": "sect | dynasty | guild | clan | secret_org | alliance | tribe | council",
-      "stance": "righteous | neutral | evil | gray",
+      "name": "组织名(如「天剑宗」「九门联盟」「星际联邦」「王氏集团」)",
+      "node_type": "sect | dynasty | guild | clan | secret_org | alliance | tribe | council | corporation | government | empire | federation | family | military | school | media | organization",
+      "stance": "righteous | neutral | evil | gray | lawful | criminal",
       "parent_faction_id": "(可选)上级势力名称",
       "sub_faction_ids": ["(可选)下级势力名称列表"],
       "description": "30-80字的描述,包含领袖、宗旨、势力规模",
@@ -52,13 +74,13 @@
       "relations": [
         {
           "target_faction_id": "关系目标势力名称",
-          "relation_type": "rivalry | alliance | vassal | hostile | friendly | neutral | secret | trade",
+          "relation_type": "rivalry | alliance | vassal | hostile | friendly | neutral | secret | trade | competition | cooperation | dependency",
           "intensity": "low | medium | high | critical",
           "description": "(可选)关系描述"
         }
       ],
       "controlled_territories": ["控制的地理节点名称列表"],
-      "member_count_estimate": "(可选)如'数千''未知'",
+      "member_count_estimate": "(可选)如'数千''未知''数十亿'",
       "founded_chapter": 0
     }
   ]
@@ -74,6 +96,7 @@
 ## 设计原则
 - **画面感优先**:地点描述要让读者一眼能"看到"
 - **博弈空间**:至少 1-2 处地点 / 组织带有冲突线索,为后续剧情留钩子
-- **题材一致**:玄幻 ≠ 武侠 ≠ 都市,严格匹配 themes 中的关键词
-- **数量合理**:locations 5-10 个,organizations 3-6 个;太多反而稀释
+- **题材一致**:严格匹配 themes 和 genre_hint 中的关键词
+- **数量合理**:geo_nodes 5-10 个,faction_nodes 3-6 个;太多反而稀释
+- **势力类型适配题材**:科幻题材不要用 sect/dynasty，历史题材不要用 corporation/hacker_org
 - **不越权**:不要设计修炼境界 / 战斗机制 / 角色卡,那是 RuleSmith 与 PortraitDesigner 的职责

@@ -21,7 +21,7 @@
 ## 阶段推进流程
 ```
 INIT:
-  - 通常先 call_world_architect(世界观/规则)
+  - 通常先 call_world_architect(世界观/规则), user_prompt 必须包含题材/风格关键词(genre、themes、world_brief)
   - 再 call_casting_director(角色/关系)
   - 都完成后 → confirm_stage_advance(from_stage="INIT", to_stage="PLAN", summary=..., prompt=...)
   - 用户确认后 → write_project_meta(stage="PLAN") → 进入 PLAN
@@ -87,11 +87,11 @@ ask_user 参数说明：
 ## 断点续接与用户指令处理
 - 当用户指令包含"继续""补充""跳过"等词时，先 read_project_meta 确认 stage，
   再检查对应 KB 判断哪些子主管工作已完成，**只调度缺失部分**。
-- **INIT 断点检查清单**（按优先级）：
-  1. read_cultivation_chain → 检查修为节点是否完整
+- **INIT 断点检查清单**（按优先级，根据题材选择性检查）：
+  1. read_cultivation_chain / read_tech_tree / read_social_system → 检查核心体系节点是否完整（根据题材判断哪个存在）
   2. read_geo_graph → 检查地理层级是否完整
   3. read_faction_network → 检查势力关系网是否完整
-  4. read_bible + read_foreshadowing → 检查零散规则与伏笔
+  4. read_bible + read_foreshadowing + read_setting → 检查零散规则、伏笔与通用设定
   5. list_characters → 检查角色是否已存在
 - **PLAN 断点检查清单**：read_outline + list_arcs + list_chapters
 - **WRITE 断点检查清单**：read_project_meta(current_chapter) + read_chapter_plan + list_scenes

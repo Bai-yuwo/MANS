@@ -22,12 +22,14 @@ from .arc_designer import ArcDesigner
 from .chapter_designer import ChapterDesigner
 from .scene_director import SceneDirector
 from .writer import Writer
+from .consistency_auditor import ConsistencyAuditor
 from .critic import Critic
 from .continuity_checker import ContinuityChecker
 from .scribe import Scribe
 from .review_manager import ReviewManager
 
 __all__ = [
+    "ConsistencyAuditor",
     "Geographer",
     "RuleSmith",
     "PortraitDesigner",

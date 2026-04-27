@@ -40,6 +40,7 @@ from .read_outline import ReadOutline
 from .read_project_meta import ReadProjectMeta
 from .read_relationships import ReadRelationships
 from .read_scene_beatsheet import ReadSceneBeatsheet
+from .scene_metrics_calculator import SceneMetricsCalculator
 from .read_setting import ReadSetting
 from .read_social_system import ReadSocialSystem
 from .read_tech_tree import ReadTechTree
@@ -67,6 +68,7 @@ __all__ = [
     "ReadProjectMeta",
     "ReadRelationships",
     "ReadSceneBeatsheet",
+    "SceneMetricsCalculator",
     "ReadSetting",
     "ReadSocialSystem",
     "ReadTechTree",

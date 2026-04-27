@@ -1,0 +1,38 @@
+{# prompts/user/experts/ConsistencyAuditor/audit_scene.j2 — ConsistencyAuditor 专家 user prompt #}
+
+## 本场信息
+- chapter_number: {{ chapter_number }}
+- scene_index: {{ scene_index }}
+- genre: {{ genre }}
+- rewrite_attempt: {{ rewrite_attempt | default(0) }}
+
+## 场景正文
+```
+{{ scene_text }}
+```
+
+## 出场角色状态
+```json
+{{ character_states | default([]) | tojson }}
+```
+
+## 相关世界规则
+```json
+{{ world_rules | default([]) | tojson }}
+```
+
+## 节拍表
+```json
+{{ beatsheet | tojson }}
+```
+
+{% if rewrite_attempt > 0 %}
+## 重写后审查重点
+这是第 {{ rewrite_attempt }} 次重写后的审计。请只关注上一轮 priority_issues 中的 consistency 类问题是否已解决。
+{% endif %}
+
+## 审计指令
+请根据 genre="{{ genre }}" 选择对应的审计维度,对场景正文进行设定内在一致性审查。
+严格按照 output_schema 返回 `issues` 数组。
+每条 issue 必须包含 affected_characters 和 rule_reference。
+没问题就返回空数组。

@@ -24,7 +24,7 @@ from core.schemas import RewriteGuidance
 class ReviewManager(ExpertTool):
     expert_name = "ReviewManager"
     description = (
-        "审查仲裁专家:合并 Critic + ContinuityChecker 的 issues,化解冲突,"
+        "审查仲裁专家:合并 Critic + ContinuityChecker + ConsistencyAuditor 的 issues,化解冲突,"
         "产出 RewriteGuidance(含 needs_rewrite / priority_issues / must_keep / must_change)。"
     )
     input_schema = {
@@ -50,6 +50,11 @@ class ReviewManager(ExpertTool):
                 "items": {"type": "object"},
                 "description": "ContinuityChecker 专家产出的 Issue 数组。",
             },
+            "consistency_issues": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "ConsistencyAuditor 专家产出的 Issue 数组(按 genre 审计战力/资源/科技/制度等内在一致性)。",
+            },
             "beatsheet": {
                 "type": "object",
                 "description": "本场 SceneBeatsheet,用于判断 must_keep。",
@@ -62,6 +67,7 @@ class ReviewManager(ExpertTool):
             "scene_text",
             "critic_issues",
             "continuity_issues",
+            "consistency_issues",
         ],
         "additionalProperties": False,
     }

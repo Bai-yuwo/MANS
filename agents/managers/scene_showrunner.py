@@ -81,6 +81,8 @@ class SceneShowrunner(BaseAgent):
         "read_geo_node",
         "read_faction_node",
         "read_cultivation_node",
+        # 量化指标(调 Critic 之前先算)
+        "scene_metrics_calculator",
         # 自身写组
         "save_scene_beatsheet",
         "save_scene_draft",
@@ -96,6 +98,7 @@ class SceneShowrunner(BaseAgent):
         "call_writer",
         "call_critic",
         "call_continuity_checker",
+        "call_consistency_auditor",
         "call_review_manager",
         "call_scribe",
     ]

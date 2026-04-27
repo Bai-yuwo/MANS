@@ -45,6 +45,12 @@ class SaveReviewIssues(BaseTool):
                     "scene_index": {"type": "integer"},
                     "data": {
                         "type": "object",
+                        "properties": {
+                            "critic_issues": {"type": "array", "items": {"type": "object"}},
+                            "continuity_issues": {"type": "array", "items": {"type": "object"}},
+                            "consistency_issues": {"type": "array", "items": {"type": "object"}},
+                            "scores": {"type": "object", "description": "Critic 产出的场景质量评分"},
+                        },
                         "additionalProperties": True,
                     },
                 },

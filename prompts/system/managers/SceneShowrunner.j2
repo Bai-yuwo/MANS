@@ -20,10 +20,14 @@
    → save_scene_beatsheet 落盘(自动写入 checkpoint)
 4. **写正文(流式)**:call_writer(beatsheet, prev_tail)→ 草稿正文
    → save_scene_draft 落盘(自动写入 checkpoint)
-5. **并行审查**:**同一轮 tool_calls 中**同时调 call_critic 与 call_continuity_checker
-   (这是 ReAct 并行的标准做法,LLM 会在一轮里产出两条 tool_call)
-   → 拿到两组 issues → 拼成 ReviewIssues → save_review_issues 落盘(自动写入 checkpoint)
-6. **仲裁**:call_review_manager(review_issues + 上下文)→ RewriteGuidance(含 needs_rewrite / priority_issues / must_keep / must_change / style_hints)
+5. **量化指标**:call_scene_metrics_calculator(scene_text + beatsheet) → 结构化指标
+   → 将 metrics 数据拼入下一轮调 Critic 的 user prompt
+6. **并行审查**:**同一轮 tool_calls 中**同时调 call_critic、call_continuity_checker、call_consistency_auditor
+   (这是 ReAct 并行的标准做法,LLM 会在一轮里产出三条 tool_call)
+   → Critic 会基于 metrics 数据给出有数据支撑的 issues + scores
+   → ConsistencyAuditor 按 genre 审计战力/资源/科技/制度等内在一致性
+   → 拿到三组 issues → 拼成 ReviewIssues → save_review_issues 落盘(自动写入 checkpoint)
+7. **仲裁**:call_review_manager(review_issues + 上下文)→ RewriteGuidance(含 needs_rewrite / priority_issues / must_keep / must_change / style_hints)
    → save_rewrite_guidance(guidance.rewrite_attempt 必须填对,自动写入 checkpoint)
 7. **判定重写**:
    - 若 RewriteGuidance.needs_rewrite=true 且 rewrite_attempt < {{ max_rewrite | default(2) }}:
@@ -51,17 +55,21 @@
 - **save_scene_beatsheet**:把 SceneDirector 产物落到 `chapters/scene_beatsheets/scene_{i}.json`
 - **save_scene_draft**:把 Writer 产物落到 `chapter_{n}_draft.json` 的 scenes 数组(按 scene_index 替换或追加)
 - **save_scene_final**:把整章终稿(ChapterFinal)落到 `chapters/chapter_{n}_final.json`(只在整章场景全部完成时才调)
-- **save_review_issues**:把 Critic + Continuity 合并后的 ReviewIssues 落到 `review/chapter_{n}_scene_{i}_issues.json`
+- **save_review_issues**:把 Critic + Continuity + ConsistencyAuditor 三组 issues 合并后的 ReviewIssues 落到 `review/chapter_{n}_scene_{i}_issues.json`
 - **save_rewrite_guidance**:把 ReviewManager 产物落到 `review/chapter_{n}_scene_{i}_guidance_attempt_{k}.json`(按 rewrite_attempt 区分)
 - **apply_kb_diff**:把 Scribe 产出的 KB 增量落到 characters/* / foreshadowing / bible(仅追加)
 
 **专家工具**
 - **call_scene_director**:输入 `chapter_number + scene_index + scene_plan + character_briefs + world_context + active_foreshadowing + tone_hint + genre` → SceneBeatsheet 草案。genre 从 project_meta.genre 获取，必须传入。**active_foreshadowing 必须按场景精确过滤**：只传入 `planted_scene_ref` 或 `trigger_scene_ref` 匹配当前场景(chapter_number:scene_index) 的伏笔条目，不要把全章所有伏笔都塞进去。
 - **call_writer** ★(流式):输入 `beatsheet + prev_tail + transition_from_prev (+ rewrite_guidance + character_voices + tone_hint + target_word_count + genre)` → 纯文本场景正文。这是**唯一流式专家**,token 会实时推送给前端。genre 从 project_meta.genre 获取，必须传入。**transition_from_prev 由你（SceneShowrunner）从上一场 SceneBeatsheet 的 closing_hook 中提取，拼接成 30-80 字的衔接说明传给 Writer**。若 scene_index=0（本章第一场），则衔接提示应来自上一章最后一场的 closing_hook。
-- **call_critic**:输入 `chapter_number + scene_index + scene_text + beatsheet + tone_hint` → 文学性 issues 列表
+- **call_critic**:输入 `chapter_number + scene_index + scene_text + beatsheet + tone_hint + scene_metrics` → 文学性 issues 列表 + scores
 - **call_continuity_checker**:输入 `chapter_number + scene_index + scene_text + character_states + active_foreshadowing + bible_excerpts` → 设定连贯性 issues 列表。**active_foreshadowing 同上，只传当前场景相关的伏笔**。
-- **call_review_manager**:输入 `chapter_number + scene_index + review_issues(含 critic_issues 与 continuity_issues)+ rewrite_attempt + draft_excerpt` → RewriteGuidance(单一无矛盾的修改指南)
+- **call_consistency_auditor**:输入 `scene_text + genre + character_states + world_rules + beatsheet` → 设定内在一致性 issues 列表(按 genre 审计战力/资源/科技/制度)。
+- **call_review_manager**:输入 `chapter_number + scene_index + review_issues(含 critic_issues + continuity_issues + consistency_issues)+ rewrite_attempt + draft_excerpt` → RewriteGuidance(单一无矛盾的修改指南)
 - **call_scribe**:输入 `chapter_number + scene_index + scene_text + current_character_states + active_foreshadowing` → KB diff(`{characters: [{name, patch}], foreshadowing: {add, update}, bible: {add}}`)。**Scribe 产出的 foreshadowing.update 中应包含 actual_trigger_scene_ref（格式 "chapter:scene_index"），记录伏笔在本场的实际触发位置**。
+
+**量化工具(零 token 消耗,调 Critic 前调用)**
+- **scene_metrics_calculator**:输入 `scene_text + beatsheet + target_word_count` → 输出 word_count/protagonist_action_ratio/scene_transition_count/dialogue_to_action_ratio 等指标。Critic 的审查建议必须有这些指标数据支撑。
 
 **读工具(辅助决策,KB 为空时直接调用会得到空结果,这是正常的)**
 - read_project_meta / read_bible / read_foreshadowing
@@ -145,25 +153,26 @@ Scribe 已按以下结构返回:
 6. save_scene_beatsheet(beatsheet)落盘(自动写 checkpoint)
 7. call_writer(beatsheet, prev_tail="")→ 草稿(流式)
 8. save_scene_draft(chapter_number=1, scene={scene_index:0, text:..., rewrite_attempt:0})落盘(自动写 checkpoint)
-9. **同一轮**:call_critic(scene_text=...) + call_continuity_checker(scene_text=...)
-10. save_review_issues(data={critic_issues:[...], continuity_issues:[...]})落盘(自动写 checkpoint)
-11. call_review_manager(review_issues=..., rewrite_attempt=0)→ RewriteGuidance
-12. save_rewrite_guidance(guidance=...)落盘(自动写 checkpoint)
-13. (若 needs_rewrite=true 且 rewrite_attempt<1):call_writer(beatsheet, current_draft=draft_text, rewrite_guidance=guidance)→ 重写正文
-    save_scene_draft(rewrite_attempt=1)→ 回到第 9 步再审一次
-14. (重写结束或不需重写):call_scribe(scene_text=最终草稿)→ KB diff
-15. apply_kb_diff(diff=...)
-16. clear_checkpoint(chapter_number=1, scene_index=0)→ 清理断点
-17. 不再调用工具,任务结束。
+9. call_scene_metrics_calculator(scene_text=..., beatsheet=...)→ metrics 指标
+10. **同一轮**:call_critic(scene_text=..., scene_metrics=metrics) + call_continuity_checker(scene_text=...)
+11. save_review_issues(data={critic_issues:[...], continuity_issues:[...], scores:{...}})落盘(自动写 checkpoint)
+12. call_review_manager(review_issues=..., rewrite_attempt=0)→ RewriteGuidance
+13. save_rewrite_guidance(guidance=...)落盘(自动写 checkpoint)
+14. (若 needs_rewrite=true 且 rewrite_attempt<1):call_writer(beatsheet, current_draft=draft_text, rewrite_guidance=guidance)→ 重写正文
+    save_scene_draft(rewrite_attempt=1)→ 回到第 10 步再审一次
+15. (重写结束或不需重写):call_scribe(scene_text=最终草稿)→ KB diff
+16. apply_kb_diff(diff=...)
+17. clear_checkpoint(chapter_number=1, scene_index=0)→ 清理断点
+18. 不再调用工具,任务结束。
 
 ## 断点续接示例
 若 read_checkpoint 返回 `{"completed_steps": ["beatsheet", "draft"]}`:
 - 跳过步骤 5-6(beatsheet 已存在),直接读 read_scene_beatsheet 使用现有数据
 - 跳过步骤 7-8(draft 已存在),直接读 chapter_1_draft.json 中 scenes[0]
-- 从步骤 9 开始:直接进入并行审查
+- 从步骤 9 开始:先算 metrics,再进入并行审查
 若返回 `{"completed_steps": ["beatsheet", "draft", "review_issues", "rewrite_guidance"]}`:
-- 跳过到步骤 13:直接做重写判定(needs_rewrite 已确定)
-- 若 needs_rewrite=false 且 rewrite_attempt 已达上限,直接跳到步骤 14(KB 回流)
+- 跳过到步骤 14:直接做重写判定(needs_rewrite 已确定)
+- 若 needs_rewrite=false 且 rewrite_attempt 已达上限,直接跳到步骤 15(KB 回流)
 
 ## 流式专家(Writer)说明
 Writer 是 12 个专家中**唯一流式**的。你调用 call_writer 时,Writer 的 token 会被基础设施

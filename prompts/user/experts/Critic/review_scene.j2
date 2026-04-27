@@ -7,10 +7,13 @@
      character_voices: dict
      tone_hint: str
      prev_tail: str
+     opening_hook: str
+     closing_hook: str
+     scene_metrics: dict
      rewrite_attempt: int
 #}
 
-# 任务:审查以下场景正文的文学性
+# 任务:审查以下场景正文的文学性与情绪价值
 
 {% if chapter_number is defined and scene_index is defined %}
 第 {{ chapter_number }} 章 第 {{ scene_index }} 场{% if rewrite_attempt is defined and rewrite_attempt > 0 %},这是第 {{ rewrite_attempt }} 次重写后的复审{% endif %}。
@@ -21,6 +24,16 @@
 
 【对照节拍表】
 {{ beatsheet | tojson }}
+
+{% if opening_hook %}
+【开头设计意图】
+{{ opening_hook }}
+{% endif %}
+
+{% if closing_hook %}
+【结尾悬念设计】
+{{ closing_hook }}
+{% endif %}
 
 {% if character_voices %}
 【角色语气关键词】
@@ -36,6 +49,25 @@
 {{ prev_tail }}
 {% endif %}
 
+{% if scene_metrics %}
+【量化指标】
+```json
+{{ scene_metrics | tojson }}
+```
+
+**基于数据的审查约束**：
+- word_count_ratio={{ scene_metrics.word_count_ratio }}%: 若 < 85%,必须标记字数不足 issue
+- protagonist_action_ratio={{ scene_metrics.protagonist_action_ratio }}%: 若 < 20%,必须标记"主角神隐" issue
+- scene_transition_count={{ scene_metrics.scene_transition_count }}: 若 > 3,必须标记"场景内跳跃过多" issue
+- dialogue_to_action_ratio={{ scene_metrics.dialogue_to_action_ratio }}: 对比 expected={{ scene_metrics.expected_dialogue_ratio }},偏差 > 0.3 时标记对话/动作失衡
+
+**禁止行为**：
+- 如果 protagonist_action_ratio ≥ 30%,禁止说"主角戏份不足"
+- 如果 scene_transition_count ≤ 1,禁止说"场景转换太突兀"
+- 如果 word_count_ratio ≥ 95%,禁止说"字数不够需要扩充"
+- 所有建议必须有上述指标数据支撑,禁止凭感觉给出"增加细节"类模糊建议
+{% endif %}
+
 {% if rewrite_attempt is defined and rewrite_attempt > 0 %}
 【重写后审查重点】
 - 这是第 {{ rewrite_attempt }} 次重写后的复审,Writer 已根据上一轮 RewriteGuidance 改稿
@@ -43,6 +75,7 @@
 - 如果新引入了文学性问题(节奏/人物/描写/文风),仍可标注,但严格控制数量
 {% endif %}
 
-请输出 {"issues": [...]} JSON,关注节奏 / 人物刻画 / 描写浓度 / 文风 / 节拍命中度 / AI 味道 / HOOK(开头抓人度) / EXPECTATION(结尾期待感)。
-不要重复 ContinuityChecker 的工作(设定连贯归他)。没问题就返回空数组。
+请输出 {"issues": [...], "scores": {"emotion_arc_score": 1-5, "anticipation_score": 1-5, "payoff_satisfaction": 0-5}} JSON。
+关注:节奏 / 人物刻画 / 描写浓度 / 文风 / 节拍命中度 / AI 味道 / HOOK / EXPECTATION / 情绪价值(emotion_arc_score + anticipation_score + payoff_satisfaction)。
+不要重复 ContinuityChecker 的工作(设定连贯归他)。没问题就返回空 issues 数组,但 scores 必填。
 每条 issue 必须填 type / severity / description,强烈建议补 location / suggestion / source_agent="Critic"。

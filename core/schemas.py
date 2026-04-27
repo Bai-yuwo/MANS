@@ -1029,6 +1029,15 @@ class IssueType(str, Enum):
     """审查 Issue 类型,用于 ReviewManager 分组与去重。"""
     LITERARY = "literary"           # Critic 关注:文学性、节奏、人物刻画
     CONTINUITY = "continuity"       # ContinuityChecker 关注:设定连贯性
+    CONSISTENCY = "consistency"     # ConsistencyAuditor 关注:通用一致性
+    POWER_LEVEL = "power_level"     # ConsistencyAuditor:境界/战力体系合理性
+    RESOURCE_MISMATCH = "resource_mismatch"  # ConsistencyAuditor:资源/法宝/资金匹配度
+    TIMELINE_ERROR = "timeline_error"        # ConsistencyAuditor:时间线错误
+    TECH_LEVEL = "tech_level"       # ConsistencyAuditor:科幻题材科技代差
+    PHYSICS_VIOLATION = "physics_violation"  # ConsistencyAuditor:违反已建立物理规则
+    SOCIAL_STATUS = "social_status" # ConsistencyAuditor:都市题材社会关系合理性
+    INSTITUTIONAL = "institutional" # ConsistencyAuditor:历史题材制度/礼制合规
+    ANACHRONISM = "anachronism"     # ConsistencyAuditor:历史题材时代错位
     FORESHADOWING = "foreshadowing" # 伏笔状态错位
     PACING = "pacing"               # 节奏(可由 Critic 或 ContinuityChecker 提出)
     TONE = "tone"                   # 基调一致性
@@ -1036,6 +1045,29 @@ class IssueType(str, Enum):
     HOOK = "hook"                   # 开头抓人度（场景开头是否在100字内抓住读者）
     EXPECTATION = "expectation"     # 结尾期待感（场景是否制造翻页冲动）
     OTHER = "other"
+
+
+class SceneQualityScores(BaseModel):
+    """
+    场景质量评分 — Critic 对单场景的情绪价值与爽点释放的量化评价。
+
+    三个维度分别评价场景在情绪曲线、翻页冲动、爽点释放上的表现。
+    任一项 ≤ 2 时,Critic 必须在 issues 中附带 severity="high" 的对应 issue。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    emotion_arc_score: int = Field(
+        default=3, ge=1, le=5,
+        description="情绪曲线评分:起(基线)→承(变化)→转(高潮/低谷)→合(收束/悬念)四段是否完整"
+    )
+    anticipation_score: int = Field(
+        default=3, ge=1, le=5,
+        description="期待感评分:每300字内是否有新的信息差、悬念或未知因素驱动翻页"
+    )
+    payoff_satisfaction: int = Field(
+        default=0, ge=0, le=5,
+        description="爽点释放评分:铺垫长度与释放长度的比例是否失衡(非爽点场景可置0)"
+    )
 
 
 class Issue(BaseModel):
@@ -1068,6 +1100,10 @@ class ReviewIssues(BaseModel):
 
     critic_issues: list[Issue] = Field(default_factory=list)
     continuity_issues: list[Issue] = Field(default_factory=list)
+    scores: Optional[SceneQualityScores] = Field(
+        default=None,
+        description="Critic 给出的场景质量评分(情绪曲线/期待感/爽点释放)。前端展示用。"
+    )
 
     @property
     def all_issues(self) -> list[Issue]:

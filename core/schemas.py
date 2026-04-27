@@ -1092,7 +1092,7 @@ class Issue(BaseModel):
 
 class ReviewIssues(BaseModel):
     """
-    Critic 与 ContinuityChecker 并行审查的结果汇总。
+    Critic + ContinuityChecker + ConsistencyAuditor 三专家并行审查的结果汇总。
 
     ReviewManager 接收本对象,执行去重 + 冲突化解 + 优先级排序,输出 RewriteGuidance。
     """
@@ -1100,6 +1100,10 @@ class ReviewIssues(BaseModel):
 
     critic_issues: list[Issue] = Field(default_factory=list)
     continuity_issues: list[Issue] = Field(default_factory=list)
+    consistency_issues: list[Issue] = Field(
+        default_factory=list,
+        description="ConsistencyAuditor 产出的设定内在一致性 issues(按 genre 审计战力/资源/科技/制度)。"
+    )
     scores: Optional[SceneQualityScores] = Field(
         default=None,
         description="Critic 给出的场景质量评分(情绪曲线/期待感/爽点释放)。前端展示用。"
@@ -1107,8 +1111,8 @@ class ReviewIssues(BaseModel):
 
     @property
     def all_issues(self) -> list[Issue]:
-        """合并两路 issues,顺序为 critic 在前。"""
-        return self.critic_issues + self.continuity_issues
+        """合并三路 issues,顺序为 critic → continuity → consistency。"""
+        return self.critic_issues + self.continuity_issues + self.consistency_issues
 
     @property
     def max_severity(self) -> Optional[IssueSeverity]:

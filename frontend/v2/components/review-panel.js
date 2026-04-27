@@ -98,8 +98,10 @@ class ReviewPanel extends HTMLElement {
         const guidanceHistory = this._data?.guidance_history || [];
         const criticIssues = issues?.critic_issues || [];
         const continuityIssues = issues?.continuity_issues || [];
+        const consistencyIssues = issues?.consistency_issues || [];
+        const scores = issues?.scores || null;
 
-        const hasContent = criticIssues.length > 0 || continuityIssues.length > 0 || guidanceHistory.length > 0;
+        const hasContent = criticIssues.length > 0 || continuityIssues.length > 0 || consistencyIssues.length > 0 || guidanceHistory.length > 0 || scores;
 
         if (!hasContent) {
             this.innerHTML = `
@@ -121,7 +123,8 @@ class ReviewPanel extends HTMLElement {
                     <span class="review-meta">第${this._chapterNumber}章 · 场景${this._sceneIndex + 1}</span>
                 </div>
                 <div class="review-body">
-                    ${this._renderIssuesSection(criticIssues, continuityIssues)}
+                    ${scores ? this._renderScores(scores) : ""}
+                    ${this._renderIssuesSection(criticIssues, continuityIssues, consistencyIssues)}
                     ${this._renderGuidanceSection(guidanceHistory)}
                 </div>
             </div>
@@ -139,8 +142,33 @@ class ReviewPanel extends HTMLElement {
         });
     }
 
-    _renderIssuesSection(criticIssues, continuityIssues) {
-        const total = criticIssues.length + continuityIssues.length;
+    _renderScores(scores) {
+        const star = (n) => "★".repeat(n) + "☆".repeat(5 - n);
+        const scoreClass = (n) => n <= 2 ? "score-low" : n >= 4 ? "score-high" : "score-mid";
+
+        return `
+            <div class="review-scores">
+                <div class="review-score-item">
+                    <span class="review-score-label">情绪曲线</span>
+                    <span class="review-score-stars ${scoreClass(scores.emotion_arc_score || 0)}">${star(scores.emotion_arc_score || 0)}</span>
+                    <span class="review-score-num">${scores.emotion_arc_score ?? "-"}/5</span>
+                </div>
+                <div class="review-score-item">
+                    <span class="review-score-label">期待感</span>
+                    <span class="review-score-stars ${scoreClass(scores.anticipation_score || 0)}">${star(scores.anticipation_score || 0)}</span>
+                    <span class="review-score-num">${scores.anticipation_score ?? "-"}/5</span>
+                </div>
+                <div class="review-score-item">
+                    <span class="review-score-label">爽点释放</span>
+                    <span class="review-score-stars ${scoreClass(scores.payoff_satisfaction || 0)}">${star(scores.payoff_satisfaction || 0)}</span>
+                    <span class="review-score-num">${scores.payoff_satisfaction ?? "-"}/5</span>
+                </div>
+            </div>
+        `;
+    }
+
+    _renderIssuesSection(criticIssues, continuityIssues, consistencyIssues) {
+        const total = criticIssues.length + continuityIssues.length + consistencyIssues.length;
         if (total === 0) return "";
 
         const severityClass = (s) => {
@@ -160,6 +188,8 @@ class ReviewPanel extends HTMLElement {
             const sev = issue.severity || "low";
             const loc = issue.location || "";
             const suggestion = issue.suggestion || "";
+            const affected = issue.affected_characters || [];
+            const ruleRef = issue.rule_reference || "";
             return `
                 <div class="review-issue">
                     <div class="review-issue-header">
@@ -169,6 +199,8 @@ class ReviewPanel extends HTMLElement {
                     <div class="review-issue-desc">${this._escapeHtml(issue.description || "")}</div>
                     ${loc ? `<div class="review-issue-loc">📍 ${this._escapeHtml(loc)}</div>` : ""}
                     ${suggestion ? `<div class="review-issue-suggestion">💡 ${this._escapeHtml(suggestion)}</div>` : ""}
+                    ${affected.length > 0 ? `<div class="review-issue-meta">👤 ${affected.map(a => this._escapeHtml(a)).join(", ")}</div>` : ""}
+                    ${ruleRef ? `<div class="review-issue-meta">📖 ${this._escapeHtml(ruleRef)}</div>` : ""}
                 </div>
             `;
         };
@@ -188,6 +220,10 @@ class ReviewPanel extends HTMLElement {
                     ${continuityIssues.length > 0 ? `
                         <div class="review-subheader">Continuity（设定连贯）</div>
                         ${continuityIssues.map(renderIssue).join("")}
+                    ` : ""}
+                    ${consistencyIssues.length > 0 ? `
+                        <div class="review-subheader">Consistency（内在一致性）</div>
+                        ${consistencyIssues.map(renderIssue).join("")}
                     ` : ""}
                 </div>
             </div>

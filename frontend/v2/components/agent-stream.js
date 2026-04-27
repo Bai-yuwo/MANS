@@ -216,15 +216,19 @@ class AgentStream extends HTMLElement {
                 obox.textContent += toolSummary;
                 this._autoScroll(obox);
             }
-        } else if (event.type === "confirm") {
-            this._setStatus("等待确认");
+        } else if (event.type === "confirm" || event.type === "ask_user") {
+            this._setStatus(event.type === "ask_user" ? "等待答复" : "等待确认");
             this.dispatchEvent(new CustomEvent("stage-confirm", {
                 detail: event.data,
                 bubbles: true,
             }));
             const obox = this.querySelector("#output-box");
             if (obox) {
-                obox.textContent += `\n[阶段确认] ${event.data.from_stage} → ${event.data.to_stage}\n`;
+                if (event.type === "ask_user") {
+                    obox.textContent += `\n[询问用户] ${event.data.question || "需要确认"}\n`;
+                } else {
+                    obox.textContent += `\n[阶段确认] ${event.data.from_stage} → ${event.data.to_stage}\n`;
+                }
                 this._autoScroll(obox);
             }
         } else if (event.type === "error" || event.type === "sse_error") {

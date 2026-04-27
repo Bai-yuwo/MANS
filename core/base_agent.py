@@ -223,11 +223,11 @@ class BaseAgent:
                 confirm_emitted = False
                 async for relay in self._dispatch_tools(last_completed.tool_calls):
                     yield relay
-                    if relay.type == "confirm":
+                    if relay.type in ("confirm", "ask_user"):
                         confirm_emitted = True
 
                 if confirm_emitted:
-                    # Director 发出阶段确认请求,中止 ReAct 等待用户,保存状态供 Orchestrator 续会话
+                    # Director 发出阶段确认/用户询问请求,中止 ReAct 等待用户,保存状态供 Orchestrator 续会话
                     # 关键：必须先静默发送 function_call_output 完成本轮对话,
                     # 否则 previous_response_id 指向的响应包含未完成的 tool_calls,
                     # 续接时 ARK 会将其视为"未执行/失败",导致工具返回内容全部丢失。
@@ -252,11 +252,11 @@ class BaseAgent:
                                 current_res_id = silent_res_id
                         except Exception as e:
                             logger.warning(
-                                f"{self.agent_name} confirm 后静默补全对话失败: {e}，"
+                                f"{self.agent_name} confirm/ask_user 后静默补全对话失败: {e}，"
                                 f"续接时可能丢失 tool output 上下文"
                             )
                     logger.info(
-                        f"{self.agent_name} 收到 confirm 包,暂停等待用户确认"
+                        f"{self.agent_name} 收到 confirm/ask_user 包,暂停等待用户回复"
                     )
                     return
 

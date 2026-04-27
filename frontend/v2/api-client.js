@@ -128,6 +128,10 @@ class MANSApiClient {
             onEvent({ type: "confirm", data: JSON.parse(e.data) });
         });
 
+        source.addEventListener("ask_user", (e) => {
+            onEvent({ type: "ask_user", data: JSON.parse(e.data) });
+        });
+
         source.addEventListener("error", (e) => {
             let data;
             try { data = JSON.parse(e.data); } catch { data = { error: e.data }; }

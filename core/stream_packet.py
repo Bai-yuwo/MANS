@@ -55,13 +55,17 @@ class CompletedPayload(BaseModel):
 
 class ConfirmPayload(BaseModel):
     """
-    Director 调用 confirm_stage_advance 时透出的确认请求载荷。
+    Director 调用 confirm_stage_advance 或 ask_user 时透出的确认/询问请求载荷。
 
     字段:
-        from_stage: 当前阶段(如 "INIT" / "PLAN" / "WRITE")
-        to_stage: 待进入阶段(如 "PLAN" / "WRITE")
-        summary: 当前阶段成果摘要(供用户决策)
-        prompt: 给用户的确认问句
+        kind: "stage_advance" | "user_question" — 区分阶段确认还是通用询问
+        from_stage: 当前阶段(如 "INIT" / "PLAN" / "WRITE"), kind="stage_advance" 时必填
+        to_stage: 待进入阶段(如 "PLAN" / "WRITE"), kind="stage_advance" 时必填
+        summary: 当前阶段成果摘要, kind="stage_advance" 时使用
+        prompt: 给用户的确认问句, kind="stage_advance" 时使用
+        question: 具体问题文本, kind="user_question" 时使用
+        context: 问题上下文/背景说明, kind="user_question" 时使用
+        options: 可选项列表, kind="user_question" 且提供选项时使用
         previous_response_id: Director 在发出确认时的最后 res_id,
                               Orchestrator 续会话时传入
         from_chapter: WRITE 阶段跨章节时使用(可选)
@@ -69,16 +73,20 @@ class ConfirmPayload(BaseModel):
     """
     model_config = ConfigDict(extra="allow")
 
-    from_stage: str
-    to_stage: str
-    summary: str
-    prompt: str
+    kind: str = "stage_advance"
+    from_stage: str = ""
+    to_stage: str = ""
+    summary: str = ""
+    prompt: str = ""
+    question: str = ""
+    context: str = ""
+    options: List[str] = Field(default_factory=list)
     previous_response_id: str = ""
     from_chapter: Optional[int] = None
     pending_outputs: List[dict] = []
 
 
-PacketType = Literal["reasoning", "output", "completed", "error", "confirm"]
+PacketType = Literal["reasoning", "output", "completed", "error", "confirm", "ask_user"]
 
 
 class StreamPacket(BaseModel):
@@ -90,7 +98,8 @@ class StreamPacket(BaseModel):
         output     — 正文 token,直接拼接给用户/Writer 落盘。
         completed  — 本轮响应终结,content 必为 CompletedPayload,持有 res_id 与 tool_calls。
         error      — 流式过程中出现异常,content 为错误描述字符串。
-        confirm    — 阶段间确认请求,content 为 ConfirmPayload,供 Orchestrator 拦截并弹窗。
+        confirm    — 阶段间确认请求,content 为 ConfirmPayload(kind="stage_advance"),供 Orchestrator 拦截并弹窗。
+        ask_user   — AGENT 向用户发起通用询问,content 为 ConfirmPayload(kind="user_question"),与 confirm 共享暂停/续接机制。
 
     序列化:
         Pydantic v2 模型,可直接 .model_dump_json() 推送给前端。

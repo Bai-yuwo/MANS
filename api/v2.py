@@ -546,19 +546,24 @@ def _stream_packet_to_sse(pkt: StreamPacket) -> dict:
                 }, ensure_ascii=False),
             }
         return {"event": "completed", "data": json.dumps({**base, "content": str(pkt.content)}, ensure_ascii=False)}
-    elif pkt.type == "confirm":
+    elif pkt.type in ("confirm", "ask_user"):
         if isinstance(pkt.content, ConfirmPayload):
-            return {
-                "event": "confirm",
-                "data": json.dumps({
-                    **base,
-                    "from_stage": pkt.content.from_stage,
-                    "to_stage": pkt.content.to_stage,
-                    "summary": pkt.content.summary,
-                    "prompt": pkt.content.prompt,
-                }, ensure_ascii=False),
+            data = {
+                **base,
+                "kind": pkt.content.kind,
+                "from_stage": pkt.content.from_stage,
+                "to_stage": pkt.content.to_stage,
+                "summary": pkt.content.summary,
+                "prompt": pkt.content.prompt,
+                "question": pkt.content.question,
+                "context": pkt.content.context,
+                "options": pkt.content.options,
             }
-        return {"event": "confirm", "data": json.dumps({**base, "content": str(pkt.content)}, ensure_ascii=False)}
+            return {
+                "event": pkt.type,
+                "data": json.dumps(data, ensure_ascii=False),
+            }
+        return {"event": pkt.type, "data": json.dumps({**base, "content": str(pkt.content)}, ensure_ascii=False)}
     elif pkt.type == "error":
         return {
             "event": "error",

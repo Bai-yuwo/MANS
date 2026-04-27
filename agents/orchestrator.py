@@ -97,13 +97,18 @@ class Orchestrator:
             user_prompt=user_prompt,
             previous_response_id=res_id or None,
         ):
-            if packet.type == "confirm":
+            if packet.type in ("confirm", "ask_user"):
                 self._confirm_payload = packet.content
                 self._last_response_id = self._director.last_response_id
-                logger.info(
-                    f"Orchestrator 拦截 confirm: "
-                    f"{self._confirm_payload.from_stage} → {self._confirm_payload.to_stage}"
-                )
+                if packet.type == "confirm":
+                    logger.info(
+                        f"Orchestrator 拦截 confirm: "
+                        f"{self._confirm_payload.from_stage} → {self._confirm_payload.to_stage}"
+                    )
+                else:
+                    logger.info(
+                        f"Orchestrator 拦截 ask_user: {self._confirm_payload.question}"
+                    )
             yield packet
 
     # --------------------------------------------------------
@@ -116,10 +121,10 @@ class Orchestrator:
         previous_response_id: Optional[str] = None,
     ) -> AsyncIterator[StreamPacket]:
         """
-        用户确认后,续接 Director 会话。
+        用户确认/回复后,续接 Director 会话。
 
         Args:
-            user_reply: 用户回复(如"同意,进入 PLAN 阶段"或"修改...")
+            user_reply: 用户回复(如"同意,进入 PLAN 阶段"或问题答复)
             previous_response_id: 可选覆盖,默认使用内部保存的 last_response_id
 
         Yields:
@@ -131,7 +136,7 @@ class Orchestrator:
         set_current_project_id(self.project_id)
         res_id = previous_response_id or self._last_response_id
 
-        # 清除 confirm 状态
+        # 清除 confirm/ask_user 状态
         self._confirm_payload = None
 
         logger.info(f"Orchestrator 续接 Director (res_id={'续接' if res_id else '新开'})")
@@ -140,13 +145,18 @@ class Orchestrator:
             user_prompt=user_reply,
             previous_response_id=res_id or None,
         ):
-            if packet.type == "confirm":
+            if packet.type in ("confirm", "ask_user"):
                 self._confirm_payload = packet.content
                 self._last_response_id = self._director.last_response_id
-                logger.info(
-                    f"Orchestrator 拦截 confirm: "
-                    f"{self._confirm_payload.from_stage} → {self._confirm_payload.to_stage}"
-                )
+                if packet.type == "confirm":
+                    logger.info(
+                        f"Orchestrator 拦截 confirm: "
+                        f"{self._confirm_payload.from_stage} → {self._confirm_payload.to_stage}"
+                    )
+                else:
+                    logger.info(
+                        f"Orchestrator 拦截 ask_user: {self._confirm_payload.question}"
+                    )
             yield packet
 
     # --------------------------------------------------------

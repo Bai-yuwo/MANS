@@ -103,11 +103,11 @@ class OrchestratorSession:
         try:
             async for pkt in generator:
                 await self.queue.put(pkt)
-                if pkt.type == "confirm":
-                    # confirm 包之后,Director 的 run() 会自然退出,
+                if pkt.type in ("confirm", "ask_user"):
+                    # confirm/ask_user 包之后,Director 的 run() 会自然退出,
                     # 所以 generator 也会结束,_pump 随之结束
                     logger.info(
-                        f"Session {self.session_id} confirm 到达,暂停等待用户"
+                        f"Session {self.session_id} {pkt.type} 到达,暂停等待用户"
                     )
                     break
         except Exception as e:

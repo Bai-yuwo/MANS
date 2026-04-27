@@ -59,8 +59,9 @@ class Director(BaseAgent):
         "read_cultivation_node",
         # 写
         "write_project_meta",
-        # 确认
+        # 确认/询问
         "confirm_stage_advance",
+        "ask_user",
         # 子主管
         "call_world_architect",
         "call_casting_director",

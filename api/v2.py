@@ -37,6 +37,7 @@ from sse_starlette.sse import EventSourceResponse
 from core.config import get_config
 from core.logging_config import get_logger
 from core.performance_logger import aggregate_token_audit
+from core.project_config import get_project_config
 from core.stream_packet import CompletedPayload, ConfirmPayload, StreamPacket
 
 from api.session_manager import get_session_manager
@@ -971,3 +972,134 @@ async def get_performance(project_id: str, chapter_number: int = 0, scene_index:
         "scene_index": scene_index if scene_index >= 0 else None,
         **data,
     }
+
+
+# --------------------------------------------------------
+# 批量结束汇总报告
+# --------------------------------------------------------
+@router.get("/projects/{project_id}/batch-report")
+async def get_batch_report(project_id: str):
+    """
+    批量生成结束后的汇总报告。
+
+    从 performance_log.jsonl 聚合当前批次的统计信息。
+    """
+    _project_path(project_id)
+
+    # 读取 project_meta 获取配置
+    meta_path = _project_path(project_id) / "project_meta.json"
+    scenes_in_batch = 0
+    try:
+        if meta_path.exists():
+            async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.loads(await f.read())
+            scenes_in_batch = meta.get("scenes_generated_in_batch", 0)
+    except Exception:
+        pass
+
+    # 聚合当前项目全部 performance 数据
+    data = await aggregate_token_audit(project_id, workspace_root=str(_WORKSPACE_ROOT))
+
+    entries = data.get("entries", [])
+    total_tokens = data.get("total_tokens", 0)
+    total_duration = data.get("total_duration_ms", 0)
+    agent_breakdown = data.get("agent_breakdown", {})
+
+    # 估算场景数（如果 meta 中没有，从 Writer 的调用次数推断）
+    writer_count = agent_breakdown.get("Writer", {}).get("count", 0)
+    scenes_estimated = max(scenes_in_batch, writer_count)
+
+    avg_per_scene = total_tokens // max(scenes_estimated, 1)
+
+    # budget hit 检查
+    budget_hit = False
+    try:
+        cfg = await get_project_config(project_id, workspace_root=str(_WORKSPACE_ROOT))
+        budget = cfg.get("token_budget_per_scene", 0)
+        if budget > 0 and avg_per_scene > budget:
+            budget_hit = True
+    except Exception:
+        pass
+
+    suggested = "继续下一批" if scenes_estimated > 0 else "开始生成"
+
+    return {
+        "project_id": project_id,
+        "scenes_generated": scenes_estimated,
+        "total_duration_ms": total_duration,
+        "total_tokens": total_tokens,
+        "avg_tokens_per_scene": avg_per_scene,
+        "agent_breakdown": agent_breakdown,
+        "budget_hit": budget_hit,
+        "suggested_action": suggested,
+    }
+
+
+# --------------------------------------------------------
+# 项目配置读写
+# --------------------------------------------------------
+class UpdateConfigRequest(BaseModel):
+    """部分更新项目配置请求。只传入需要修改的字段。"""
+    auto_advance: Optional[bool] = None
+    auto_rewrite: Optional[bool] = None
+    max_rewrite_attempts: Optional[int] = None
+    enable_consistency_check: Optional[bool] = None
+    token_budget_per_scene: Optional[int] = None
+    max_scenes_per_batch: Optional[int] = None
+    auto_continue_batch: Optional[bool] = None
+
+
+@router.get("/projects/{project_id}/config")
+async def get_project_config_v2(project_id: str):
+    """读取项目运行时配置子集。"""
+    _project_path(project_id)
+    meta_path = _project_path(project_id) / "project_meta.json"
+    if not meta_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    try:
+        async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.loads(await f.read())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取配置失败: {e}")
+
+    keys = [
+        "auto_advance", "auto_rewrite", "max_rewrite_attempts",
+        "enable_consistency_check", "token_budget_per_scene",
+        "max_scenes_per_batch", "auto_continue_batch",
+        "scenes_generated_in_batch",
+    ]
+    return {k: meta.get(k) for k in keys}
+
+
+@router.post("/projects/{project_id}/config")
+async def update_project_config_v2(project_id: str, request: UpdateConfigRequest):
+    """部分更新项目运行时配置。只修改传入的非 None 字段。"""
+    _project_path(project_id)
+    meta_path = _project_path(project_id) / "project_meta.json"
+    if not meta_path.exists():
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    try:
+        async with aiofiles.open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.loads(await f.read())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取配置失败: {e}")
+
+    update_data = request.model_dump(exclude_unset=True)
+    for k, v in update_data.items():
+        if v is not None:
+            meta[k] = v
+    meta["updated_at"] = datetime.now().isoformat()
+
+    try:
+        tmp_path = meta_path.with_suffix(".tmp")
+        async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(meta, ensure_ascii=False, indent=2))
+        os.replace(str(tmp_path), str(meta_path))
+    except Exception as e:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise HTTPException(status_code=500, detail=f"保存配置失败: {e}")
+
+    return {"success": True, "updated": list(update_data.keys())}

@@ -106,10 +106,26 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // --------------------------------------------------------
-    // 阶段确认 / 用户询问弹窗
+    // 阶段确认 / 用户询问弹窗（含批量自动继续）
     // --------------------------------------------------------
-    agentStream.addEventListener("stage-confirm", (e) => {
+    agentStream.addEventListener("stage-confirm", async (e) => {
         const data = e.detail;
+
+        // 批量自动继续检查
+        try {
+            const cfg = await client.getProjectConfig(currentProjectId);
+            if (cfg.auto_continue_batch === true) {
+                console.log("[auto_continue] 自动批准阶段切换/继续");
+                await client.approve(currentProjectId, "同意，继续下一批");
+                setTimeout(() => {
+                    agentStream.start(currentProjectId, { clear: false, isReconnect: true });
+                }, 800);
+                return;
+            }
+        } catch (err) {
+            console.error("[auto_continue] 读取配置失败", err);
+        }
+
         confirmDialog.show(currentProjectId, data);
         // 如果是 ask_user，额外广播给 review-panel 等组件
         if (data.kind === "user_question") {

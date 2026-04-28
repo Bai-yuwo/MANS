@@ -103,6 +103,8 @@ class StageWorkbench extends HTMLElement {
                 </div>
             </div>
 
+            <div id="project-config-area" style="margin-top:12px;"></div>
+
             <div id="kb-overview">
                 <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">知识库概览</div>
                 <div class="card" style="font-size:11px;color:var(--text-muted);">
@@ -115,6 +117,7 @@ class StageWorkbench extends HTMLElement {
 
         this._renderActions();
         this._wireInstructionPanel();
+        this._renderConfigPanel();
     }
 
     _renderActions() {
@@ -259,7 +262,6 @@ class StageWorkbench extends HTMLElement {
         const instruction = input.value.trim();
         if (!instruction || !this.projectId) return;
 
-        // 敏感操作检测
         const sensitiveKeywords = ["删除", "清理", "清空", "移除", "删掉", "erase", "delete", "clear", "remove"];
         const isSensitive = sensitiveKeywords.some(kw => instruction.includes(kw));
         if (isSensitive) {
@@ -275,7 +277,6 @@ class StageWorkbench extends HTMLElement {
             await this.client.sendCommand(this.projectId, instruction);
             input.value = "";
             btn.textContent = "已发送";
-            // 触发事件让 app.js 重连 SSE
             this.dispatchEvent(new CustomEvent("instruction-sent", {
                 detail: { projectId: this.projectId, instruction },
                 bubbles: true,
@@ -288,6 +289,102 @@ class StageWorkbench extends HTMLElement {
             alert("发送指令失败: " + err.message);
             btn.disabled = false;
             btn.textContent = "发送指令";
+        }
+    }
+
+    // ---------- 项目配置面板 ----------
+    async _renderConfigPanel() {
+        const area = this.querySelector("#project-config-area");
+        if (!area || !this.projectId) return;
+
+        let cfg = {};
+        try {
+            cfg = await this.client.getProjectConfig(this.projectId);
+        } catch (e) {
+            console.error("加载配置失败", e);
+        }
+
+        const _sw = (key, label) => `
+            <label class="config-row">
+                <span>${label}</span>
+                <input type="checkbox" id="cfg-${key}" ${cfg[key] ? "checked" : ""}>
+            </label>`;
+        const _num = (key, label, min, max, step = 1) => `
+            <label class="config-row">
+                <span>${label}</span>
+                <input type="number" id="cfg-${key}" value="${cfg[key] ?? ''}"
+                    min="${min}" max="${max}" step="${step}" style="width:70px;">
+            </label>`;
+
+        area.innerHTML = `
+            <div class="config-panel" id="config-panel" style="display:none;">
+                ${_sw("auto_advance", "自动阶段切换")}
+                ${_sw("auto_rewrite", "自动重写")}
+                ${_num("max_rewrite_attempts", "最大重写轮次", 0, 3)}
+                ${_sw("enable_consistency_check", "启用一致性检查")}
+                ${_num("token_budget_per_scene", "单场景 Token 预算(0=无限制)", 0, 1000000, 1000)}
+                ${_num("max_scenes_per_batch", "批量场景数", 1, 20)}
+                ${_sw("auto_continue_batch", "自动继续批量")}
+                <div style="display:flex;gap:6px;margin-top:8px;">
+                    <button class="btn btn-secondary" id="btn-preset-fast" style="flex:1;font-size:11px;">快速模式</button>
+                    <button class="btn btn-secondary" id="btn-preset-fine" style="flex:1;font-size:11px;">精细模式</button>
+                    <button class="btn btn-primary" id="btn-save-config" style="flex:1;font-size:11px;">保存</button>
+                </div>
+            </div>
+            <button class="btn btn-secondary" id="btn-toggle-config" style="width:100%;font-size:11px;margin-top:4px;">
+                ⚙ 项目设置
+            </button>
+        `;
+
+        const toggleBtn = area.querySelector("#btn-toggle-config");
+        const panel = area.querySelector("#config-panel");
+        toggleBtn.addEventListener("click", () => {
+            const shown = panel.style.display === "block";
+            panel.style.display = shown ? "none" : "block";
+            toggleBtn.textContent = shown ? "⚙ 项目设置" : "⚙ 收起设置";
+        });
+
+        area.querySelector("#btn-preset-fast").addEventListener("click", () => {
+            area.querySelector("#cfg-auto_advance").checked = true;
+            area.querySelector("#cfg-auto_rewrite").checked = true;
+            area.querySelector("#cfg-max_rewrite_attempts").value = 1;
+            area.querySelector("#cfg-enable_consistency_check").checked = false;
+            area.querySelector("#cfg-auto_continue_batch").checked = true;
+        });
+        area.querySelector("#btn-preset-fine").addEventListener("click", () => {
+            area.querySelector("#cfg-auto_advance").checked = false;
+            area.querySelector("#cfg-auto_rewrite").checked = false;
+            area.querySelector("#cfg-max_rewrite_attempts").value = 2;
+            area.querySelector("#cfg-enable_consistency_check").checked = true;
+            area.querySelector("#cfg-auto_continue_batch").checked = false;
+        });
+        area.querySelector("#btn-save-config").addEventListener("click", () => this._saveConfigFromUI());
+    }
+
+    async _saveConfigFromUI() {
+        const area = this.querySelector("#project-config-area");
+        if (!area) return;
+
+        const payload = {};
+        const keys = [
+            "auto_advance", "auto_rewrite", "enable_consistency_check", "auto_continue_batch",
+        ];
+        keys.forEach(k => {
+            const el = area.querySelector(`#cfg-${k}`);
+            if (el) payload[k] = el.checked;
+        });
+        ["max_rewrite_attempts", "token_budget_per_scene", "max_scenes_per_batch"].forEach(k => {
+            const el = area.querySelector(`#cfg-${k}`);
+            if (el) payload[k] = parseInt(el.value, 10) || 0;
+        });
+
+        try {
+            await this.client.saveProjectConfig(this.projectId, payload);
+            const btn = area.querySelector("#btn-save-config");
+            btn.textContent = "已保存";
+            setTimeout(() => (btn.textContent = "保存"), 1500);
+        } catch (e) {
+            alert("保存配置失败: " + e.message);
         }
     }
 

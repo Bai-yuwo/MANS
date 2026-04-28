@@ -175,6 +175,28 @@ class MANSApiClient {
     }
 
     // --------------------------------------------------------
+    // 项目配置
+    // --------------------------------------------------------
+    async getProjectConfig(projectId) {
+        const res = await fetch(this._url(`/api/v2/projects/${projectId}/config`));
+        return this._json(res);
+    }
+
+    async saveProjectConfig(projectId, config) {
+        const res = await fetch(this._url(`/api/v2/projects/${projectId}/config`), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(config),
+        });
+        return this._json(res);
+    }
+
+    async getBatchReport(projectId) {
+        const res = await fetch(this._url(`/api/v2/projects/${projectId}/batch-report`));
+        return this._json(res);
+    }
+
+    // --------------------------------------------------------
     // SSE 流式
     // --------------------------------------------------------
     connectStream(projectId, onEvent) {

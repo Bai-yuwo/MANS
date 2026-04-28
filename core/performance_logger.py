@@ -18,7 +18,8 @@ Token 与执行时长审计日志。
       "duration_ms": 3456,
       "input_tokens": 1200,
       "output_tokens": 800,
-      "total_tokens": 2000
+      "total_tokens": 2000,
+      "cached_tokens": 500
     }
 
 写入策略:
@@ -64,6 +65,7 @@ async def log_token_audit(
     input_tokens: int = 0,
     output_tokens: int = 0,
     total_tokens: int = 0,
+    cached_tokens: int = 0,
     workspace_root: str | Path = "workspace",
 ) -> None:
     """写入单条 TokenAuditEntry 到 performance_log.jsonl(追加)。"""
@@ -78,6 +80,7 @@ async def log_token_audit(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
+        "cached_tokens": cached_tokens,
     }
 
     log_path = _get_log_path(project_id, workspace_root)
@@ -162,6 +165,7 @@ async def aggregate_token_audit(
     total_input = 0
     total_output = 0
     total_tokens = 0
+    total_cached = 0
     breakdown: dict[str, dict] = {}
 
     for entry in entries:
@@ -169,18 +173,23 @@ async def aggregate_token_audit(
         inp = entry.get("input_tokens", 0)
         out = entry.get("output_tokens", 0)
         tot = entry.get("total_tokens", 0)
+        cached = entry.get("cached_tokens", 0)
         agent = entry.get("agent_name", "unknown")
 
         total_duration += dur
         total_input += inp
         total_output += out
         total_tokens += tot
+        total_cached += cached
 
         if agent not in breakdown:
-            breakdown[agent] = {"count": 0, "tokens": 0, "duration_ms": 0}
+            breakdown[agent] = {"count": 0, "tokens": 0, "duration_ms": 0, "cached_tokens": 0}
         breakdown[agent]["count"] += 1
         breakdown[agent]["tokens"] += tot
         breakdown[agent]["duration_ms"] += dur
+        breakdown[agent]["cached_tokens"] = breakdown[agent].get("cached_tokens", 0) + cached
+
+    cache_hit_ratio = round(total_cached / max(total_input, 1), 2)
 
     return {
         "entries": entries,
@@ -188,5 +197,7 @@ async def aggregate_token_audit(
         "total_input_tokens": total_input,
         "total_output_tokens": total_output,
         "total_tokens": total_tokens,
+        "total_cached_tokens": total_cached,
+        "cache_hit_ratio": cache_hit_ratio,
         "agent_breakdown": breakdown,
     }

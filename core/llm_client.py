@@ -433,6 +433,8 @@ class LLMClient:
         previous_response_id: Optional[str] = None,
         thinking: str = "enabled",
         stream: bool = False,
+        enable_caching: bool = False,
+        expire_at: Optional[int] = None,
     ) -> dict:
         """
         构造 responses.create 的 kwargs。
@@ -443,6 +445,8 @@ class LLMClient:
             - tools 仅在非空时注入,避免空数组触发 ARK 校验
             - json_schema 通过 text.format 注入,name/strict/schema 三字段必备
             - previous_response_id 用于 ReAct 续接,首轮为 None
+            - enable_caching 开启 ARK Session Caching(仅首轮需传 tools)
+            - expire_at 缓存过期时间(unix 秒),建议 24h
         """
         rt = self.config.get_for_agent(agent_name)
         effective_max_tokens = max_tokens if max_tokens is not None else rt.max_tokens
@@ -462,6 +466,10 @@ class LLMClient:
             kwargs["tools"] = tools
             if tool_choice is not None:
                 kwargs["tool_choice"] = tool_choice
+        if enable_caching:
+            kwargs["extra_body"]["caching"] = {"type": "enabled"}
+            if expire_at:
+                kwargs["extra_body"]["expire_at"] = expire_at
         if json_schema:
             kwargs["text"] = {
                 "format": {
@@ -526,6 +534,11 @@ class LLMClient:
                     total_tokens = getattr(usage, "total_tokens", 0) if usage else 0
                     input_tokens = getattr(usage, "input_tokens", 0) if usage else 0
                     output_tokens = getattr(usage, "output_tokens", 0) if usage else 0
+                    cached_tokens = 0
+                    if usage:
+                        details = getattr(usage, "input_tokens_details", None)
+                        if details:
+                            cached_tokens = getattr(details, "cached_tokens", 0) or 0
                     yield StreamPacket(
                         type="completed",
                         content=CompletedPayload(
@@ -533,6 +546,7 @@ class LLMClient:
                             total_tokens=total_tokens,
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
+                            cached_tokens=cached_tokens,
                             tool_calls=extracted,
                             output_types=output_types,
                         ),
@@ -560,6 +574,8 @@ class LLMClient:
         json_schema: Optional[dict] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        enable_caching: bool = False,
+        expire_at: Optional[int] = None,
     ) -> AsyncIterator[StreamPacket]:
         """
         主管 ReAct 流式调用。
@@ -584,6 +600,8 @@ class LLMClient:
             previous_response_id=previous_response_id,
             thinking=thinking,
             stream=True,
+            enable_caching=enable_caching,
+            expire_at=expire_at,
         )
 
         rt = self.config.get_for_agent(agent_name)

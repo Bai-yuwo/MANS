@@ -168,6 +168,7 @@ class ManagerTool(BaseTool):
         total_tokens = 0
         input_tokens = 0
         output_tokens = 0
+        cached_tokens = 0
         last_res_id = ""
         text_fragments: list[str] = []
         confirm_payload = None
@@ -192,6 +193,7 @@ class ManagerTool(BaseTool):
                     total_tokens += packet.content.total_tokens
                     input_tokens += packet.content.input_tokens
                     output_tokens += packet.content.output_tokens
+                    cached_tokens += packet.content.cached_tokens
                     last_res_id = packet.content.res_id
                 elif packet.type == "output" and isinstance(packet.content, str):
                     text_fragments.append(packet.content)
@@ -224,6 +226,7 @@ class ManagerTool(BaseTool):
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
+                cached_tokens=cached_tokens,
             )
         except Exception as e:
             logger.debug(f"ManagerTool token 审计记录失败(非阻塞): {e}")

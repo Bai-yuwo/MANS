@@ -193,7 +193,7 @@ class ExpertTool(BaseTool):
         self._validate_class_attrs()
         self._stream_sink: Optional[StreamSink] = None
         self._last_response_id: str = ""
-        self._last_usage: dict = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        self._last_usage: dict = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cached_tokens": 0}
 
     # --------------------------------------------------------
     # 类属性合法性校验(实例化时执行,避免启动后才发现配置错误)
@@ -250,7 +250,7 @@ class ExpertTool(BaseTool):
         重写会绕过日志、流式 sink、错误兜底、token 审计等基础设施。
         """
         start_time = time.time()
-        self._last_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        self._last_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cached_tokens": 0}
         client = self._get_client()
         cfg = get_config()
         rt = cfg.get_for_agent(self.expert_name)
@@ -292,6 +292,7 @@ class ExpertTool(BaseTool):
                 "input_tokens": resp.usage.get("input_tokens", 0) if resp.usage else 0,
                 "output_tokens": resp.usage.get("output_tokens", 0) if resp.usage else 0,
                 "total_tokens": resp.usage.get("total_tokens", 0) if resp.usage else 0,
+                "cached_tokens": resp.usage.get("cached_tokens", 0) if resp.usage else 0,
             }
             content = resp.content
 
@@ -310,6 +311,7 @@ class ExpertTool(BaseTool):
                 input_tokens=self._last_usage.get("input_tokens", 0),
                 output_tokens=self._last_usage.get("output_tokens", 0),
                 total_tokens=self._last_usage.get("total_tokens", 0),
+                cached_tokens=self._last_usage.get("cached_tokens", 0),
             )
         except Exception as e:
             logger.debug(f"专家 token 审计记录失败(非阻塞): {e}")
@@ -361,6 +363,7 @@ class ExpertTool(BaseTool):
                     "input_tokens": packet.content.input_tokens,
                     "output_tokens": packet.content.output_tokens,
                     "total_tokens": packet.content.total_tokens,
+                    "cached_tokens": packet.content.cached_tokens,
                 }
         return "".join(full_text)
 

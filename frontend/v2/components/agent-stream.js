@@ -31,6 +31,8 @@ class AgentStream extends HTMLElement {
         "save_review_issues", "save_rewrite_guidance",
         "save_geo_node", "save_faction_node", "save_cultivation_node",
         "save_tech_node", "save_social_node", "save_setting_node",
+        "save_geo_nodes", "save_faction_nodes", "save_cultivation_nodes",
+        "save_tech_nodes", "save_social_nodes", "save_setting_nodes",
         "clear_checkpoint",
     ];
 

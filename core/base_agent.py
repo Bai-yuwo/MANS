@@ -33,6 +33,7 @@ core/base_agent.py
 
 import asyncio
 import json
+import time
 
 import aiofiles
 from pathlib import Path
@@ -45,7 +46,7 @@ from core.expert_tool import (
     _read_prompt_file,
     _render_template,
 )
-from core.llm_client import LLMClient
+from core.llm_client import LLMClient, LLMAPIError
 from core.project_config import get_project_config
 from core.logging_config import get_logger
 from core.stream_packet import CompletedPayload, ConfirmPayload, StreamPacket, ToolCallData
@@ -202,43 +203,60 @@ class BaseAgent:
             f"tools={len(tools_schemas or [])}, max_turns={effective_max_turns})"
         )
 
+        # Session Caching: 24h 过期，覆盖用户确认等待场景
+        cache_expire_at = int(time.time()) + 86400
+
         try:
             for turn in range(1, effective_max_turns + 1):
                 logger.debug(f"{self.agent_name} 第 {turn} 轮开始")
 
                 last_completed: Optional[CompletedPayload] = None
+                is_first_turn = (turn == 1 and previous_response_id is None)
 
-                async for packet in client.stream_call(
-                    agent_name=self.agent_name,
-                    input_data=current_input,
-                    tools=tools_schemas,
-                    tool_choice="auto" if tools_schemas else None,
-                    previous_response_id=current_res_id,
-                    thinking=self.thinking,
-                ):
-                    yield packet
-                    if packet.type == "completed" and isinstance(packet.content, CompletedPayload):
-                        last_completed = packet.content
-                        current_res_id = packet.content.res_id
-                        total_tokens_accum += packet.content.total_tokens
+                try:
+                    async for packet in client.stream_call(
+                        agent_name=self.agent_name,
+                        input_data=current_input,
+                        tools=tools_schemas if is_first_turn else None,
+                        tool_choice="auto" if tools_schemas else None,
+                        previous_response_id=current_res_id,
+                        thinking=self.thinking,
+                        enable_caching=True,
+                        expire_at=cache_expire_at if is_first_turn else None,
+                    ):
+                        yield packet
+                        if packet.type == "completed" and isinstance(packet.content, CompletedPayload):
+                            last_completed = packet.content
+                            current_res_id = packet.content.res_id
+                            total_tokens_accum += packet.content.total_tokens
+                except (LLMAPIError, APIError) as e:
+                    err_msg = str(e).lower()
+                    if any(k in err_msg for k in ["cache", "缓存", "expired", "expir"]):
+                        logger.warning(f"{self.agent_name} 缓存失效: {e}")
+                        yield StreamPacket(
+                            type="error",
+                            content="[系统] 对话缓存已过期，无法续接历史。请重新发送指令启动新会话。",
+                        )
+                        return
+                    raise
 
-                        # Token 预算软约束检查
-                        if token_budget > 0 and total_tokens_accum > token_budget * 0.8:
-                            if total_tokens_accum > token_budget:
-                                yield StreamPacket(
-                                    type="error",
-                                    content=f"[系统] 本场景 token 预算已耗尽 ({total_tokens_accum}/{token_budget})，自动暂停。",
-                                )
-                                logger.warning(
-                                    f"{self.agent_name} token 预算耗尽: "
-                                    f"{total_tokens_accum}/{token_budget}"
-                                )
-                                return
-                            else:
-                                yield StreamPacket(
-                                    type="output",
-                                    content=f"[系统] 本场景已使用 {total_tokens_accum} tokens，接近预算上限 {token_budget}。",
-                                )
+                # Token 预算软约束检查
+                if token_budget > 0 and total_tokens_accum > token_budget * 0.8:
+                    if total_tokens_accum > token_budget:
+                        yield StreamPacket(
+                            type="error",
+                            content=f"[系统] 本场景 token 预算已耗尽 ({total_tokens_accum}/{token_budget})，自动暂停。",
+                        )
+                        logger.warning(
+                            f"{self.agent_name} token 预算耗尽: "
+                            f"{total_tokens_accum}/{token_budget}"
+                        )
+                        return
+                    else:
+                        yield StreamPacket(
+                            type="output",
+                            content=f"[系统] 本场景已使用 {total_tokens_accum} tokens，接近预算上限 {token_budget}。",
+                        )
 
                 if last_completed is None:
                     logger.warning(f"{self.agent_name} 第 {turn} 轮未收到 completed 包,退出")
@@ -310,6 +328,7 @@ class BaseAgent:
                                 thinking=self.thinking,
                                 tools=None,
                                 tool_choice=None,
+                                enable_caching=True,
                             ):
                                 if (
                                     _pkt.type == "completed"

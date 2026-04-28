@@ -18,7 +18,9 @@ import json
 from typing import Awaitable, Callable, ClassVar, Optional
 
 from core.base_tool import BaseTool
+from core.context import require_current_project_id
 from core.logging_config import get_logger
+from core.project_config import get_project_config
 from core.stream_packet import ConfirmPayload, StreamPacket
 
 logger = get_logger("tools.system.confirm_stage_advance")
@@ -103,6 +105,26 @@ class ConfirmStageAdvance(BaseTool):
                     f"自动修正为 '{corrected}' (from_stage='{from_stage}')"
                 )
                 to_stage = corrected
+
+        # --- 自动确认检查 ---
+        try:
+            pid = require_current_project_id()
+            config = await get_project_config(pid)
+            if config.get("auto_advance", False):
+                logger.info(
+                    f"[auto_advance] 自动批准阶段切换: {from_stage} → {to_stage}"
+                )
+                return json.dumps(
+                    {
+                        "status": "auto_approved",
+                        "message": f"auto_advance=true，自动批准 {from_stage} → {to_stage}",
+                        "from_stage": from_stage,
+                        "to_stage": to_stage,
+                    },
+                    ensure_ascii=False,
+                )
+        except Exception:
+            pass
 
         payload = ConfirmPayload(
             from_stage=from_stage,

@@ -23,7 +23,9 @@ import json
 from typing import Awaitable, Callable, ClassVar, List, Optional
 
 from core.base_tool import BaseTool
+from core.context import require_current_project_id
 from core.logging_config import get_logger
+from core.project_config import get_project_config
 from core.stream_packet import ConfirmPayload, StreamPacket
 
 logger = get_logger("tools.system.ask_user")
@@ -91,6 +93,24 @@ class AskUser(BaseTool):
         options: Optional[List[str]] = None,
         **kwargs,
     ) -> str:
+        # --- 自动重写检查 ---
+        try:
+            pid = require_current_project_id()
+            cfg = await get_project_config(pid)
+            if cfg.get("auto_rewrite", False) and "重写" in question:
+                logger.info(f"[auto_rewrite] 自动接受重写建议: {question[:60]}...")
+                return json.dumps(
+                    {
+                        "status": "auto_replied",
+                        "reply": "接受重写",
+                        "message": "auto_rewrite=true，自动接受重写建议",
+                        "question": question,
+                    },
+                    ensure_ascii=False,
+                )
+        except Exception:
+            pass
+
         payload = ConfirmPayload(
             kind="user_question",
             question=question,

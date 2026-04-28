@@ -310,6 +310,14 @@ async def create_project_v2(request: CreateProjectRequest):
             "stage": "INIT",
             "status": "active",
             "current_chapter": 0,
+            "auto_advance": False,
+            "auto_rewrite": False,
+            "max_rewrite_attempts": 2,
+            "enable_consistency_check": True,
+            "token_budget_per_scene": 0,
+            "max_scenes_per_batch": 1,
+            "auto_continue_batch": False,
+            "scenes_generated_in_batch": 0,
             "created_at": datetime.now().isoformat(),
         }
         async with aiofiles.open(proj_dir / "project_meta.json", "w", encoding="utf-8") as f:

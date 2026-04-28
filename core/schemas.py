@@ -969,6 +969,15 @@ class ProjectMeta(BaseModel):
     forbidden_elements: list[str] = Field(default_factory=list)
     current_chapter: int = 0            # 当前已完成章节数
     status: ProjectStatus = ProjectStatus.INITIALIZING
+    # --- 运行时配置（批量生成控制）---
+    auto_advance: bool = False
+    auto_rewrite: bool = False
+    max_rewrite_attempts: int = Field(default=2, ge=0, le=3)
+    enable_consistency_check: bool = True
+    token_budget_per_scene: int = 0     # 0=无限制
+    max_scenes_per_batch: int = 1       # 1=单场景（当前行为）
+    auto_continue_batch: bool = False
+    scenes_generated_in_batch: int = 0  # 本批次已生成场景数（运行时计数器）
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 

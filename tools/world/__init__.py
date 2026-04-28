@@ -19,19 +19,31 @@ WorldArchitect 主管的 KB 写权限工具组。
 from .append_foreshadowing import AppendForeshadowing
 from .save_bible import SaveBible
 from .save_cultivation_node import SaveCultivationNode
+from .save_cultivation_nodes import SaveCultivationNodes
 from .save_faction_node import SaveFactionNode
+from .save_faction_nodes import SaveFactionNodes
 from .save_geo_node import SaveGeoNode
+from .save_geo_nodes import SaveGeoNodes
 from .save_setting_node import SaveSettingNode
+from .save_setting_nodes import SaveSettingNodes
 from .save_social_node import SaveSocialNode
+from .save_social_nodes import SaveSocialNodes
 from .save_tech_node import SaveTechNode
+from .save_tech_nodes import SaveTechNodes
 
 __all__ = [
     "AppendForeshadowing",
     "SaveBible",
     "SaveCultivationNode",
+    "SaveCultivationNodes",
     "SaveFactionNode",
+    "SaveFactionNodes",
     "SaveGeoNode",
+    "SaveGeoNodes",
     "SaveSettingNode",
+    "SaveSettingNodes",
     "SaveSocialNode",
+    "SaveSocialNodes",
     "SaveTechNode",
+    "SaveTechNodes",
 ]

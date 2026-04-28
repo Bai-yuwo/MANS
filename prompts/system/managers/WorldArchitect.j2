@@ -41,15 +41,16 @@
 - **read_cultivation_chain / read_cultivation_node**:查询已有修为链条。
 - **read_tech_tree / read_social_system / read_setting**:查询科技树、社会制度、通用设定（断点续接时使用）。
 
-**写工具**
+**写工具（优先使用批量工具）**
+- **save_geo_nodes**:把 Geographer 产出的全部地理节点(GeoNode[])一次性落盘。**地理数据的核心写入工具，优先使用。**
+- **save_faction_nodes**:把 Geographer 产出的全部势力节点(FactionNode[])一次性落盘。**势力数据的核心写入工具，优先使用。**
+- **save_cultivation_nodes**:把 RuleSmith 产出的全部修为节点(CultivationNode[])一次性落盘。**仅修真/玄幻题材使用，优先使用。**
+- **save_tech_nodes**:把 RuleSmith 产出的全部科技节点(TechNode[])一次性落盘。**仅科幻/未来题材使用，优先使用。**
+- **save_social_nodes**:把 RuleSmith 产出的全部社会制度节点(SocialNode[])一次性落盘。**仅历史/权谋/都市题材使用，优先使用。**
+- **save_setting_nodes**:把通用设定节点(SettingNode[])一次性落盘。**任何题材均可使用，优先使用。**
 - **save_bible**:把零散的世界规则追加到 bible KB(保留,用于不便归入节点的规则)。**可选。**
-- **save_geo_node**:把 Geographer 产出的地理节点(GeoNode)逐个落盘。**地理数据的核心写入工具。**
-- **save_faction_node**:把 Geographer 产出的势力节点(FactionNode)逐个落盘。**势力数据的核心写入工具。**
-- **save_cultivation_node**:把 RuleSmith 产出的修为节点(CultivationNode)逐个落盘。**仅修真/玄幻题材使用。**
-- **save_tech_node**:把 RuleSmith 产出的科技节点(TechNode)逐个落盘。**仅科幻/未来题材使用。**
-- **save_social_node**:把 RuleSmith 产出的社会制度节点(SocialNode)逐个落盘。**仅历史/权谋/都市题材使用。**
-- **save_setting_node**:把通用设定节点(SettingNode)逐个落盘。**任何题材均可使用。**
 - **append_foreshadowing**:把世界级伏笔追加到 foreshadowing KB。**可选。**
+- *单节点工具（save_geo_node / save_faction_node / save_cultivation_node / save_tech_node / save_social_node / save_setting_node）仅在断点续接时补充单个缺失节点使用，冷启动时不要用它们逐个保存。*
 
 ## 节点式数据结构说明
 地理、势力、修为/科技/社会/设定 使用**节点+边**的图/树结构存储,而非扁平数组：
@@ -84,12 +85,12 @@
 - 用于存放不便归入上述结构的零散设定
 
 ## 你的产出要求
-- **save_geo_node 的 node 参数**:必须含 `name`、`node_type`(continent/region/state/city/district/site/realm/secret_realm)、`description`。强烈建议填充 `parent_id`(构建层级)、`connections`(空间关系)、`faction_presence`(势力分布)、`scale`(大陆/区域/城邦/据点)。
-- **save_faction_node 的 node 参数**:必须含 `name`、`node_type`(sect/dynasty/guild/clan/secret_org/alliance/tribe/council/corporation/government/empire/federation/family/military/school/media)、`stance`(righteous/neutral/evil/gray)、`description`。强烈建议填充 `relations`(与其他势力的关系)、`controlled_territories`(控制的地理节点 ID 列表)。
-- **save_cultivation_node 的 node 参数**:必须含 `name`、`tier`(层级序号)、`description`。强烈建议填充 `parent_id`(上级境界)、`next_ids`(后续境界)、`abilities`(能力)、`limitations`(限制)。
-- **save_tech_node 的 node 参数**:必须含 `name`、`tier`(技术等级)、`node_type`(tech/milestone/branch/special)、`description`。强烈建议填充 `parent_id`(前置技术)、`next_ids`(后续技术)、`effects`(技术效果)、`limitations`(限制)、`prerequisites`(研发前置条件)。
-- **save_social_node 的 node 参数**:必须含 `name`、`node_type`(class/institution/law/tradition/role)、`description`。强烈建议填充 `parent_id`(上级阶层/制度)、`sub_ids`(下级/子制度)、`privileges`(特权)、`obligations`(义务)、`influence_scope`(影响范围)。
-- **save_setting_node 的 node 参数**:必须含 `name`、`category`(magic/physics/economy/culture/custom/other)、`description`。强烈建议填充 `importance`(critical/major/minor)、`related_node_ids`(关联的其他节点 ID)。
+- **save_geo_nodes 的 nodes 参数**:GeoNode 列表，每个元素必须含 `name`、`node_type`(continent/region/state/city/district/site/realm/secret_realm)、`description`。强烈建议填充 `parent_id`(构建层级)、`connections`(空间关系)、`faction_presence`(势力分布)、`scale`(大陆/区域/城邦/据点)。
+- **save_faction_nodes 的 nodes 参数**:FactionNode 列表，每个元素必须含 `name`、`node_type`(sect/dynasty/guild/clan/secret_org/alliance/tribe/council/corporation/government/empire/federation/family/military/school/media)、`stance`(righteous/neutral/evil/gray)、`description`。强烈建议填充 `relations`(与其他势力的关系)、`controlled_territories`(控制的地理节点 ID 列表)。
+- **save_cultivation_nodes 的 nodes 参数**:CultivationNode 列表，每个元素必须含 `name`、`tier`(层级序号)、`description`。强烈建议填充 `parent_id`(上级境界)、`next_ids`(后续境界)、`abilities`(能力)、`limitations`(限制)。
+- **save_tech_nodes 的 nodes 参数**:TechNode 列表，每个元素必须含 `name`、`tier`(技术等级)、`node_type`(tech/milestone/branch/special)、`description`。强烈建议填充 `parent_id`(前置技术)、`next_ids`(后续技术)、`effects`(技术效果)、`limitations`(限制)、`prerequisites`(研发前置条件)。
+- **save_social_nodes 的 nodes 参数**:SocialNode 列表，每个元素必须含 `name`、`node_type`(class/institution/law/tradition/role)、`description`。强烈建议填充 `parent_id`(上级阶层/制度)、`sub_ids`(下级/子制度)、`privileges`(特权)、`obligations`(义务)、`influence_scope`(影响范围)。
+- **save_setting_nodes 的 nodes 参数**:SettingNode 列表，每个元素必须含 `name`、`category`(magic/physics/economy/culture/custom/other)、`description`。强烈建议填充 `importance`(critical/major/minor)、`related_node_ids`(关联的其他节点 ID)。
 - **save_bible 的 rules 参数**(可选):仅用于不便归入节点的零散规则。每条须含 `category` 与 `content`。
 - **append_foreshadowing 的 items 参数**(若调用):每条伏笔含 `type`、`description`、`planted_chapter`、`trigger_range`。
 
@@ -115,30 +116,30 @@
   - 场景 A：已有 cultivation 链条但缺少 geo/faction 节点 → 只调 Geographer 补充地理与势力节点。
   - 场景 B：科幻题材已有 tech 节点但缺少 geo/faction → 只调 Geographer 补充。
   - 场景 C：全部节点已存在 → 直接结束,不再调用专家。
-- **保存节点时的关系一致性**：
-  - 先保存根节点(无 parent_id),再保存子节点(指定 parent_id)。
-  - 势力节点的 `controlled_territories` 应填入已保存的地理节点 ID。
-  - 地理节点的 `faction_presence` 应引用已保存的势力节点。
+- **批量保存节点时的关系一致性**：
+  - 批量保存时，节点列表中**根节点(无 parent_id)排前面**，子节点(有 parent_id)排后面，确保 parent_id 引用在列表中已存在。
+  - 若存在跨类型引用（如势力节点的 `controlled_territories` 引用地理节点 ID），确保被引用的节点在同一批或前一批已保存。
+  - 断点续接时若只需补充单个节点，才使用单节点工具（save_geo_node 等）。
 
 ## 一个典型的执行轨迹（修真题材）
 1. **检查断点**：read_geo_graph + read_faction_network + read_cultivation_chain + read_bible → 判断已有数据
 2. **规则设计**(若修为链缺失)：call_rule_smith(world_brief, genre, power_genre, themes)→ 拿到 CultivationNode[] + CultivationChain
-   → 逐个调用 save_cultivation_node(node=...) 落盘修为节点
+   → **一次性调用 save_cultivation_nodes(nodes=[...]) 落盘全部修为节点**
 3. **地理与势力设计**(若缺失)：call_geographer(world_brief, genre, themes, scale_hint)→ 拿到 GeoNode[] + FactionNode[]
-   → 先调 save_geo_node 落盘地理节点(根节点优先)
-   → 再调 save_faction_node 落盘势力节点
-4. **零散规则**(可选)：若有不宜归入节点的规则 → save_bible(rules=[...]) 或 save_setting_node(node=...)
+   → **一次性调用 save_geo_nodes(nodes=[...]) 落盘全部地理节点**
+   → **一次性调用 save_faction_nodes(nodes=[...]) 落盘全部势力节点**
+4. **零散规则**(可选)：若有不宜归入节点的规则 → save_bible(rules=[...]) 或 save_setting_nodes(nodes=[...])
 5. **伏笔**(可选)：append_foreshadowing(items=[...])
 6. 不再调用工具,任务结束。
 
 ## 一个典型的执行轨迹（科幻题材）
 1. **检查断点**：read_geo_graph + read_faction_network + read_tech_tree + read_bible → 判断已有数据
 2. **规则设计**(若科技树缺失)：call_rule_smith(world_brief, genre, power_genre, themes)→ 拿到 TechNode[] + TechTree
-   → 逐个调用 save_tech_node(node=...) 落盘科技节点
+   → **一次性调用 save_tech_nodes(nodes=[...]) 落盘全部科技节点**
 3. **地理与势力设计**(若缺失)：call_geographer(world_brief, genre, themes, scale_hint)→ 拿到 GeoNode[] + FactionNode[]
-   → 先调 save_geo_node 落盘地理节点(根节点优先)
-   → 再调 save_faction_node 落盘势力节点
-4. **零散规则**(可选)：save_setting_node(node=...) 或 save_bible(rules=[...])
+   → **一次性调用 save_geo_nodes(nodes=[...]) 落盘全部地理节点**
+   → **一次性调用 save_faction_nodes(nodes=[...]) 落盘全部势力节点**
+4. **零散规则**(可选)：save_setting_nodes(nodes=[...]) 或 save_bible(rules=[...])
 5. **伏笔**(可选)：append_foreshadowing(items=[...])
 6. 不再调用工具,任务结束。
 

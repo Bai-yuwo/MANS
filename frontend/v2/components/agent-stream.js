@@ -19,7 +19,20 @@ class AgentStream extends HTMLElement {
         this._reconnectCount = 0;
         this._maxReconnect = 10;
         this._reconnectTimer = null;
+        this._lastKbRefresh = 0;
     }
+
+    // 会修改知识库数据的工具列表（completed 后触发前端刷新）
+    static KB_WRITE_TOOLS = [
+        "save_bible", "append_foreshadowing", "apply_kb_diff",
+        "save_character", "save_relationships",
+        "save_outline", "save_arc", "save_chapter_plan",
+        "save_scene_beatsheet", "save_scene_draft", "save_scene_final",
+        "save_review_issues", "save_rewrite_guidance",
+        "save_geo_node", "save_faction_node", "save_cultivation_node",
+        "save_tech_node", "save_social_node", "save_setting_node",
+        "clear_checkpoint",
+    ];
 
     connectedCallback() {
         this.innerHTML = `
@@ -67,7 +80,6 @@ class AgentStream extends HTMLElement {
             this.eventSource = null;
         }
         this.projectId = projectId;
-        this.isRunning = true;
         this._paused = false;
 
         if (isReconnect) {
@@ -84,6 +96,8 @@ class AgentStream extends HTMLElement {
             // 不清空时尝试恢复该项目上次保存的流内容
             this._restoreContent();
         }
+
+        this.isRunning = true;
 
         this.eventSource = this.client.connectStream(projectId, (event) => {
             if (!this._paused) {
@@ -321,6 +335,19 @@ class AgentStream extends HTMLElement {
                 const toolSummary = this._formatToolCallSummary(tc, agent);
                 obox.textContent += toolSummary;
                 this._autoScroll(obox);
+            }
+
+            // 若本轮调用了 KB 写工具，广播 kb-changed 事件（防抖 3 秒）
+            const now = Date.now();
+            if (now - this._lastKbRefresh > 3000) {
+                const hasKbWrite = tc.some(t => AgentStream.KB_WRITE_TOOLS.includes(t.name));
+                if (hasKbWrite) {
+                    this._lastKbRefresh = now;
+                    this.dispatchEvent(new CustomEvent("kb-changed", {
+                        detail: { projectId: this.projectId, tools: tc.map(t => t.name) },
+                        bubbles: true,
+                    }));
+                }
             }
         } else if (event.type === "confirm" || event.type === "ask_user") {
             this._setStatus(event.type === "ask_user" ? "等待答复" : "等待确认");

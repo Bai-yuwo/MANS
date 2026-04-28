@@ -23,6 +23,7 @@ SSE 事件格式:
 
 import asyncio
 import json
+import os
 import shutil
 import uuid
 from datetime import datetime
@@ -828,8 +829,6 @@ async def save_chapter_content(
         - 若只有 draft，更新 draft。
         - 使用临时文件 + rename 做原子写入。
     """
-    import os
-
     proj_dir = _project_path(project_id)
 
     final_path = proj_dir / "chapters" / f"chapter_{chapter_number}_final.json"

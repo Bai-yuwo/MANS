@@ -52,16 +52,22 @@ class WorldArchitect(BaseAgent):
         "read_tech_tree",
         "read_social_system",
         "read_setting",
-        # 自身写组
+        # 自身写组（批量为主，单节点保留用于断点续接时单个修正）
         "save_bible",
         "append_foreshadowing",
         "save_geo_node",
         "save_faction_node",
         "save_cultivation_node",
-        # 新增写入工具（题材感知节点）
         "save_tech_node",
         "save_social_node",
         "save_setting_node",
+        # 批量写入工具（减少 ReAct 轮次）
+        "save_geo_nodes",
+        "save_faction_nodes",
+        "save_cultivation_nodes",
+        "save_tech_nodes",
+        "save_social_nodes",
+        "save_setting_nodes",
         # 可调专家
         "call_geographer",
         "call_rule_smith",

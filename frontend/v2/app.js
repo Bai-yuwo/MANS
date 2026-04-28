@@ -152,6 +152,20 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // --------------------------------------------------------
+    // 知识库数据变动 -> 自动刷新 overview
+    // --------------------------------------------------------
+    agentStream.addEventListener("kb-changed", async (e) => {
+        const { projectId } = e.detail;
+        if (!projectId) return;
+        try {
+            const overview = await client.getOverview(projectId);
+            stageWorkbench.updateStatus({ ...overview });
+        } catch (err) {
+            console.error("[KB] 自动刷新 overview 失败", err);
+        }
+    });
+
+    // --------------------------------------------------------
     // 用户确认 / 答复后续接
     // --------------------------------------------------------
     confirmDialog.addEventListener("confirm-responded", async (e) => {

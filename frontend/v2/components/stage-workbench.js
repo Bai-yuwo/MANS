@@ -531,11 +531,11 @@ class StageWorkbench extends HTMLElement {
     updateStatus(status) {
         if (!status || !this.project) return;
         const wasRunning = this._pumpRunning;
-        this.project.stage = status.stage;
-        this.project.current_chapter = status.current_chapter;
-        this._isRunning = !!status.session_active;
-        this._pumpRunning = !!status.pump_running;
-        this._waitingConfirm = !!status.waiting_confirm;
+        if (status.stage !== undefined) this.project.stage = status.stage;
+        if (status.current_chapter !== undefined) this.project.current_chapter = status.current_chapter;
+        if (status.session_active !== undefined) this._isRunning = !!status.session_active;
+        if (status.pump_running !== undefined) this._pumpRunning = !!status.pump_running;
+        if (status.waiting_confirm !== undefined) this._waitingConfirm = !!status.waiting_confirm;
         if (!wasRunning && this._pumpRunning) {
             this._startTimer();
         } else if (wasRunning && !this._pumpRunning) {

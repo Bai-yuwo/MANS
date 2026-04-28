@@ -38,6 +38,7 @@ from core.config import get_config
 from core.logging_config import get_logger
 from core.performance_logger import aggregate_token_audit
 from core.project_config import get_project_config
+from core.schemas import Genre
 from core.stream_packet import CompletedPayload, ConfirmPayload, StreamPacket
 
 from api.session_manager import get_session_manager
@@ -73,7 +74,7 @@ def _project_path(project_id: str) -> Path:
 # --------------------------------------------------------
 class CreateProjectRequest(BaseModel):
     name: str
-    genre: str = "玄幻"
+    genre: Genre = Genre.OTHER
     core_idea: str = ""
     protagonist_seed: str = ""
     target_length: str = "中篇(10-50万)"
@@ -1005,9 +1006,14 @@ async def get_batch_report(project_id: str):
     total_duration = data.get("total_duration_ms", 0)
     agent_breakdown = data.get("agent_breakdown", {})
 
-    # 估算场景数（如果 meta 中没有，从 Writer 的调用次数推断）
-    writer_count = agent_breakdown.get("Writer", {}).get("count", 0)
-    scenes_estimated = max(scenes_in_batch, writer_count)
+    # 估算场景数：按 (chapter_number, scene_index) 去重统计 Writer 调用
+    writer_entries = [e for e in entries if e.get("agent_name") == "Writer"]
+    scene_keys = set()
+    for e in writer_entries:
+        key = (e.get("chapter_number", 0), e.get("scene_index", -1))
+        if key[1] >= 0:
+            scene_keys.add(key)
+    scenes_estimated = max(scenes_in_batch, len(scene_keys))
 
     avg_per_scene = total_tokens // max(scenes_estimated, 1)
 

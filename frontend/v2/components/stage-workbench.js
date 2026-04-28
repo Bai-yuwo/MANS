@@ -322,9 +322,7 @@ class StageWorkbench extends HTMLElement {
                 ${_sw("auto_rewrite", "自动重写")}
                 ${_num("max_rewrite_attempts", "最大重写轮次", 0, 3)}
                 ${_sw("enable_consistency_check", "启用一致性检查")}
-                ${_num("token_budget_per_scene", "单场景 Token 预算(0=无限制)", 0, 1000000, 1000)}
-                ${_num("max_scenes_per_batch", "批量场景数", 1, 20)}
-                ${_sw("auto_continue_batch", "自动继续批量")}
+                ${_num("token_budget_per_scene", "单场景流水线 Token 预算(0=无限制)", 0, 1000000, 1000)}
                 <div style="display:flex;gap:6px;margin-top:8px;">
                     <button class="btn btn-secondary" id="btn-preset-fast" style="flex:1;font-size:11px;">快速模式</button>
                     <button class="btn btn-secondary" id="btn-preset-fine" style="flex:1;font-size:11px;">精细模式</button>
@@ -349,14 +347,12 @@ class StageWorkbench extends HTMLElement {
             area.querySelector("#cfg-auto_rewrite").checked = true;
             area.querySelector("#cfg-max_rewrite_attempts").value = 1;
             area.querySelector("#cfg-enable_consistency_check").checked = false;
-            area.querySelector("#cfg-auto_continue_batch").checked = true;
         });
         area.querySelector("#btn-preset-fine").addEventListener("click", () => {
             area.querySelector("#cfg-auto_advance").checked = false;
             area.querySelector("#cfg-auto_rewrite").checked = false;
             area.querySelector("#cfg-max_rewrite_attempts").value = 2;
             area.querySelector("#cfg-enable_consistency_check").checked = true;
-            area.querySelector("#cfg-auto_continue_batch").checked = false;
         });
         area.querySelector("#btn-save-config").addEventListener("click", () => this._saveConfigFromUI());
     }
@@ -367,13 +363,13 @@ class StageWorkbench extends HTMLElement {
 
         const payload = {};
         const keys = [
-            "auto_advance", "auto_rewrite", "enable_consistency_check", "auto_continue_batch",
+            "auto_advance", "auto_rewrite", "enable_consistency_check",
         ];
         keys.forEach(k => {
             const el = area.querySelector(`#cfg-${k}`);
             if (el) payload[k] = el.checked;
         });
-        ["max_rewrite_attempts", "token_budget_per_scene", "max_scenes_per_batch"].forEach(k => {
+        ["max_rewrite_attempts", "token_budget_per_scene"].forEach(k => {
             const el = area.querySelector(`#cfg-${k}`);
             if (el) payload[k] = parseInt(el.value, 10) || 0;
         });

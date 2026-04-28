@@ -102,6 +102,8 @@ class SceneShowrunner(BaseAgent):
         "call_consistency_auditor",
         "call_review_manager",
         "call_scribe",
+        # 重写决策时询问作者
+        "ask_user",
     ]
 
     # P2.1c 验证用,1 场景 + 1 轮 rewrite 预计 14-18 轮,留余量到 20。

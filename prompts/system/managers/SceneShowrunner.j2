@@ -26,15 +26,15 @@
    → save_scene_draft 落盘(自动写入 checkpoint)
 5. **量化指标**:call_scene_metrics_calculator(scene_text + beatsheet) → 结构化指标
    → 将 metrics 数据拼入下一轮调 Critic 的 user prompt
-6. **并行审查**:
-   - 若项目配置中未出现"启用一致性检查: 否"：**同一轮 tool_calls 中**同时调 call_critic、call_continuity_checker、call_consistency_auditor
-   - 若项目配置中出现"启用一致性检查: 否"：**同一轮 tool_calls 中**只调 call_critic、call_continuity_checker，**不调用** call_consistency_auditor
+6. **并行审查**:**同一轮 tool_calls 中**同时调 call_critic、call_continuity_checker、call_consistency_auditor
+   (这是 ReAct 并行的标准做法,LLM 会在一轮里产出三条 tool_call)
    → Critic 会基于 metrics 数据给出有数据支撑的 issues + scores
-   → ConsistencyAuditor(若启用)按 genre 审计战力/资源/科技/制度等内在一致性
-   → 拿到 issues + metrics → 拼成 ReviewIssues(含 metrics 字段) → save_review_issues 落盘(自动写入 checkpoint)
+   → ConsistencyAuditor 按 genre 审计战力/资源/科技/制度等内在一致性
+   → 拿到三组 issues + metrics → 拼成 ReviewIssues(含 metrics 字段) → save_review_issues 落盘(自动写入 checkpoint)
+   ⚠️ **注意**：如果 [项目配置] 区块中明确出现"【系统指令】一致性检查已关闭，不要调用 call_consistency_auditor"，则**本轮只调 call_critic 和 call_continuity_checker**，跳过 call_consistency_auditor。
 7. **仲裁**:call_review_manager(review_issues + 上下文)→ RewriteGuidance(含 needs_rewrite / priority_issues / must_keep / must_change / style_hints)
    → save_rewrite_guidance(guidance.rewrite_attempt 必须填对,自动写入 checkpoint)
-7. **判定重写(作者可控)**:
+8. **判定重写(作者可控)**:
    - 若 RewriteGuidance.needs_rewrite=false:
      → 直接接受当前草稿为本场终稿,继续第 8 步(不打扰作者)
    - 若 RewriteGuidance.needs_rewrite=true 且 rewrite_attempt < 2:

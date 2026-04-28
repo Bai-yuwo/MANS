@@ -459,6 +459,11 @@ class BaseAgent:
                 parts.extend(cfg_items)
                 parts.append("")
 
+            # 明确的系统指令（避免 LLM 依赖字符串存在性做脆弱判断）
+            if meta.get("enable_consistency_check") is False:
+                parts.append("【系统指令】一致性检查已关闭，不要调用 call_consistency_auditor")
+                parts.append("")
+
             if parts:
                 return "\n".join(parts) + base_prompt
         except Exception:

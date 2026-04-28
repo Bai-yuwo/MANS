@@ -23,6 +23,10 @@ class ChapterReader extends HTMLElement {
         this._splitView = false;
         this._sceneEditors = []; // 拆分视图下各场景编辑缓存
         this._api = typeof MANSApiClient !== "undefined" ? new MANSApiClient() : null;
+        this._selectionToolbar = null;
+        this._resultCard = null;
+        this._toolbarTimeout = null;
+        this._cardTimeout = null;
     }
 
     static get observedAttributes() {
@@ -48,6 +52,21 @@ class ChapterReader extends HTMLElement {
         this._render();
         if (this._projectId) {
             this._loadContent();
+        }
+    }
+
+    disconnectedCallback() {
+        if (this._outsideClickHandler) {
+            document.removeEventListener("mousedown", this._outsideClickHandler);
+            this._outsideClickHandler = null;
+        }
+        if (this._toolbarTimeout) {
+            clearTimeout(this._toolbarTimeout);
+            this._toolbarTimeout = null;
+        }
+        if (this._cardTimeout) {
+            clearTimeout(this._cardTimeout);
+            this._cardTimeout = null;
         }
     }
 
@@ -210,6 +229,10 @@ class ChapterReader extends HTMLElement {
             </button>
         `;
 
+        const regenBtn = `
+            <button class="btn-regen" title="重新生成本章">🔄</button>
+        `;
+
         this.innerHTML = `
             <div class="chapter-reader">
                 <div class="chapter-header">
@@ -222,6 +245,7 @@ class ChapterReader extends HTMLElement {
                         ${statusBadge}
                         ${editBtn}
                         ${splitBtn}
+                        ${regenBtn}
                     </div>
                 </div>
                 <div class="chapter-body">
@@ -236,12 +260,21 @@ class ChapterReader extends HTMLElement {
         const editBtnEl = this.querySelector(".btn-edit");
         const saveBtnEl = this.querySelector(".btn-save");
         const splitBtnEl = this.querySelector(".btn-split");
+        const regenBtnEl = this.querySelector(".btn-regen");
 
         if (prevBtn) prevBtn.addEventListener("click", () => this._prevChapter());
         if (nextBtn) nextBtn.addEventListener("click", () => this._nextChapter());
         if (editBtnEl) editBtnEl.addEventListener("click", () => this._toggleEdit());
         if (saveBtnEl) saveBtnEl.addEventListener("click", () => this._saveContent());
         if (splitBtnEl) splitBtnEl.addEventListener("click", () => this._toggleSplitView());
+        if (regenBtnEl) regenBtnEl.addEventListener("click", () => this._onRegenerate());
+
+        // 绑定划词搜索事件（仅在非编辑模式下）
+        this._bindSelectionEvents();
+
+        // 恢复悬浮元素（innerHTML 渲染后需重新 append）
+        if (this._selectionToolbar) this.appendChild(this._selectionToolbar);
+        if (this._resultCard) this.appendChild(this._resultCard);
     }
 
     _renderSplitReaders(sceneTexts) {
@@ -292,6 +325,262 @@ class ChapterReader extends HTMLElement {
             .split(/\n\n+/)
             .map((p) => `<p>${this._escapeHtml(p).replace(/\n/g, "<br>")}</p>`)
             .join("");
+    }
+
+    // --------------------------------------------------------
+    // 重新生成
+    // --------------------------------------------------------
+    _onRegenerate() {
+        if (!this._projectId) return;
+        const confirmed = confirm(
+            `确定重新生成本章？当前草稿将被覆盖。\n\n` +
+            `SceneShowrunner 会保留已有节拍表，仅从 Writer 步骤重新生成。`
+        );
+        if (!confirmed) return;
+
+        const instruction = `拒绝当前草稿，要求 SceneShowrunner 从 checkpoint 的 beatsheet 步骤重新生成本章`;
+
+        if (this._api) {
+            this._api.sendCommand(this._projectId, instruction)
+                .then(() => {
+                    // 发送成功后，通知外部重新连接 SSE
+                    this.dispatchEvent(new CustomEvent("regenerate-requested", {
+                        detail: { projectId: this._projectId, chapterNumber: this._chapterNumber },
+                        bubbles: true,
+                    }));
+                })
+                .catch((err) => {
+                    alert("发送重新生成指令失败: " + err.message);
+                });
+        }
+    }
+
+    // --------------------------------------------------------
+    // 划词搜索 KB
+    // --------------------------------------------------------
+    _bindSelectionEvents() {
+        if (this._editing) return; // 编辑模式下不启用划词搜索
+        const chapterBody = this.querySelector(".chapter-body");
+        if (!chapterBody) return;
+
+        chapterBody.addEventListener("mouseup", (e) => this._onTextSelected(e));
+
+        // 点击外部隐藏工具条和卡片
+        this._outsideClickHandler = (e) => {
+            if (!this.contains(e.target)) {
+                this._hideSelectionToolbar();
+                this._hideResultCard();
+            }
+        };
+        document.addEventListener("mousedown", this._outsideClickHandler);
+    }
+
+    _onTextSelected(e) {
+        // 如果点击在悬浮元素上，忽略
+        if (e.target.closest(".kb-selection-toolbar") || e.target.closest(".kb-result-card")) {
+            return;
+        }
+
+        const selection = window.getSelection();
+        const text = (selection?.toString() || "").trim();
+        if (!text || text.length < 2) {
+            this._hideSelectionToolbar();
+            return;
+        }
+
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        this._showSelectionToolbar(text, rect);
+    }
+
+    _showSelectionToolbar(text, rect) {
+        this._hideSelectionToolbar();
+        this._hideResultCard();
+
+        const toolbar = document.createElement("div");
+        toolbar.className = "kb-selection-toolbar";
+        toolbar.innerHTML = `
+            <button data-type="character" title="查询角色">🔍 查角色</button>
+            <button data-type="location" title="查询地点">🔍 查地点</button>
+            <button data-type="foreshadowing" title="查询伏笔">🔍 查伏笔</button>
+        `;
+        toolbar.querySelectorAll("button").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                this._searchKB(btn.dataset.type, text);
+                this._hideSelectionToolbar();
+            });
+        });
+
+        this.appendChild(toolbar);
+        this._positionFloatingElement(toolbar, rect, "above");
+        this._selectionToolbar = toolbar;
+
+        // 5 秒后自动消失
+        this._toolbarTimeout = setTimeout(() => this._hideSelectionToolbar(), 5000);
+    }
+
+    _hideSelectionToolbar() {
+        if (this._toolbarTimeout) {
+            clearTimeout(this._toolbarTimeout);
+            this._toolbarTimeout = null;
+        }
+        if (this._selectionToolbar) {
+            this._selectionToolbar.remove();
+            this._selectionToolbar = null;
+        }
+    }
+
+    _positionFloatingElement(el, rect, position = "above") {
+        const hostRect = this.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+
+        let left = rect.left - hostRect.left + (rect.width / 2) - (elRect.width / 2);
+        let top;
+        if (position === "above") {
+            top = rect.top - hostRect.top - elRect.height - 8;
+        } else {
+            top = rect.bottom - hostRect.top + 8;
+        }
+
+        // 边界限制
+        left = Math.max(4, Math.min(left, hostRect.width - elRect.width - 4));
+        top = Math.max(4, top);
+
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+    }
+
+    async _searchKB(type, query) {
+        if (!this._api || !this._projectId) return;
+
+        let result;
+        try {
+            if (type === "character") {
+                result = await this._api.searchCharacter(this._projectId, query);
+            } else if (type === "location") {
+                result = await this._api.searchLocation(this._projectId, query);
+            } else if (type === "foreshadowing") {
+                result = await this._api.searchForeshadowing(this._projectId, query);
+            }
+        } catch (err) {
+            result = { found: false, message: "查询失败" };
+        }
+
+        // 用选区位置作为卡片锚点（选区可能已消失，用鼠标位置兜底）
+        const anchorRect = this._lastSelectionRect || { left: 100, top: 100, width: 0, height: 0 };
+        this._showResultCard(type, result, anchorRect);
+    }
+
+    _showResultCard(type, result, anchorRect) {
+        this._hideResultCard();
+
+        const card = document.createElement("div");
+        card.className = "kb-result-card";
+
+        if (!result || !result.found) {
+            card.innerHTML = `
+                <div class="kb-result-header">查询结果</div>
+                <div class="kb-result-body">
+                    <div class="kb-result-empty">${this._escapeHtml(result?.message || "暂无记录")}</div>
+                </div>
+            `;
+        } else if (result.multiple) {
+            const items = (result.candidates || []).map((c) =>
+                `• ${this._escapeHtml(c.name || c.id || "未知")}`
+            ).join("<br>");
+            card.innerHTML = `
+                <div class="kb-result-header">找到多个匹配</div>
+                <div class="kb-result-body">${items}</div>
+            `;
+        } else {
+            card.innerHTML = this._renderCardContent(type, result.data);
+        }
+
+        this.appendChild(card);
+        this._positionFloatingElement(card, anchorRect, "below");
+        this._resultCard = card;
+
+        // 5 秒后自动消失
+        this._cardTimeout = setTimeout(() => this._hideResultCard(), 5000);
+    }
+
+    _hideResultCard() {
+        if (this._cardTimeout) {
+            clearTimeout(this._cardTimeout);
+            this._cardTimeout = null;
+        }
+        if (this._resultCard) {
+            this._resultCard.remove();
+            this._resultCard = null;
+        }
+    }
+
+    _renderCardContent(type, data) {
+        if (type === "character") return this._renderCharacterCard(data);
+        if (type === "location") return this._renderLocationCard(data);
+        if (type === "foreshadowing") return this._renderForeshadowingCard(data);
+        return `<div class="kb-result-empty">未知类型</div>`;
+    }
+
+    _renderCharacterCard(data) {
+        const name = this._escapeHtml(data.name || "未知角色");
+        const realm = this._escapeHtml(data.cultivation_realm || data.current_realm || "");
+        const emotion = this._escapeHtml(data.current_emotion || "");
+        const voice = this._escapeHtml((data.voice_keywords || []).join(", "));
+        const goals = this._escapeHtml((data.active_goals || []).join(", "));
+        const personality = this._escapeHtml(data.personality_core || "");
+
+        return `
+            <div class="kb-result-header">${name} ${realm ? `<span class="kb-result-tag">${realm}</span>` : ""}</div>
+            <div class="kb-result-body">
+                ${personality ? `<div class="kb-result-row"><span class="kb-result-label">性格</span><span class="kb-result-value">${personality}</span></div>` : ""}
+                ${emotion ? `<div class="kb-result-row"><span class="kb-result-label">情绪</span><span class="kb-result-value">${emotion}</span></div>` : ""}
+                ${voice ? `<div class="kb-result-row"><span class="kb-result-label">声线</span><span class="kb-result-value">${voice}</span></div>` : ""}
+                ${goals ? `<div class="kb-result-row"><span class="kb-result-label">目标</span><span class="kb-result-value">${goals}</span></div>` : ""}
+            </div>
+        `;
+    }
+
+    _renderLocationCard(data) {
+        const name = this._escapeHtml(data.name || data.node_id || "未知地点");
+        const nodeType = this._escapeHtml(data.node_type || "");
+        const scale = this._escapeHtml(data.scale || "");
+        const desc = this._escapeHtml(data.description || data.short_description || "");
+        const faction = this._escapeHtml((data.faction_control || []).join(", "));
+
+        return `
+            <div class="kb-result-header">${name} ${nodeType ? `<span class="kb-result-tag">${nodeType}</span>` : ""}</div>
+            <div class="kb-result-body">
+                ${scale ? `<div class="kb-result-row"><span class="kb-result-label">规模</span><span class="kb-result-value">${scale}</span></div>` : ""}
+                ${faction ? `<div class="kb-result-row"><span class="kb-result-label">势力</span><span class="kb-result-value">${faction}</span></div>` : ""}
+                ${desc ? `<div class="kb-result-desc">${desc}</div>` : ""}
+            </div>
+        `;
+    }
+
+    _renderForeshadowingCard(data) {
+        // data 可能是数组（最多3条）
+        const items = Array.isArray(data) ? data : [data];
+        const sections = items.map((item) => {
+            const desc = this._escapeHtml(item.description || "");
+            const status = this._escapeHtml(item.status || "unknown");
+            const triggerRange = this._escapeHtml(item.trigger_range || "");
+            const statusClass = status === "triggered" ? "resolved" : "planted";
+            return `
+                <div class="kb-fs-item">
+                    <div class="kb-fs-status">
+                        <span class="kb-result-tag ${statusClass}">${status}</span>
+                        ${triggerRange ? `<span class="kb-result-tag">${triggerRange}</span>` : ""}
+                    </div>
+                    <div class="kb-result-desc">${desc}</div>
+                </div>
+            `;
+        }).join("");
+
+        return `
+            <div class="kb-result-header">伏笔</div>
+            <div class="kb-result-body">${sections}</div>
+        `;
     }
 }
 

@@ -31,13 +31,16 @@ core/expert_tool.py
 
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, ClassVar, Optional
 
 from core.base_tool import BaseTool
 from core.config import AGENT_DEFINITIONS, get_config
+from core.context import require_current_project_id
 from core.llm_client import LLMClient
 from core.logging_config import get_logger
+from core.performance_logger import log_token_audit
 from core.stream_packet import StreamPacket
 
 logger = get_logger("core.expert_tool")
@@ -190,6 +193,7 @@ class ExpertTool(BaseTool):
         self._validate_class_attrs()
         self._stream_sink: Optional[StreamSink] = None
         self._last_response_id: str = ""
+        self._last_usage: dict = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     # --------------------------------------------------------
     # 类属性合法性校验(实例化时执行,避免启动后才发现配置错误)
@@ -243,8 +247,10 @@ class ExpertTool(BaseTool):
         基础执行流程:加载 system → 渲染 user → 调 LLM → 返回字符串。
 
         子类可重写 `_postprocess()` 做产出校验/再加工,但**不要重写 execute**——
-        重写会绕过日志、流式 sink、错误兜底等基础设施。
+        重写会绕过日志、流式 sink、错误兜底、token 审计等基础设施。
         """
+        start_time = time.time()
+        self._last_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         client = self._get_client()
         cfg = get_config()
         rt = cfg.get_for_agent(self.expert_name)
@@ -282,7 +288,31 @@ class ExpertTool(BaseTool):
                 json_schema=self.output_schema,
             )
             self._last_response_id = resp.res_id
+            self._last_usage = {
+                "input_tokens": resp.usage.get("input_tokens", 0) if resp.usage else 0,
+                "output_tokens": resp.usage.get("output_tokens", 0) if resp.usage else 0,
+                "total_tokens": resp.usage.get("total_tokens", 0) if resp.usage else 0,
+            }
             content = resp.content
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        # Token 审计记录(非阻塞,失败不影响主流程)
+        try:
+            pid = require_current_project_id()
+            await log_token_audit(
+                project_id=pid,
+                agent_name=self.expert_name,
+                agent_kind="expert",
+                chapter_number=kwargs.get("chapter_number", 0),
+                scene_index=kwargs.get("scene_index", 0),
+                duration_ms=duration_ms,
+                input_tokens=self._last_usage.get("input_tokens", 0),
+                output_tokens=self._last_usage.get("output_tokens", 0),
+                total_tokens=self._last_usage.get("total_tokens", 0),
+            )
+        except Exception as e:
+            logger.debug(f"专家 token 审计记录失败(非阻塞): {e}")
 
         return await self._postprocess(content, **kwargs)
 
@@ -327,6 +357,11 @@ class ExpertTool(BaseTool):
                 full_text.append(packet.content)
             elif packet.type == "completed" and isinstance(packet.content, CompletedPayload):
                 self._last_response_id = packet.content.res_id
+                self._last_usage = {
+                    "input_tokens": packet.content.input_tokens,
+                    "output_tokens": packet.content.output_tokens,
+                    "total_tokens": packet.content.total_tokens,
+                }
         return "".join(full_text)
 
     # --------------------------------------------------------

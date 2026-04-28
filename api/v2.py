@@ -36,6 +36,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from core.config import get_config
 from core.logging_config import get_logger
+from core.performance_logger import aggregate_token_audit
 from core.stream_packet import CompletedPayload, ConfirmPayload, StreamPacket
 
 from api.session_manager import get_session_manager
@@ -43,6 +44,7 @@ from knowledge_bases.bible_db import BibleDB
 from knowledge_bases.foreshadowing_db import ForeshadowingDB
 from knowledge_bases.character_db import CharacterDB
 from knowledge_bases.story_db import StoryDB
+from knowledge_bases.geo_db import GeoDB
 
 logger = get_logger("api.v2")
 
@@ -851,4 +853,107 @@ async def save_chapter_content(
         "success": True,
         "chapter_number": chapter_number,
         "is_final": target_path == final_path,
+    }
+
+
+# --------------------------------------------------------
+# KB 划词查询（供 chapter-reader 悬浮卡片使用）
+# --------------------------------------------------------
+
+@router.get("/projects/{project_id}/kb/character")
+async def kb_search_character(project_id: str, name: str = ""):
+    """
+    按名称查询角色卡。支持精确匹配或子串模糊匹配。
+    """
+    if not name:
+        raise HTTPException(status_code=400, detail="缺少 name 参数")
+    _project_path(project_id)
+
+    char_db = CharacterDB(project_id)
+    # 先精确匹配
+    char = await char_db.get_character(name)
+    if char:
+        return {"found": True, "type": "character", "data": char.model_dump()}
+
+    # 模糊匹配：遍历所有角色找名称包含 query 的
+    all_chars = await char_db.list_all_characters()
+    matches = [c for c in all_chars if name.lower() in (c.get("name") or "").lower()]
+    if len(matches) == 1:
+        return {"found": True, "type": "character", "data": matches[0]}
+    if len(matches) > 1:
+        return {"found": True, "type": "character", "multiple": True,
+                "candidates": [{"name": c.get("name"), "id": c.get("id", "")} for c in matches[:5]]}
+
+    return {"found": False, "type": "character", "message": "暂无记录"}
+
+
+@router.get("/projects/{project_id}/kb/location")
+async def kb_search_location(project_id: str, name: str = ""):
+    """
+    按名称查询地理节点。
+    """
+    if not name:
+        raise HTTPException(status_code=400, detail="缺少 name 参数")
+    _project_path(project_id)
+
+    geo_db = GeoDB(project_id)
+    node = await geo_db.get_node_by_name(name)
+    if node:
+        return {"found": True, "type": "location", "data": node.model_dump()}
+
+    # 模糊匹配
+    all_nodes = await geo_db.list_all_nodes()
+    matches = [n for n in all_nodes if name.lower() in (n.name or "").lower()]
+    if len(matches) == 1:
+        return {"found": True, "type": "location", "data": matches[0].model_dump()}
+    if len(matches) > 1:
+        return {"found": True, "type": "location", "multiple": True,
+                "candidates": [{"name": n.name, "id": n.node_id} for n in matches[:5]]}
+
+    return {"found": False, "type": "location", "message": "暂无记录"}
+
+
+@router.get("/projects/{project_id}/kb/foreshadowing")
+async def kb_search_foreshadowing(project_id: str, keyword: str = ""):
+    """
+    按关键词查询伏笔条目（在 description 中子串匹配）。
+    """
+    if not keyword:
+        raise HTTPException(status_code=400, detail="缺少 keyword 参数")
+    _project_path(project_id)
+
+    fs_db = ForeshadowingDB(project_id)
+    all_items = await fs_db.list_all_foreshadowing()
+    matches = [item for item in all_items
+               if keyword.lower() in (item.get("description") or "").lower()]
+
+    if matches:
+        return {"found": True, "type": "foreshadowing",
+                "data": matches[:3]}  # 最多返回3条
+    return {"found": False, "type": "foreshadowing", "message": "暂无记录"}
+
+
+@router.get("/projects/{project_id}/performance")
+async def get_performance(project_id: str, chapter_number: int = 0, scene_index: int = -1):
+    """
+    查询 Token 审计与执行时长聚合数据。
+
+    参数:
+        chapter_number: 0 表示查询项目级全部数据
+        scene_index: -1 表示查询章节级全部场景; >=0 表示单场景
+    """
+    _project_path(project_id)
+
+    kwargs = {"workspace_root": str(_WORKSPACE_ROOT)}
+    if chapter_number > 0:
+        kwargs["chapter_number"] = chapter_number
+    if scene_index >= 0:
+        kwargs["scene_index"] = scene_index
+
+    data = await aggregate_token_audit(project_id, **kwargs)
+    return {
+        "project_id": project_id,
+        "chapter_number": chapter_number if chapter_number > 0 else None,
+        "scene_index": scene_index if scene_index >= 0 else None,
+        **data,
     }

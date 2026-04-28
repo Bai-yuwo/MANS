@@ -141,6 +141,40 @@ class MANSApiClient {
     }
 
     // --------------------------------------------------------
+    // KB 划词查询（chapter-reader 悬浮卡片）
+    // --------------------------------------------------------
+    async searchCharacter(projectId, name) {
+        const res = await fetch(
+            this._url(`/api/v2/projects/${projectId}/kb/character?name=${encodeURIComponent(name)}`)
+        );
+        return this._json(res);
+    }
+
+    async searchLocation(projectId, name) {
+        const res = await fetch(
+            this._url(`/api/v2/projects/${projectId}/kb/location?name=${encodeURIComponent(name)}`)
+        );
+        return this._json(res);
+    }
+
+    async searchForeshadowing(projectId, keyword) {
+        const res = await fetch(
+            this._url(`/api/v2/projects/${projectId}/kb/foreshadowing?keyword=${encodeURIComponent(keyword)}`)
+        );
+        return this._json(res);
+    }
+
+    async getPerformance(projectId, chapterNumber = 0, sceneIndex = -1) {
+        let url = this._url(`/api/v2/projects/${projectId}/performance`);
+        const params = [];
+        if (chapterNumber > 0) params.push(`chapter_number=${chapterNumber}`);
+        if (sceneIndex >= 0) params.push(`scene_index=${sceneIndex}`);
+        if (params.length) url += `?${params.join("&")}`;
+        const res = await fetch(url);
+        return this._json(res);
+    }
+
+    // --------------------------------------------------------
     // SSE 流式
     // --------------------------------------------------------
     connectStream(projectId, onEvent) {

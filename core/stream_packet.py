@@ -41,6 +41,8 @@ class CompletedPayload(BaseModel):
     字段:
         res_id: 本次响应的 ID,作为下一轮的 previous_response_id 续接。
         total_tokens: 本次累计消耗的 token 数(input + output)。
+        input_tokens: 输入 token 数(ARK usage.input_tokens)。
+        output_tokens: 输出 token 数(ARK usage.output_tokens)。
         tool_calls: 本轮 LLM 决定调用的所有工具,空列表表示 ReAct 循环可以退出。
         output_types: 本轮响应中包含的输出类型列表(如 ["reasoning", "output_text", "function_call"]),
                       供前端了解本轮有哪些类型的输出。
@@ -49,6 +51,8 @@ class CompletedPayload(BaseModel):
 
     res_id: str
     total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     tool_calls: List[ToolCallData] = []
     output_types: List[str] = Field(default_factory=list)
 

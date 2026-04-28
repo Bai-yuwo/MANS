@@ -63,6 +63,12 @@ Writer 的写作能力很强,但如果让它直接读 bible / character / foresh
 - **must_avoid**:显式禁止事项(如「不要心理独白」「不要回忆穿插」「不要解释设定」)
 - **recommended_style_types**:根据 narrative_function 和 action_beats 中 beat_type 的分布,推断主导场景类型,供 SceneShowrunner 检索风格库使用。可选值:["fight","dialogue","psychology","environment","emotional_burst"]
   - 示例:climax + action 占 60% → ["fight"]; setup + description 占 50% → ["environment"]; emotional_beats 密集 → ["emotional_burst"]
+- **recommended_hook_type**:推荐开场方式,帮助 Writer 避免场景开头单调重复。根据 narrative_function + beat_type 分布推断:
+  - setup 且 description 占主导 → `"环境承接"`(用环境变化暗示时间/空间推移)
+  - climax 且 dialogue 占主导 → `"对话切入"`(以一句关键对话直接切入冲突)
+  - rising_action 且 action 占主导 → `"人物动作承接"`(以主角动作承接上一场情绪)
+  - transition 或 falling_action → `"人物动作承接"` 或 `"环境承接"`(余波用动作收束,过渡用环境切换)
+  - 若无法明确匹配,留空让 Writer 自由发挥
 
 ## 叙事功能与节拍密度(新增)
 根据 scene_plan.narrative_function 调整节拍数量和密度:

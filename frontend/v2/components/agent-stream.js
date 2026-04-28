@@ -16,6 +16,9 @@ class AgentStream extends HTMLElement {
         this.eventSource = null;
         this.isRunning = false;
         this._paused = false;
+        this._reconnectCount = 0;
+        this._maxReconnect = 10;
+        this._reconnectTimer = null;
     }
 
     connectedCallback() {
@@ -53,17 +56,26 @@ class AgentStream extends HTMLElement {
     }
 
     start(projectId, options = {}) {
-        const { clear = true } = options;
+        const { clear = true, isReconnect = false } = options;
         if (this.eventSource) {
             this.eventSource.close();
+            this.eventSource = null;
         }
         this.projectId = projectId;
         this.isRunning = true;
         this._paused = false;
-        this._setStatus("连接中...");
+
+        if (isReconnect) {
+            this._reconnectCount++;
+            this._setStatus(`重连中...(第${this._reconnectCount}次)`);
+        } else {
+            this._reconnectCount = 0;
+            this._setStatus("连接中...");
+        }
+
         if (clear) {
             this.clear();
-        } else {
+        } else if (!isReconnect) {
             // 不清空时尝试恢复该项目上次保存的流内容
             this._restoreContent();
         }
@@ -73,10 +85,83 @@ class AgentStream extends HTMLElement {
                 this._handleEvent(event);
             }
         });
+
+        // 覆盖 onopen：重连成功后同步后端状态
+        this.eventSource.onopen = () => {
+            console.log("[SSE] 连接已建立", projectId);
+            if (this._reconnectCount > 0) {
+                this._setStatus("运行中");
+                this._syncStatus();
+            }
+        };
+
+        // 覆盖 onerror，接管重连逻辑
+        this.eventSource.onerror = (e) => {
+            this._onSseError(e);
+        };
+    }
+
+    _onSseError(e) {
+        console.error("[SSE] 连接错误", e);
+        if (!this.isRunning) return;
+
+        if (this._reconnectCount < this._maxReconnect) {
+            const backoffMs = Math.min(Math.pow(2, this._reconnectCount) * 1000, 30000);
+            this._setStatus(`断线，${backoffMs / 1000}秒后重连...`);
+            const obox = this.querySelector("#output-box");
+            if (obox) {
+                obox.textContent += `\n[SSE] 连接中断，${backoffMs / 1000}秒后尝试重连(第${this._reconnectCount + 1}次)...\n`;
+                this._autoScroll(obox);
+            }
+            this._reconnectTimer = setTimeout(() => {
+                this.start(this.projectId, { clear: false, isReconnect: true });
+            }, backoffMs);
+        } else {
+            this._setStatus("重连失败");
+            const obox = this.querySelector("#output-box");
+            if (obox) {
+                obox.textContent += `\n[SSE] 重连次数已达上限(${this._maxReconnect}次)，请手动刷新页面。\n`;
+                this._autoScroll(obox);
+            }
+            this.isRunning = false;
+            this._notifyEnded("error", "SSE 重连失败");
+        }
+    }
+
+    async _syncStatus() {
+        if (!this.projectId) return;
+        try {
+            const status = await this.client.getStatus(this.projectId);
+            if (!status.pump_running && this.isRunning) {
+                // 后端 pump 已结束但前端仍显示运行中，自动修正
+                this._setStatus("已完成");
+                this.isRunning = false;
+                if (this._reconnectTimer) {
+                    clearTimeout(this._reconnectTimer);
+                    this._reconnectTimer = null;
+                }
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.eventSource = null;
+                }
+                this._notifyEnded("done");
+                const obox = this.querySelector("#output-box");
+                if (obox) {
+                    obox.textContent += "\n[系统] 后端任务已完成，流已关闭。\n";
+                    this._autoScroll(obox);
+                }
+            }
+        } catch (e) {
+            console.error("[SSE] 状态同步失败", e);
+        }
     }
 
     stop() {
         this.isRunning = false;
+        if (this._reconnectTimer) {
+            clearTimeout(this._reconnectTimer);
+            this._reconnectTimer = null;
+        }
         if (this.eventSource) {
             this.eventSource.close();
             this.eventSource = null;
@@ -248,6 +333,15 @@ class AgentStream extends HTMLElement {
                 this._autoScroll(obox);
             }
         } else if (event.type === "error" || event.type === "sse_error") {
+            // 若仍在运行且未达重连上限，视为可恢复中断，由 _onSseError 统一处理重连
+            if (this.isRunning && this._reconnectCount < this._maxReconnect) {
+                const obox = this.querySelector("#output-box");
+                if (obox) {
+                    obox.textContent += `\n[提示] 连接中断，正在尝试自动恢复...\n`;
+                    this._autoScroll(obox);
+                }
+                return;
+            }
             const obox = this.querySelector("#output-box");
             const msg = event.data.error || event.data.message || "未知错误";
             if (obox) {
@@ -262,6 +356,12 @@ class AgentStream extends HTMLElement {
             this.isRunning = false;
             this._notifyEnded("done");
         }
+
+        // 每次事件处理后广播 packet 到达（供 review-panel 等解锁按钮用）
+        this.dispatchEvent(new CustomEvent("stream-packet", {
+            detail: { type: event.type, agent: event.data?.agent || "" },
+            bubbles: true,
+        }));
 
         // 每次事件处理后持久化到 sessionStorage（刷新后可恢复）
         this._persistContent();

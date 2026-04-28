@@ -41,6 +41,14 @@
 【题材】{{ genre }}
 {% endif %}
 
+{% if recommended_hook_type %}
+【推荐开场方式】{{ recommended_hook_type }}
+{% endif %}
+
+{% if hook_type_dedup_hint %}
+【开场方式提示】{{ hook_type_dedup_hint }}
+{% endif %}
+
 {% if style_examples %}
 【风格示范文本】(来自风格库,仅作语感参考,不要直接复制情节)
 {% for ex in style_examples %}

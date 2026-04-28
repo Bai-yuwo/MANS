@@ -524,11 +524,15 @@ class LLMClient:
                             )
                     usage = getattr(resp, "usage", None)
                     total_tokens = getattr(usage, "total_tokens", 0) if usage else 0
+                    input_tokens = getattr(usage, "input_tokens", 0) if usage else 0
+                    output_tokens = getattr(usage, "output_tokens", 0) if usage else 0
                     yield StreamPacket(
                         type="completed",
                         content=CompletedPayload(
                             res_id=getattr(resp, "id", "") or "",
                             total_tokens=total_tokens,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
                             tool_calls=extracted,
                             output_types=output_types,
                         ),
@@ -700,6 +704,8 @@ class LLMClient:
         full_text = []
         res_id = ""
         total_tokens = 0
+        input_tokens = 0
+        output_tokens = 0
         try:
             async for packet in self.stream_call(
                 agent_name=agent_name,
@@ -717,6 +723,8 @@ class LLMClient:
                 elif packet.type == "completed" and isinstance(packet.content, CompletedPayload):
                     res_id = packet.content.res_id
                     total_tokens = packet.content.total_tokens
+                    input_tokens = packet.content.input_tokens
+                    output_tokens = packet.content.output_tokens
                 elif packet.type == "error":
                     raise LLMError(
                         packet.content if isinstance(packet.content, str) else "未知流错误",
@@ -732,7 +740,11 @@ class LLMClient:
             content=cleaned,
             model=rt.model,
             provider="ark",
-            usage={"total_tokens": total_tokens},
+            usage={
+                "total_tokens": total_tokens,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
             res_id=res_id,
         )
 

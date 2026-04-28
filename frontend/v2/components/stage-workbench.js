@@ -18,6 +18,13 @@ class StageWorkbench extends HTMLElement {
         this._pumpRunning = false;
         this._waitingConfirm = false;
         this._lastOverview = null;
+        this._timerStart = 0;
+        this._timerInterval = null;
+        this._elapsedMs = 0;
+    }
+
+    disconnectedCallback() {
+        this._stopTimer();
     }
 
     connectedCallback() {
@@ -34,6 +41,7 @@ class StageWorkbench extends HTMLElement {
     setProject(projectId, project) {
         this.projectId = projectId;
         this.project = project;
+        this._resetTimer();
         this._render();
         this._loadOverview();
         this._renderChapterReader();
@@ -54,10 +62,20 @@ class StageWorkbench extends HTMLElement {
             COMPLETED: "已完成：全书写作结束",
         };
 
+        const currentElapsed = this._pumpRunning && this._timerStart > 0
+            ? Date.now() - this._timerStart
+            : this._elapsedMs;
+        const timerHtml = currentElapsed > 0
+            ? `<span class="stage-timer" id="stage-timer">${this._formatElapsed(currentElapsed)}</span>`
+            : "";
+
         container.innerHTML = `
             <div class="card" style="margin-bottom:16px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                    <span class="stage-badge ${stage.toLowerCase()}">${stage}</span>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="stage-badge ${stage.toLowerCase()}">${stage}</span>
+                        ${timerHtml}
+                    </div>
                     <span style="font-size:11px;color:var(--text-secondary)">第 ${this.project?.current_chapter || 0} 章</span>
                 </div>
                 <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;">
@@ -407,11 +425,17 @@ class StageWorkbench extends HTMLElement {
 
     updateStatus(status) {
         if (!status || !this.project) return;
+        const wasRunning = this._pumpRunning;
         this.project.stage = status.stage;
         this.project.current_chapter = status.current_chapter;
         this._isRunning = !!status.session_active;
         this._pumpRunning = !!status.pump_running;
         this._waitingConfirm = !!status.waiting_confirm;
+        if (!wasRunning && this._pumpRunning) {
+            this._startTimer();
+        } else if (wasRunning && !this._pumpRunning) {
+            this._stopTimer();
+        }
         if (status.bible) this._lastOverview = status;
         this._render();
         this._loadOverview();
@@ -437,6 +461,44 @@ class StageWorkbench extends HTMLElement {
         } else {
             area.innerHTML = "";
         }
+    }
+
+    _startTimer() {
+        if (this._timerInterval) return;
+        this._timerStart = Date.now() - this._elapsedMs;
+        this._timerInterval = setInterval(() => {
+            const el = this.querySelector("#stage-timer");
+            if (el) {
+                el.textContent = this._formatElapsed(Date.now() - this._timerStart);
+            }
+        }, 1000);
+        const el = this.querySelector("#stage-timer");
+        if (el) {
+            el.textContent = this._formatElapsed(Date.now() - this._timerStart);
+        }
+    }
+
+    _stopTimer() {
+        if (this._timerInterval) {
+            clearInterval(this._timerInterval);
+            this._timerInterval = null;
+        }
+        if (this._timerStart > 0) {
+            this._elapsedMs = Date.now() - this._timerStart;
+        }
+    }
+
+    _resetTimer() {
+        this._stopTimer();
+        this._timerStart = 0;
+        this._elapsedMs = 0;
+    }
+
+    _formatElapsed(ms) {
+        const totalSeconds = Math.floor(ms / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `已运行 ${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
     }
 
     async _loadChapterReviewSummary(chapterNumber) {

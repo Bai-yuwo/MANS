@@ -61,6 +61,12 @@
   - `暂停并评论:` → 保存当前状态,将评语追加到当前场景的 notes(不阻塞,继续后续流程)
   - `接受当前场景,跳过重写` → 若当前处于重写判定阶段,直接接受当前稿为终稿,跳过后续重写循环
   - `触发重写,补充意见:` → 若当前处于重写判定阶段,将补充意见以 `[作者补充意见] {评语}` 格式追加到 rewrite_guidance.style_hints,然后触发 Writer 重写
+  - `拒绝当前草稿，要求重新生成` / `从 checkpoint 的 beatsheet 步骤重新生成` → 识别后执行:
+    1. 清除本章 `chapter_{n}_draft.json` 中当前场景的 `text`（保留 scene_index 结构）
+    2. 保留 `scene_beatsheets`（节拍表不删）
+    3. 从 checkpoint 的 `beatsheet` 步骤续接（跳过 `call_scene_director`，直接调 `call_writer`）
+    4. 正常走审查流程（metrics → 并行审查 → ReviewManager → 重写判定）
+    5. **注意**:重新生成会重置 `rewrite_attempt` 为 0，相当于全新首稿
   - 若当前不处于重写判定阶段(如正在写首稿或已落 final),记录评语到日志但不打断当前流程
 - **最多 2 轮自动重写**:rewrite_attempt 从 0 开始递增(0=首稿,1=第一次重写,2=第二次重写);达到上限后即使 needs_rewrite=true 也直接接受。
 - **并行调用要在同一轮 tool_calls 中触发**:Critic 与 ContinuityChecker 在同一轮里同时被列出来,LLM 一次产出两条 tool_call;不要先调一个等结果再调另一个。
@@ -79,8 +85,8 @@
 - **apply_kb_diff**:把 Scribe 产出的 KB 增量落到 characters/* / foreshadowing / bible(仅追加)
 
 **专家工具**
-- **call_scene_director**:输入 `chapter_number + scene_index + scene_plan + character_briefs + world_context + active_foreshadowing + tone_hint + genre` → SceneBeatsheet 草案。genre 从 project_meta.genre 获取，必须传入。**active_foreshadowing 必须按场景精确过滤**：只传入 `planted_scene_ref` 或 `trigger_scene_ref` 匹配当前场景(chapter_number:scene_index) 的伏笔条目，不要把全章所有伏笔都塞进去。SceneDirector 会在 beatsheet 中给出 `recommended_style_types`。
-- **call_writer** ★(流式):输入 `beatsheet + prev_tail + transition_from_prev (+ rewrite_guidance + character_voices + tone_hint + target_word_count + genre + style_examples)` → 纯文本场景正文。这是**唯一流式专家**,token 会实时推送给前端。genre 从 project_meta.genre 获取，必须传入。**transition_from_prev 由你（SceneShowrunner）从上一场 SceneBeatsheet 的 closing_hook 中提取，拼接成 30-80 字的衔接说明传给 Writer**。若 scene_index=0（本章第一场），则衔接提示应来自上一章最后一场的 closing_hook。**style_examples 获取**: 若 SceneDirector 产出的 beatsheet 包含 `recommended_style_types`，调用 `search_style_examples(tone=tone_hint, scene_type=recommended_style_types[0], limit=2)` 获取风格示范文本，拼入 Writer 的 user prompt。
+- **call_scene_director**:输入 `chapter_number + scene_index + scene_plan + character_briefs + world_context + active_foreshadowing + tone_hint + genre` → SceneBeatsheet 草案。genre 从 project_meta.genre 获取，必须传入。**active_foreshadowing 必须按场景精确过滤**：只传入 `planted_scene_ref` 或 `trigger_scene_ref` 匹配当前场景(chapter_number:scene_index) 的伏笔条目，不要把全章所有伏笔都塞进去。SceneDirector 会在 beatsheet 中给出 `recommended_style_types` 和 `recommended_hook_type`。
+- **call_writer** ★(流式):输入 `beatsheet + prev_tail + transition_from_prev (+ rewrite_guidance + character_voices + tone_hint + target_word_count + genre + style_examples + recommended_hook_type + hook_type_dedup_hint)` → 纯文本场景正文。这是**唯一流式专家**,token 会实时推送给前端。genre 从 project_meta.genre 获取，必须传入。**transition_from_prev 由你（SceneShowrunner）从上一场 SceneBeatsheet 的 closing_hook 中提取，拼接成 30-80 字的衔接说明传给 Writer**。若 scene_index=0（本章第一场），则衔接提示应来自上一章最后一场的 closing_hook。**style_examples 获取**: 若 SceneDirector 产出的 beatsheet 包含 `recommended_style_types`，调用 `search_style_examples(tone=tone_hint, scene_type=recommended_style_types[0], limit=2)` 获取风格示范文本，拼入 Writer 的 user prompt。**recommended_hook_type 与 hook_type_dedup_hint 处理**: SceneDirector 会在 beatsheet 中给出 `recommended_hook_type`。若当前场景的 `recommended_hook_type` 与同一章已写场景的上一个 `recommended_hook_type` 相同，则必须在 `hook_type_dedup_hint` 中提示 Writer「上一场也用了同类开场，本场请换用不同切入方式」，避免连续场景开头单调。
 - **call_critic**:输入 `chapter_number + scene_index + scene_text + beatsheet + tone_hint + scene_metrics` → 文学性 issues 列表 + scores
 - **call_continuity_checker**:输入 `chapter_number + scene_index + scene_text + character_states + active_foreshadowing + bible_excerpts` → 设定连贯性 issues 列表。**active_foreshadowing 同上，只传当前场景相关的伏笔**。
 - **call_consistency_auditor**:输入 `scene_text + genre + character_states + world_rules + beatsheet` → 设定内在一致性 issues 列表(按 genre 审计战力/资源/科技/制度)。

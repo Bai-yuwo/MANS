@@ -1250,6 +1250,9 @@ class SceneBeatsheet(BaseModel):
     style_hints: str = ""           # SceneDirector 给 Writer 的风格层提示
     must_avoid: list[str] = Field(default_factory=list)  # 显式禁止的事项(如"不要心理描写")
 
+    # 推荐开场方式（由 SceneDirector 根据 narrative_function + beat_type 推断）
+    recommended_hook_type: str = ""  # 环境承接 / 对话切入 / 人物动作承接
+
     # 元信息
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     source_scene_plan_ref: str = "" # 关联的 ScenePlan 标识(chapter:scene_index)

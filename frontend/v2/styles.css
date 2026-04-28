@@ -318,6 +318,13 @@ agent-stream {
 .stage-badge.write { background: #ff5722; }
 .stage-badge.completed { background: #4caf50; }
 
+.stage-timer {
+    font-size: 11px;
+    color: var(--warning);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.5px;
+}
+
 /* 模态框 */
 .modal-overlay {
     position: fixed;
@@ -653,6 +660,23 @@ agent-stream {
 .chapter-actions .btn-split.active {
     background: var(--bg-hover);
     color: var(--text-primary);
+    border-color: var(--accent);
+}
+
+.chapter-actions .btn-regen {
+    padding: 3px 8px;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    cursor: pointer;
+    opacity: 0.7;
+    transition: all 0.15s;
+}
+
+.chapter-actions .btn-regen:hover {
+    opacity: 1;
+    background: var(--bg-hover);
     border-color: var(--accent);
 }
 
@@ -1030,6 +1054,103 @@ agent-stream {
     box-shadow: 0 0 0 1px var(--accent);
 }
 
+/* ---------- review issue stats ---------- */
+.review-issue-stats {
+    display: flex;
+    gap: 16px;
+    padding: 8px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+}
+
+.review-issue-stat-col {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+
+.review-issue-stat-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.review-issue-stat-dots {
+    font-size: 11px;
+    letter-spacing: 1px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.review-issue-stat-num {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 20px;
+    text-align: right;
+    font-family: "SF Mono", Monaco, monospace;
+}
+
+/* ---------- token audit ---------- */
+.token-audit-summary {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.token-audit-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 11px;
+}
+
+.token-audit-name {
+    min-width: 100px;
+    font-weight: 600;
+}
+
+.token-audit-name.agent-writer { color: var(--accent); }
+.token-audit-name.agent-critic { color: var(--info); }
+.token-audit-name.agent-director { color: var(--success); }
+.token-audit-name.agent-other { color: var(--text-secondary); }
+
+.token-audit-count {
+    min-width: 32px;
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+.token-audit-tokens {
+    min-width: 60px;
+    text-align: right;
+    font-family: "SF Mono", Monaco, monospace;
+    color: var(--text-primary);
+}
+
+.token-audit-time {
+    min-width: 50px;
+    text-align: right;
+    font-family: "SF Mono", Monaco, monospace;
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
 .review-action-bar.waiting-ask-user .review-btn {
     border-color: var(--accent);
     color: var(--accent);
@@ -1038,6 +1159,143 @@ agent-stream {
 .review-action-bar.waiting-ask-user .review-btn:hover {
     background: var(--accent);
     color: white;
+}
+
+/* ---------- KB 划词搜索悬浮元素 ---------- */
+.kb-selection-toolbar {
+    position: absolute;
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    z-index: 100;
+    animation: kb-fade-in 0.15s ease-out;
+}
+
+.kb-selection-toolbar button {
+    padding: 4px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+}
+
+.kb-selection-toolbar button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--accent);
+}
+
+.kb-result-card {
+    position: absolute;
+    min-width: 220px;
+    max-width: 320px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    z-index: 101;
+    animation: kb-fade-in 0.15s ease-out;
+    overflow: hidden;
+}
+
+@keyframes kb-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.kb-result-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+}
+
+.kb-result-body {
+    padding: 8px 10px;
+    font-size: 11px;
+    line-height: 1.6;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.kb-result-body::-webkit-scrollbar { width: 5px; }
+.kb-result-body::-webkit-scrollbar-track { background: transparent; }
+.kb-result-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.kb-result-empty {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 12px 0;
+}
+
+.kb-result-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.kb-result-label {
+    color: var(--text-muted);
+    min-width: 36px;
+    flex-shrink: 0;
+}
+
+.kb-result-value {
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.kb-result-desc {
+    color: var(--text-secondary);
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+    line-height: 1.5;
+}
+
+.kb-result-tag {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    background: var(--bg-primary);
+    color: var(--text-muted);
+}
+
+.kb-result-tag.planted { background: rgba(76,175,80,0.15); color: var(--success); }
+.kb-result-tag.resolved { background: rgba(255,152,0,0.15); color: var(--warning); }
+
+.kb-fs-item {
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.kb-fs-item:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.kb-fs-status {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 4px;
 }
 
 /* ---------- chapter review summary ---------- */

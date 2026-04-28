@@ -68,6 +68,14 @@ class Writer(ExpertTool):
                 "items": {"type": "string"},
                 "description": "风格库示范文本(每段100-200字),仅作为语感参考,不要直接复制情节。",
             },
+            "recommended_hook_type": {
+                "type": "string",
+                "description": "SceneDirector 推断的推荐开场方式(环境承接/对话切入/人物动作承接)。Writer 优先尝试,但若与场景内容明显不匹配可自行调整。",
+            },
+            "hook_type_dedup_hint": {
+                "type": "string",
+                "description": "SceneShowrunner 生成的开场方式去重提示。若连续场景使用了同一种 hook_type,此字段提醒 Writer 换用不同开场方式以避免单调。",
+            },
         },
         "required": ["beatsheet"],
         "additionalProperties": False,

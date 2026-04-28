@@ -24,6 +24,9 @@ class ReviewPanel extends HTMLElement {
         this._api = typeof MANSApiClient !== "undefined" ? new MANSApiClient() : null;
         this._waitingAskUser = false;
         this._askUserData = null;
+        this._commandPending = false;
+        this._commandTimeout = null;
+        this._perfData = null;
     }
 
     connectedCallback() {
@@ -36,6 +39,7 @@ class ReviewPanel extends HTMLElement {
         }
         document.addEventListener("ask-user-arrived", (e) => this._onAskUserArrived(e));
         document.addEventListener("ask-user-responded", (e) => this._onAskUserResponded(e));
+        document.addEventListener("stream-packet", () => this._unlockButtons());
     }
 
     _onAskUserArrived(e) {
@@ -62,6 +66,43 @@ class ReviewPanel extends HTMLElement {
         }
     }
 
+    _lockButtons() {
+        this._commandPending = true;
+        const bar = this.querySelector(".review-action-bar");
+        if (!bar) return;
+        bar.querySelectorAll("button").forEach((btn) => {
+            btn.disabled = true;
+            btn.style.opacity = "0.5";
+            btn.style.cursor = "not-allowed";
+        });
+    }
+
+    _unlockButtons() {
+        if (!this._commandPending) return;
+        this._commandPending = false;
+        if (this._commandTimeout) {
+            clearTimeout(this._commandTimeout);
+            this._commandTimeout = null;
+        }
+        const bar = this.querySelector(".review-action-bar");
+        if (!bar) return;
+        bar.querySelectorAll("button").forEach((btn) => {
+            btn.disabled = false;
+            btn.style.opacity = "";
+            btn.style.cursor = "";
+        });
+    }
+
+    _notifyAgentStream(message) {
+        const agentStream = document.querySelector("#agent-stream");
+        if (!agentStream) return;
+        const obox = agentStream.querySelector("#output-box");
+        if (!obox) return;
+        obox.textContent += `\n${message}\n`;
+        // 自动滚动到底部
+        obox.scrollTop = obox.scrollHeight;
+    }
+
     static get observedAttributes() {
         return ["project-id", "chapter-number", "scene-index"];
     }
@@ -76,31 +117,29 @@ class ReviewPanel extends HTMLElement {
         }
     }
 
-    connectedCallback() {
-        this._projectId = this.getAttribute("project-id") || "";
-        this._chapterNumber = parseInt(this.getAttribute("chapter-number"), 10) || 1;
-        this._sceneIndex = parseInt(this.getAttribute("scene-index"), 10) || 0;
-        this._render();
-        if (this._projectId) {
-            this._loadData();
-        }
-    }
-
     async _loadData() {
         if (!this._projectId || !this._api) return;
         this._loading = true;
         this._render();
 
-        try {
-            const data = await this._api.getSceneReviewHistory(
+        // 并行加载审查历史与 token 审计
+        const [reviewData, perfData] = await Promise.allSettled([
+            this._api.getSceneReviewHistory(
                 this._projectId,
                 this._chapterNumber,
                 this._sceneIndex
-            );
-            this._data = data;
-        } catch (err) {
-            this._data = { error: err.message };
-        }
+            ),
+            this._api.getPerformance(
+                this._projectId,
+                this._chapterNumber,
+                this._sceneIndex
+            ),
+        ]);
+
+        this._data = reviewData.status === "fulfilled"
+            ? reviewData.value
+            : { error: reviewData.reason?.message || String(reviewData.reason) };
+        this._perfData = perfData.status === "fulfilled" ? perfData.value : null;
 
         this._loading = false;
         this._render();
@@ -161,10 +200,12 @@ class ReviewPanel extends HTMLElement {
                     <span class="review-meta">第${this._chapterNumber}章 · 场景${this._sceneIndex + 1}</span>
                 </div>
                 <div class="review-body">
+                    ${this._renderIssueStats(criticIssues, continuityIssues, consistencyIssues)}
                     ${scores ? this._renderScores(scores) : ""}
                     ${this._data?.issues?.metrics ? this._renderMetrics(this._data.issues.metrics) : ""}
                     ${this._renderIssuesSection(criticIssues, continuityIssues, consistencyIssues)}
                     ${this._renderGuidanceSection(guidanceHistory)}
+                    ${this._renderTokenAudit()}
                     ${this._renderActionBar()}
                 </div>
             </div>
@@ -188,6 +229,66 @@ class ReviewPanel extends HTMLElement {
         if (commentBtn) commentBtn.addEventListener("click", () => this._onComment());
         if (acceptBtn) acceptBtn.addEventListener("click", () => this._onAccept());
         if (rewriteBtn) rewriteBtn.addEventListener("click", () => this._onRewrite());
+    }
+
+    _renderIssueStats(criticIssues, continuityIssues, consistencyIssues) {
+        const hasConsistency = consistencyIssues.length > 0;
+        const total = criticIssues.length + continuityIssues.length + consistencyIssues.length;
+        if (total === 0) return "";
+
+        const severityOrder = ["critical", "high", "medium", "low"];
+        const severityColor = {
+            critical: "#f44336",
+            high: "#e94560",
+            medium: "#ff9800",
+            low: "#666",
+        };
+
+        const countBySev = (issues) => {
+            const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+            issues.forEach((i) => {
+                const s = (i.severity || "low").toLowerCase();
+                counts[s] = (counts[s] || 0) + 1;
+            });
+            return counts;
+        };
+
+        const renderDots = (counts) => {
+            return severityOrder
+                .filter((s) => counts[s] > 0)
+                .map((s) => {
+                    const n = counts[s];
+                    const dots = `●`.repeat(Math.min(n, 5)) + (n > 5 ? `+${n - 5}` : "");
+                    return `<span style="color:${severityColor[s]}" title="${s}: ${n}">${dots}</span>`;
+                })
+                .join(" ");
+        };
+
+        const cCounts = countBySev(criticIssues);
+        const coCounts = countBySev(continuityIssues);
+        const co2Counts = countBySev(consistencyIssues);
+
+        return `
+            <div class="review-issue-stats">
+                <div class="review-issue-stat-col">
+                    <span class="review-issue-stat-label">Critic</span>
+                    <span class="review-issue-stat-dots">${renderDots(cCounts)}</span>
+                    <span class="review-issue-stat-num">${criticIssues.length}</span>
+                </div>
+                <div class="review-issue-stat-col">
+                    <span class="review-issue-stat-label">Continuity</span>
+                    <span class="review-issue-stat-dots">${renderDots(coCounts)}</span>
+                    <span class="review-issue-stat-num">${continuityIssues.length}</span>
+                </div>
+                ${hasConsistency ? `
+                <div class="review-issue-stat-col">
+                    <span class="review-issue-stat-label">Consistency</span>
+                    <span class="review-issue-stat-dots">${renderDots(co2Counts)}</span>
+                    <span class="review-issue-stat-num">${consistencyIssues.length}</span>
+                </div>
+                ` : ""}
+            </div>
+        `;
     }
 
     _renderScores(scores) {
@@ -390,6 +491,54 @@ class ReviewPanel extends HTMLElement {
         `;
     }
 
+    _renderTokenAudit() {
+        const perf = this._perfData;
+        if (!perf || !perf.entries || perf.entries.length === 0) {
+            return "";
+        }
+
+        const fmtK = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+        const fmtTime = (ms) => {
+            const s = Math.round(ms / 1000);
+            return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+        };
+
+        const agents = Object.entries(perf.agent_breakdown || {})
+            .sort((a, b) => b[1].tokens - a[1].tokens)
+            .map(([name, data]) => {
+                const agentClass = name === "Writer" ? "agent-writer" :
+                    name === "Critic" ? "agent-critic" :
+                    name === "SceneDirector" ? "agent-director" : "agent-other";
+                return `
+                    <div class="token-audit-row">
+                        <span class="token-audit-name ${agentClass}">${name}</span>
+                        <span class="token-audit-count">${data.count}次</span>
+                        <span class="token-audit-tokens">${fmtK(data.tokens)} tok</span>
+                        <span class="token-audit-time">${fmtTime(data.duration_ms)}</span>
+                    </div>
+                `;
+            })
+            .join("");
+
+        return `
+            <div class="review-section">
+                <div class="review-section-header">
+                    <span class="review-toggle-icon">▼</span>
+                    <span class="review-section-title">Token 消耗</span>
+                    <span class="review-section-count">${fmtK(perf.total_tokens)} tok</span>
+                </div>
+                <div class="review-section-body">
+                    <div class="token-audit-summary">
+                        <span>输入 ${fmtK(perf.total_input_tokens)} tok</span>
+                        <span>输出 ${fmtK(perf.total_output_tokens)} tok</span>
+                        <span>总耗时 ${fmtTime(perf.total_duration_ms)}</span>
+                    </div>
+                    ${agents}
+                </div>
+            </div>
+        `;
+    }
+
     _renderActionBar() {
         return `
             <div class="review-action-bar">
@@ -437,12 +586,23 @@ class ReviewPanel extends HTMLElement {
             alert("API 客户端未初始化");
             return;
         }
+        // 立即锁定按钮 + 本地反馈
+        this._lockButtons();
+        this._notifyAgentStream("[系统] 已将您的指令传达给 Director，等待响应...");
+
+        // 10 秒超时：无响应则提示延迟并解锁
+        this._commandTimeout = setTimeout(() => {
+            this._notifyAgentStream("[系统] 响应延迟较长，请稍候或检查网络");
+            this._unlockButtons();
+        }, 10000);
+
         try {
             const result = await this._api.sendCommand(this._projectId, instruction);
             console.log("[review-panel] 指令已发送:", result);
         } catch (err) {
             console.error("[review-panel] 发送指令失败:", err);
-            alert(`发送指令失败: ${err.message}`);
+            this._notifyAgentStream(`[系统] 指令发送失败: ${err.message}`);
+            this._unlockButtons();
         }
     }
 
@@ -451,6 +611,16 @@ class ReviewPanel extends HTMLElement {
             alert("API 客户端未初始化");
             return;
         }
+        // 立即锁定按钮 + 本地反馈
+        this._lockButtons();
+        this._notifyAgentStream("[系统] 已将您的答复传达给 Director，等待响应...");
+
+        // 10 秒超时
+        this._commandTimeout = setTimeout(() => {
+            this._notifyAgentStream("[系统] 响应延迟较长，请稍候或检查网络");
+            this._unlockButtons();
+        }, 10000);
+
         try {
             const result = await this._api.approve(this._projectId, reply);
             console.log("[review-panel] 答复已发送:", result);
@@ -459,7 +629,8 @@ class ReviewPanel extends HTMLElement {
             this._updateButtonStates();
         } catch (err) {
             console.error("[review-panel] 发送答复失败:", err);
-            alert(`发送答复失败: ${err.message}`);
+            this._notifyAgentStream(`[系统] 答复发送失败: ${err.message}`);
+            this._unlockButtons();
         }
     }
 

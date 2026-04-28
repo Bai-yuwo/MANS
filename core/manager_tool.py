@@ -33,6 +33,7 @@ from core.base_tool import BaseTool
 from core.base_agent import BaseAgent
 from core.context import require_current_project_id
 from core.logging_config import get_logger
+from core.performance_logger import log_token_audit
 from core.stream_packet import CompletedPayload, StreamPacket
 from core.expert_tool import _to_snake_case
 
@@ -162,8 +163,11 @@ class ManagerTool(BaseTool):
         # 更新访问时间戳
         self._instance_access_ts[cache_key] = time.time()
 
+        start_time = time.time()
         turns = 0
         total_tokens = 0
+        input_tokens = 0
+        output_tokens = 0
         last_res_id = ""
         text_fragments: list[str] = []
         confirm_payload = None
@@ -186,6 +190,8 @@ class ManagerTool(BaseTool):
 
                 if packet.type == "completed" and isinstance(packet.content, CompletedPayload):
                     total_tokens += packet.content.total_tokens
+                    input_tokens += packet.content.input_tokens
+                    output_tokens += packet.content.output_tokens
                     last_res_id = packet.content.res_id
                 elif packet.type == "output" and isinstance(packet.content, str):
                     text_fragments.append(packet.content)
@@ -202,14 +208,34 @@ class ManagerTool(BaseTool):
                 ensure_ascii=False,
             )
 
+        duration_ms = int((time.time() - start_time) * 1000)
         turns = manager.last_turns
         summary = "".join(text_fragments)[-500:]  # 取最后 500 字作为摘要
+
+        # Token 审计记录(非阻塞)
+        try:
+            await log_token_audit(
+                project_id=pid,
+                agent_name=manager.agent_name,
+                agent_kind="manager",
+                chapter_number=kwargs.get("chapter_number", 0),
+                scene_index=kwargs.get("scene_index", 0),
+                duration_ms=duration_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+            )
+        except Exception as e:
+            logger.debug(f"ManagerTool token 审计记录失败(非阻塞): {e}")
 
         result = {
             "status": "incomplete" if has_error else "ok",
             "manager": manager.agent_name,
             "turns": turns,
             "tokens": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "duration_ms": duration_ms,
             "last_response_id": last_res_id,
             "summary": summary,
         }

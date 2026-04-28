@@ -251,7 +251,8 @@ class CharacterCard(BaseModel):
 
     # 动态状态（每章可能更新）
     current_location: str = ""
-    cultivation: Optional[CultivationLevel] = None
+    cultivation: Optional[CultivationLevel] = None  # 修真题材专用（backward compatible）
+    power_state: Optional[dict] = None  # 泛化力量状态：{"system": "...", "level": "...", "tier": "...", "abilities": [...], "limitations": [...]}
     current_emotion: str = ""           # 当前情绪状态
     active_goals: list[str] = Field(default_factory=list)  # 当前目标列表
 
@@ -318,6 +319,11 @@ class CharacterStateUpdate(BaseModel):
     character_name: str = Field(validation_alias=AliasChoices("character_name", "name", "char_name", "characterName"))
     location_change: Optional[str] = Field(default=None, validation_alias=AliasChoices("location_change", "location", "new_location", "locationChange"))
     cultivation_change: Optional[str] = Field(default=None, validation_alias=AliasChoices("cultivation_change", "cultivation", "realm_change", "cultivationChange"))
+    power_change: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("power_change", "power", "level_change", "rank_change"),
+        description="泛化力量/职级变化。科幻题材用'军衔晋升'、历史题材用'官职变动'、都市题材用'职位调整'。",
+    )
     emotion_change: Optional[str] = Field(default=None, validation_alias=AliasChoices("emotion_change", "emotion", "mood", "feeling", "emotionChange"))
     goal_updates: list[str] = Field(default_factory=list, validation_alias=AliasChoices("goal_updates", "goals", "new_goals", "goalUpdates"))
     relationship_updates: list[dict] = Field(default_factory=list, validation_alias=AliasChoices("relationship_updates", "relationships", "relation_updates", "relationshipChanges"))
@@ -444,12 +450,33 @@ class FactionNode(BaseModel):
 
     用 parent_faction_id/sub_faction_ids 表达层级（总盟→分舵），
     用 relations 表达与其他势力的关系边（敌对/同盟/隶属等）。
+
+    node_type 扩展含义：
+        - sect: 宗门/教派（修真/玄幻）
+        - dynasty: 王朝/皇室（历史/宫斗）
+        - guild: 公会/行会（西幻/都市）
+        - clan: 家族/宗族（通用）
+        - secret_org: 秘密组织（通用）
+        - alliance: 联盟/同盟（通用）
+        - tribe: 部落/族群（通用）
+        - council: 议会/委员会（通用）
+        - corporation: 公司/企业（科幻/赛博/都市）
+        - government: 政府机构（科幻/现代/历史）
+        - federation: 联邦/联盟（科幻/星际）
+        - empire: 帝国（科幻/历史/西幻）
+        - military: 军事组织（科幻/历史/现代）
+        - school: 学校/学院（都市/科幻）
+        - media: 媒体/舆论组织（都市/赛博）
     """
     model_config = ConfigDict(extra="allow")
 
     id: str = Field(default_factory=lambda: f"fac_{str(uuid.uuid4())[:6]}")
     name: str
-    node_type: Literal["sect", "dynasty", "guild", "clan", "secret_org", "alliance", "tribe", "council"] = "sect"
+    node_type: Literal[
+        "sect", "dynasty", "guild", "clan", "secret_org", "alliance",
+        "tribe", "council", "corporation", "government", "federation",
+        "empire", "military", "school", "media",
+    ] = ""
     stance: Literal["righteous", "neutral", "evil", "gray"] = "neutral"
     parent_faction_id: Optional[str] = None
     sub_faction_ids: list[str] = Field(default_factory=list)

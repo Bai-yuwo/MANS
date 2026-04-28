@@ -192,10 +192,22 @@ class StageWorkbench extends HTMLElement {
             };
             userPrompt = resumePrompts[stage] || `继续 ${stage} 阶段，先检查现有 KB 再补充缺失部分。`;
         } else {
+            const p = this.project || {};
+            const forbidden = p.forbidden_elements?.length
+                ? p.forbidden_elements.join("、")
+                : "无";
             const prompts = {
-                INIT: `开始 INIT 阶段。请构建作品《${this.project.name}》的世界观、地理、规则与角色设定。题材：${this.project.genre}。核心创意：${this.project.core_idea || "未填写"}。`,
-                PLAN: `开始 PLAN 阶段。请为作品《${this.project.name}》设计大纲、故事弧与章节场景规划。`,
-                WRITE: `开始 WRITE 阶段。请为作品《${this.project.name}》撰写第 ${(this.project.current_chapter || 0) + 1} 章。`,
+                INIT: `开始 INIT 阶段。请构建作品《${p.name}》的世界观、地理、规则与角色设定。\n`
+                    + `- 题材：${p.genre || "未填写"}\n`
+                    + `- 核心创意：${p.core_idea || "未填写"}\n`
+                    + `- 主角起点：${p.protagonist_seed || "未填写"}\n`
+                    + `- 目标篇幅：${p.target_length || "未填写"}\n`
+                    + `- 基调风格：${p.tone || "未填写"}\n`
+                    + `- 文风参考：${p.style_reference || "未填写"}\n`
+                    + `- 禁忌元素：${forbidden}\n`
+                    + `请根据以上信息直接开始构建，不要重复询问用户已提供的内容。`,
+                PLAN: `开始 PLAN 阶段。请为作品《${p.name}》设计大纲、故事弧与章节场景规划。`,
+                WRITE: `开始 WRITE 阶段。请为作品《${p.name}》撰写第 ${(p.current_chapter || 0) + 1} 章。`,
             };
             userPrompt = prompts[stage] || `开始 ${stage} 阶段`;
         }

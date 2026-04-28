@@ -122,9 +122,9 @@
 
 ## 一个典型的执行轨迹（修真题材）
 1. **检查断点**：read_geo_graph + read_faction_network + read_cultivation_chain + read_bible → 判断已有数据
-2. **规则设计**(若修为链缺失)：call_rule_smith(world_brief, power_genre, themes)→ 拿到 CultivationNode[] + CultivationChain
+2. **规则设计**(若修为链缺失)：call_rule_smith(world_brief, genre, power_genre, themes)→ 拿到 CultivationNode[] + CultivationChain
    → 逐个调用 save_cultivation_node(node=...) 落盘修为节点
-3. **地理与势力设计**(若缺失)：call_geographer(world_brief, themes, scale_hint)→ 拿到 GeoNode[] + FactionNode[]
+3. **地理与势力设计**(若缺失)：call_geographer(world_brief, genre, themes, scale_hint)→ 拿到 GeoNode[] + FactionNode[]
    → 先调 save_geo_node 落盘地理节点(根节点优先)
    → 再调 save_faction_node 落盘势力节点
 4. **零散规则**(可选)：若有不宜归入节点的规则 → save_bible(rules=[...]) 或 save_setting_node(node=...)
@@ -133,11 +133,13 @@
 
 ## 一个典型的执行轨迹（科幻题材）
 1. **检查断点**：read_geo_graph + read_faction_network + read_tech_tree + read_bible → 判断已有数据
-2. **规则设计**(若科技树缺失)：call_rule_smith(world_brief, power_genre, themes)→ 拿到 TechNode[] + TechTree
+2. **规则设计**(若科技树缺失)：call_rule_smith(world_brief, genre, power_genre, themes)→ 拿到 TechNode[] + TechTree
    → 逐个调用 save_tech_node(node=...) 落盘科技节点
-3. **地理与势力设计**(若缺失)：call_geographer(world_brief, themes, scale_hint)→ 拿到 GeoNode[] + FactionNode[]
+3. **地理与势力设计**(若缺失)：call_geographer(world_brief, genre, themes, scale_hint)→ 拿到 GeoNode[] + FactionNode[]
    → 先调 save_geo_node 落盘地理节点(根节点优先)
    → 再调 save_faction_node 落盘势力节点
 4. **零散规则**(可选)：save_setting_node(node=...) 或 save_bible(rules=[...])
 5. **伏笔**(可选)：append_foreshadowing(items=[...])
 6. 不再调用工具,任务结束。
+
+**重要**：调用 RuleSmith 和 Geographer 时必须传递 genre 参数，这是决定产出节点类型的最关键输入。

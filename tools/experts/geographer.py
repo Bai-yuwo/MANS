@@ -27,6 +27,10 @@ class Geographer(ExpertTool):
                 "type": "string",
                 "description": "世界观一句话概要(由 WorldArchitect 主管整合用户输入后提供)。",
             },
+            "genre": {
+                "type": "string",
+                "description": "项目题材，如「科幻」「历史」「玄幻」「仙侠」「武侠」「都市」「西幻」。Geographer 据此调整地理与势力描述的术语风格。",
+            },
             "themes": {
                 "type": "array",
                 "items": {"type": "string"},

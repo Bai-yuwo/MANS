@@ -57,6 +57,11 @@ class AgentStream extends HTMLElement {
 
     start(projectId, options = {}) {
         const { clear = true, isReconnect = false } = options;
+        // 清除任何待执行的自动重连计时器，防止旧计时器干扰新连接
+        if (this._reconnectTimer) {
+            clearTimeout(this._reconnectTimer);
+            this._reconnectTimer = null;
+        }
         if (this.eventSource) {
             this.eventSource.close();
             this.eventSource = null;
@@ -333,8 +338,8 @@ class AgentStream extends HTMLElement {
                 this._autoScroll(obox);
             }
         } else if (event.type === "error" || event.type === "sse_error") {
-            // 若仍在运行且未达重连上限，视为可恢复中断，由 _onSseError 统一处理重连
-            if (this.isRunning && this._reconnectCount < this._maxReconnect) {
+            // 若仍在运行或正在重连中且未达上限，视为可恢复中断，由 _onSseError 统一处理重连
+            if ((this.isRunning || this._reconnectCount > 0) && this._reconnectCount < this._maxReconnect) {
                 const obox = this.querySelector("#output-box");
                 if (obox) {
                     obox.textContent += `\n[提示] 连接中断，正在尝试自动恢复...\n`;
@@ -350,6 +355,11 @@ class AgentStream extends HTMLElement {
             }
             this._setStatus("出错");
             this.isRunning = false;
+            this._reconnectCount = 0;
+            if (this._reconnectTimer) {
+                clearTimeout(this._reconnectTimer);
+                this._reconnectTimer = null;
+            }
             this._notifyEnded("error", msg);
         } else if (event.type === "done") {
             this._setStatus("完成");

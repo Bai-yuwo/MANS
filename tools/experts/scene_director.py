@@ -56,7 +56,7 @@ class SceneDirector(ExpertTool):
                 "description": "作品题材,如 '玄幻' / '科幻' / '都市' / '历史' / '仙侠'。SceneDirector 据此调整节拍风格。",
             },
         },
-        "required": ["chapter_number", "scene_index", "scene_plan"],
+        "required": ["chapter_number", "scene_index", "scene_plan", "genre"],
         "additionalProperties": False,
     }
     system_prompt_path = "system/experts/SceneDirector.j2"

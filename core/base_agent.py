@@ -33,10 +33,12 @@ core/base_agent.py
 
 import asyncio
 import json
+from pathlib import Path
 from typing import AsyncIterator, ClassVar, Optional
 
 from core.base_tool import BaseTool
 from core.config import AGENT_DEFINITIONS, get_config
+from core.context import require_current_project_id
 from core.expert_tool import (
     _read_prompt_file,
     _render_template,
@@ -168,7 +170,7 @@ class BaseAgent:
         effective_max_turns = max_turns if max_turns is not None else self.max_turns
 
         rendered_user = self._build_user_prompt(user_prompt, context)
-        system_prompt = self._load_system_prompt()
+        system_prompt = self._inject_project_meta(self._load_system_prompt())
 
         client = self._get_client()
         tools_schemas = self.tool_manager.filter_by_scope(self.tool_scope) or None
@@ -371,6 +373,34 @@ class BaseAgent:
     # --------------------------------------------------------
     # 提示词装载
     # --------------------------------------------------------
+    def _inject_project_meta(self, base_prompt: str) -> str:
+        """
+        从 project_meta.json 读取 genre/tone/core_idea 并注入 system prompt 顶部。
+        让主管无需自己调用 read_project_meta 就能稳定知道项目题材。
+        """
+        try:
+            pid = require_current_project_id()
+            meta_path = Path("workspace") / pid / "project_meta.json"
+            if meta_path.exists():
+                text = meta_path.read_text(encoding="utf-8")
+                meta = json.loads(text)
+                genre = meta.get("genre", "")
+                tone = meta.get("tone", "")
+                core_idea = meta.get("core_idea", "")
+                if genre or tone or core_idea:
+                    header = "[项目信息]\n"
+                    if genre:
+                        header += f"题材: {genre}\n"
+                    if tone:
+                        header += f"基调: {tone}\n"
+                    if core_idea:
+                        header += f"核心创意: {core_idea}\n"
+                    header += "\n"
+                    return header + base_prompt
+        except Exception:
+            pass
+        return base_prompt
+
     def _load_system_prompt(self) -> str:
         """读取 system prompt。允许文件不存在时退化为空 system 段(便于早期联调)。"""
         try:

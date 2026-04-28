@@ -344,6 +344,12 @@ async def list_projects_v2():
                             "stage": meta.get("stage", "unknown"),
                             "status": meta.get("status", ""),
                             "current_chapter": meta.get("current_chapter", 0),
+                            "core_idea": meta.get("core_idea", ""),
+                            "protagonist_seed": meta.get("protagonist_seed", ""),
+                            "target_length": meta.get("target_length", ""),
+                            "tone": meta.get("tone", ""),
+                            "style_reference": meta.get("style_reference", ""),
+                            "forbidden_elements": meta.get("forbidden_elements", []),
                         })
                     except Exception:
                         pass

@@ -144,10 +144,12 @@ document.addEventListener("DOMContentLoaded", () => {
             detail: e.detail,
         }));
         const { projectId } = e.detail;
-        // 重新连接 SSE 流(不清空之前内容)
+
+        // 先短暂等待后端启动新 pump，再带重连标记续接 SSE
+        // 延迟 800ms：给 approve() → 新 _pump 启动留出足够时间
         setTimeout(() => {
-            agentStream.start(projectId, { clear: false });
-        }, 300);
+            agentStream.start(projectId, { clear: false, isReconnect: true });
+        }, 800);
 
         // 刷新项目状态,更新工作台 stage 显示
         try {

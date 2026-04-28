@@ -77,7 +77,7 @@ class Writer(ExpertTool):
                 "description": "SceneShowrunner 生成的开场方式去重提示。若连续场景使用了同一种 hook_type,此字段提醒 Writer 换用不同开场方式以避免单调。",
             },
         },
-        "required": ["beatsheet"],
+        "required": ["beatsheet", "genre"],
         "additionalProperties": False,
     }
     system_prompt_path = "system/experts/Writer.j2"

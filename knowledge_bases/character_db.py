@@ -172,6 +172,19 @@ class CharacterDB(BaseDB):
             char.current_location = update.location_change
             updates['location'] = update.location_change
 
+        if update.power_change:
+            if char.power_state is None:
+                char.power_state = {
+                    "system": "",
+                    "level": update.power_change,
+                    "tier": "",
+                    "abilities": [],
+                    "limitations": [],
+                }
+            else:
+                char.power_state["level"] = update.power_change
+            updates['power'] = update.power_change
+
         if update.cultivation_change:
             from core.schemas import CultivationLevel
             if char.cultivation is None:
@@ -335,7 +348,10 @@ class CharacterDB(BaseDB):
                 parts.append(f"背景: {data['background']}")
             if data.get("voice_keywords"):
                 parts.append(f"声线: {', '.join(data['voice_keywords'])}")
-            if data.get("cultivation"):
+            if data.get("power_state"):
+                ps = data["power_state"]
+                parts.append(f"能力: {ps.get('system', '')} {ps.get('level', '')}")
+            elif data.get("cultivation"):
                 cul = data["cultivation"]
                 parts.append(f"修为: {cul.get('realm', '')} {cul.get('stage', '')}")
 

@@ -39,6 +39,27 @@ class ProjectPanel extends HTMLElement {
                     <label>主角起点</label>
                     <input type="text" id="inp-protagonist" placeholder="如:山村少年，天生废灵根">
                 </div>
+                <div class="form-group">
+                    <label>目标篇幅</label>
+                    <select id="inp-target-length">
+                        <option value="短篇(<10万)">短篇（<10万字）</option>
+                        <option value="中篇(10-50万)" selected>中篇（10-50万字）</option>
+                        <option value="长篇(50-200万)">长篇（50-200万字）</option>
+                        <option value="超长篇(200万+)">超长篇（200万字+）</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>基调风格</label>
+                    <input type="text" id="inp-tone" placeholder="如:热血爽文、虐心悲剧、轻松日常">
+                </div>
+                <div class="form-group">
+                    <label>文风参考</label>
+                    <input type="text" id="inp-style-ref" placeholder="如:参考《斗破苍穹》的升级流写法">
+                </div>
+                <div class="form-group">
+                    <label>禁忌元素</label>
+                    <input type="text" id="inp-forbidden" placeholder="如:禁止后宫,禁止穿越,禁止系统流（用逗号分隔）">
+                </div>
                 <button class="btn btn-primary" id="btn-create" style="width:100%;">创建</button>
                 <button class="btn btn-secondary" id="btn-cancel" style="width:100%;margin-top:6px;">取消</button>
             </div>
@@ -127,12 +148,20 @@ class ProjectPanel extends HTMLElement {
         const genre = this.querySelector("#inp-genre").value.trim();
         const core_idea = this.querySelector("#inp-core-idea").value.trim();
         const protagonist_seed = this.querySelector("#inp-protagonist").value.trim();
+        const target_length = this.querySelector("#inp-target-length").value;
+        const tone = this.querySelector("#inp-tone").value.trim();
+        const style_reference = this.querySelector("#inp-style-ref").value.trim();
+        const forbidden_raw = this.querySelector("#inp-forbidden").value.trim();
+        const forbidden_elements = forbidden_raw
+            ? forbidden_raw.split(/[,，]/).map(s => s.trim()).filter(Boolean)
+            : [];
 
         if (!name) { alert("请输入作品名称"); return; }
 
         try {
             const result = await this.client.createProject({
                 name, genre, core_idea, protagonist_seed,
+                target_length, tone, style_reference, forbidden_elements,
             });
             this._hideForm();
             await this.loadProjects();

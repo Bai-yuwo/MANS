@@ -33,6 +33,8 @@ core/base_agent.py
 
 import asyncio
 import json
+
+import aiofiles
 from pathlib import Path
 from typing import AsyncIterator, ClassVar, Optional
 
@@ -170,7 +172,7 @@ class BaseAgent:
         effective_max_turns = max_turns if max_turns is not None else self.max_turns
 
         rendered_user = self._build_user_prompt(user_prompt, context)
-        system_prompt = self._inject_project_meta(self._load_system_prompt())
+        system_prompt = await self._inject_project_meta(self._load_system_prompt())
 
         client = self._get_client()
         tools_schemas = self.tool_manager.filter_by_scope(self.tool_scope) or None
@@ -373,7 +375,7 @@ class BaseAgent:
     # --------------------------------------------------------
     # 提示词装载
     # --------------------------------------------------------
-    def _inject_project_meta(self, base_prompt: str) -> str:
+    async def _inject_project_meta(self, base_prompt: str) -> str:
         """
         从 project_meta.json 读取 genre/tone/core_idea 并注入 system prompt 顶部。
         让主管无需自己调用 read_project_meta 就能稳定知道项目题材。
@@ -382,7 +384,8 @@ class BaseAgent:
             pid = require_current_project_id()
             meta_path = Path("workspace") / pid / "project_meta.json"
             if meta_path.exists():
-                text = meta_path.read_text(encoding="utf-8")
+                async with aiofiles.open(meta_path, encoding="utf-8") as f:
+                    text = await f.read()
                 meta = json.loads(text)
                 genre = meta.get("genre", "")
                 tone = meta.get("tone", "")

@@ -29,7 +29,7 @@ class ProjectPanel extends HTMLElement {
                 </div>
                 <div class="form-group">
                     <label>题材</label>
-                    <input type="text" id="inp-genre" placeholder="玄幻" value="玄幻">
+                    <input type="text" id="inp-genre" placeholder="如：科幻、历史、都市" value="">
                 </div>
                 <div class="form-group">
                     <label>核心创意</label>

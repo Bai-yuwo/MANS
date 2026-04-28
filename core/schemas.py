@@ -960,7 +960,7 @@ class ProjectMeta(BaseModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = "未命名项目"
-    genre: Genre = Genre.FANTASY
+    genre: Genre = Genre.OTHER
     core_idea: str = ""                 # 用户填写的核心创意
     protagonist_seed: str = ""          # 主角起点描述
     target_length: TargetLength = TargetLength.LONG

@@ -41,7 +41,7 @@ class Geographer(ExpertTool):
                 "description": "世界规模提示,如 '一州十国' / '一座孤城'。",
             },
         },
-        "required": ["world_brief"],
+        "required": ["world_brief", "genre"],
         "additionalProperties": False,
     }
     system_prompt_path = "system/experts/Geographer.j2"

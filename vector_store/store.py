@@ -340,7 +340,15 @@ class VectorStore:
             )
 
             ids = [item["id"] for item in items]
-            metadatas = [item.get("metadata") for item in items]
+            raw_metadatas = [item.get("metadata") for item in items]
+            metadatas = []
+            for m in raw_metadatas:
+                if not m:
+                    metadatas.append({"_source": "mans"})
+                elif isinstance(m, dict) and len(m) == 0:
+                    metadatas.append({"_source": "mans"})
+                else:
+                    metadatas.append(m)
 
             coll = await self._get_or_create_collection(collection)
 

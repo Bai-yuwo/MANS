@@ -447,7 +447,10 @@ class StoryDB(BaseDB):
             if key == "outline":
                 text = self._outline_to_text(data)
                 if text:
-                    await vs.upsert("outlines", "outline", text, {})
+                    await vs.upsert("outlines", "outline", text, {
+                        "type": "outline",
+                        "project_id": self.project_id,
+                    })
                     logger.info("大纲向量同步完成")
 
             elif key.startswith("chapter_") and key.endswith("_plan"):

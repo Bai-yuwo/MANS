@@ -46,6 +46,7 @@ from core.expert_tool import (
     _render_template,
 )
 from core.llm_client import LLMClient
+from core.project_config import get_project_config
 from core.logging_config import get_logger
 from core.stream_packet import CompletedPayload, ConfirmPayload, StreamPacket, ToolCallData
 from core.tool_manager import ToolManager, get_tool_manager
@@ -187,6 +188,15 @@ class BaseAgent:
         total_tokens_accum = 0
         turn = 0
 
+        # 读取 token 预算（软约束）
+        token_budget = 0
+        try:
+            pid = require_current_project_id()
+            cfg = await get_project_config(pid)
+            token_budget = cfg.get("token_budget_per_scene", 0)
+        except Exception:
+            pass
+
         logger.info(
             f"主管启动 {self.agent_name} (model={self.runtime.model}, "
             f"tools={len(tools_schemas or [])}, max_turns={effective_max_turns})"
@@ -211,6 +221,24 @@ class BaseAgent:
                         last_completed = packet.content
                         current_res_id = packet.content.res_id
                         total_tokens_accum += packet.content.total_tokens
+
+                        # Token 预算软约束检查
+                        if token_budget > 0 and total_tokens_accum > token_budget * 0.8:
+                            if total_tokens_accum > token_budget:
+                                yield StreamPacket(
+                                    type="error",
+                                    content=f"[系统] 本场景 token 预算已耗尽 ({total_tokens_accum}/{token_budget})，自动暂停。",
+                                )
+                                logger.warning(
+                                    f"{self.agent_name} token 预算耗尽: "
+                                    f"{total_tokens_accum}/{token_budget}"
+                                )
+                                return
+                            else:
+                                yield StreamPacket(
+                                    type="output",
+                                    content=f"[系统] 本场景已使用 {total_tokens_accum} tokens，接近预算上限 {token_budget}。",
+                                )
 
                 if last_completed is None:
                     logger.warning(f"{self.agent_name} 第 {turn} 轮未收到 completed 包,退出")
@@ -383,23 +411,56 @@ class BaseAgent:
         try:
             pid = require_current_project_id()
             meta_path = Path("workspace") / pid / "project_meta.json"
-            if meta_path.exists():
-                async with aiofiles.open(meta_path, encoding="utf-8") as f:
-                    text = await f.read()
-                meta = json.loads(text)
-                genre = meta.get("genre", "")
-                tone = meta.get("tone", "")
-                core_idea = meta.get("core_idea", "")
-                if genre or tone or core_idea:
-                    header = "[项目信息]\n"
-                    if genre:
-                        header += f"题材: {genre}\n"
-                    if tone:
-                        header += f"基调: {tone}\n"
-                    if core_idea:
-                        header += f"核心创意: {core_idea}\n"
-                    header += "\n"
-                    return header + base_prompt
+            if not meta_path.exists():
+                return base_prompt
+
+            async with aiofiles.open(meta_path, encoding="utf-8") as f:
+                text = await f.read()
+            meta = json.loads(text)
+
+            parts = []
+
+            # [项目信息]
+            genre = meta.get("genre", "")
+            tone = meta.get("tone", "")
+            core_idea = meta.get("core_idea", "")
+            if genre or tone or core_idea:
+                parts.append("[项目信息]")
+                if genre:
+                    parts.append(f"题材: {genre}")
+                if tone:
+                    parts.append(f"基调: {tone}")
+                if core_idea:
+                    parts.append(f"核心创意: {core_idea}")
+                parts.append("")
+
+            # [项目配置] — 运行时配置注入
+            cfg_items = []
+            if meta.get("auto_advance") is True:
+                cfg_items.append("自动阶段切换: 是")
+            if meta.get("auto_rewrite") is True:
+                cfg_items.append("自动重写: 是")
+            mra = meta.get("max_rewrite_attempts")
+            if mra is not None:
+                cfg_items.append(f"最大重写轮次: {mra}")
+            if meta.get("enable_consistency_check") is False:
+                cfg_items.append("启用一致性检查: 否")
+            tbs = meta.get("token_budget_per_scene", 0)
+            if tbs > 0:
+                cfg_items.append(f"单场景 token 预算: {tbs}")
+            msb = meta.get("max_scenes_per_batch", 1)
+            if msb != 1:
+                cfg_items.append(f"批量场景数: {msb}")
+            if meta.get("auto_continue_batch") is True:
+                cfg_items.append("自动继续批量: 是")
+
+            if cfg_items:
+                parts.append("[项目配置]")
+                parts.extend(cfg_items)
+                parts.append("")
+
+            if parts:
+                return "\n".join(parts) + base_prompt
         except Exception:
             pass
         return base_prompt

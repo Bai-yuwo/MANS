@@ -85,8 +85,12 @@ class OrchestratorSession:
             try:
                 pkt = await asyncio.wait_for(self.queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
-                # 超时检查会话是否仍活跃
+                # 超时检查会话是否仍活跃或 pump 已结束
                 if self._closed:
+                    break
+                # 若 pump 已结束且 queue 为空（None sentinel 被之前 consume 读走），
+                # 新连接的 consume 不应无限等待
+                if not self.is_pump_running and self.queue.empty():
                     break
                 continue
 

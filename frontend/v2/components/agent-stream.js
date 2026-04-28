@@ -135,6 +135,11 @@ class AgentStream extends HTMLElement {
                 this._autoScroll(obox);
             }
             this._reconnectTimer = setTimeout(() => {
+                // 再次检查：若 done 事件已到达并将 isRunning 设为 false，取消重连
+                if (!this.isRunning) {
+                    this._reconnectCount = 0;
+                    return;
+                }
                 this.start(this.projectId, { clear: false, isReconnect: true });
             }, backoffMs);
         } else {
@@ -393,6 +398,11 @@ class AgentStream extends HTMLElement {
         } else if (event.type === "done") {
             this._setStatus("完成");
             this.isRunning = false;
+            if (this._reconnectTimer) {
+                clearTimeout(this._reconnectTimer);
+                this._reconnectTimer = null;
+            }
+            this._reconnectCount = 0;
             this._notifyEnded("done");
         }
 

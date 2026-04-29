@@ -29,18 +29,21 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!projectId) {
             // 项目被删除或取消选择
             localStorage.removeItem("mans:lastProjectId");
+            mansStore.setProject(null, null);
             stageWorkbench.setProject(null, null);
             return;
         }
 
         localStorage.setItem("mans:lastProjectId", projectId);
+        mansStore.setProject(projectId, project);
         stageWorkbench.setProject(projectId, project);
         console.log("选中项目:", projectId, project?.name);
 
         // 查询最新状态(可能后台正在运行或等待确认)
         try {
-            const status = await client.getStatus(projectId);
-            const overview = await client.getOverview(projectId);
+            const data = await mansStore.refresh(projectId);
+            if (!data) return;
+            const { status, overview } = data;
             stageWorkbench.updateStatus({ ...status, ...overview });
 
             if (status.session_active) {
@@ -97,9 +100,8 @@ document.addEventListener("DOMContentLoaded", () => {
         agentStream.start(projectId, { clear: false });
         // 刷新状态
         try {
-            const status = await client.getStatus(projectId);
-            const overview = await client.getOverview(projectId);
-            stageWorkbench.updateStatus({ ...status, ...overview });
+            const data = await mansStore.refresh(projectId);
+            if (data) stageWorkbench.updateStatus({ ...data.status, ...data.overview });
         } catch (err) {
             console.error("刷新状态失败", err);
         }
@@ -143,9 +145,8 @@ document.addEventListener("DOMContentLoaded", () => {
         console.log("[SSE] 流结束,原因:", reason);
         // 查询最新状态,pump_running 应该已变为 false
         try {
-            const status = await client.getStatus(projectId);
-            const overview = await client.getOverview(projectId);
-            stageWorkbench.updateStatus({ ...status, ...overview });
+            const data = await mansStore.refresh(projectId);
+            if (data) stageWorkbench.updateStatus({ ...data.status, ...data.overview });
         } catch (err) {
             console.error("流结束后刷新状态失败", err);
         }
@@ -158,8 +159,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const { projectId } = e.detail;
         if (!projectId) return;
         try {
-            const overview = await client.getOverview(projectId);
-            stageWorkbench.updateStatus({ ...overview });
+            const data = await mansStore.refresh(projectId);
+            if (data) stageWorkbench.updateStatus({ ...data.status, ...data.overview });
         } catch (err) {
             console.error("[KB] 自动刷新 overview 失败", err);
         }
@@ -183,8 +184,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 刷新项目状态,更新工作台 stage 显示
         try {
-            const status = await client.getStatus(projectId);
-            stageWorkbench.updateStatus(status);
+            const data = await mansStore.refresh(projectId);
+            if (data) stageWorkbench.updateStatus({ ...data.status, ...data.overview });
         } catch (err) {
             console.error("刷新项目状态失败", err);
         }

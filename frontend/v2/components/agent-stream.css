@@ -1,0 +1,125 @@
+/* Agent 流组件本身需要撑满 panel */
+agent-stream {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* Agent 流 — 上下两栏固定框 */
+.stream-layout {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.stream-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+}
+
+.stream-section:last-child {
+    border-bottom: none;
+}
+
+.stream-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.stream-section-agent {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.stream-section-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    font-family: "Noto Serif SC", Georgia, serif;
+}
+
+.stream-section-body::-webkit-scrollbar { width: 6px; }
+.stream-section-body::-webkit-scrollbar-track { background: transparent; }
+.stream-section-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Markdown 渲染样式（Writer output 用 innerHTML 时生效） */
+.stream-section-body p {
+    margin: 0 0 0.8em 0;
+    white-space: normal;
+}
+.stream-section-body p:last-child { margin-bottom: 0; }
+.stream-section-body strong { font-weight: 600; color: var(--text-primary); }
+.stream-section-body em { font-style: italic; color: var(--text-secondary); }
+.stream-section-body h1, .stream-section-body h2, .stream-section-body h3,
+.stream-section-body h4, .stream-section-body h5, .stream-section-body h6 {
+    margin: 0.6em 0 0.4em 0;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.stream-section-body h1 { font-size: 1.3em; }
+.stream-section-body h2 { font-size: 1.15em; }
+.stream-section-body h3 { font-size: 1.05em; }
+.stream-section-body hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0.8em 0;
+}
+.stream-section-body br + br { display: none; }
+
+/* 旧消息样式保留(兼容) */
+.stream-message {
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    margin-bottom: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.stream-message .msg-header {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 3px;
+    opacity: 0.7;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.agent-tag {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    text-transform: none;
+    letter-spacing: 0;
+}

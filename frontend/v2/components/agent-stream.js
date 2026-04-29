@@ -20,6 +20,11 @@ class AgentStream extends HTMLElement {
         this._maxReconnect = 10;
         this._reconnectTimer = null;
         this._lastKbRefresh = 0;
+        // Writer 内容缓冲区（用于 Markdown 实时渲染）
+        this._writerBuffer = "";
+        this._isWriterActive = false;
+        // JIT 角色补全状态
+        this._jitRoleName = null;
     }
 
     // 会修改知识库数据的工具列表（completed 后触发前端刷新）
@@ -100,6 +105,9 @@ class AgentStream extends HTMLElement {
         }
 
         this.isRunning = true;
+        this._writerBuffer = "";
+        this._isWriterActive = false;
+        this._jitRoleName = null;
 
         this.eventSource = this.client.connectStream(projectId, (event) => {
             if (!this._paused) {
@@ -206,6 +214,9 @@ class AgentStream extends HTMLElement {
         if (obox) obox.textContent = "";
         this.querySelector("#reasoning-agent").textContent = "";
         this.querySelector("#output-agent").textContent = "";
+        this._writerBuffer = "";
+        this._isWriterActive = false;
+        this._jitRoleName = null;
         this._clearStorage();
     }
 
@@ -219,7 +230,12 @@ class AgentStream extends HTMLElement {
             const rbox = this.querySelector("#reasoning-box");
             const obox = this.querySelector("#output-box");
             if (rbox) sessionStorage.setItem(this._storageKey("reasoning"), rbox.textContent);
-            if (obox) sessionStorage.setItem(this._storageKey("output"), obox.textContent);
+            // Writer 内容保存原始 buffer（便于恢复后重新渲染 Markdown）
+            if (this._isWriterActive) {
+                sessionStorage.setItem(this._storageKey("writerBuffer"), this._writerBuffer);
+            } else if (obox) {
+                sessionStorage.setItem(this._storageKey("output"), obox.textContent);
+            }
             const rAgent = this.querySelector("#reasoning-agent");
             const oAgent = this.querySelector("#output-agent");
             if (rAgent) sessionStorage.setItem(this._storageKey("ragent"), rAgent.textContent);
@@ -244,7 +260,13 @@ class AgentStream extends HTMLElement {
                 const rv = sessionStorage.getItem(`${prefix}:reasoning`);
                 if (rv) rbox.textContent = rv;
             }
-            if (obox) {
+            // 优先恢复 Writer buffer（可重新渲染 Markdown）
+            const wb = sessionStorage.getItem(`${prefix}:writerBuffer`);
+            if (wb && obox) {
+                this._writerBuffer = wb;
+                this._isWriterActive = true;
+                obox.innerHTML = this._renderMarkdown(wb);
+            } else if (obox) {
                 const ov = sessionStorage.getItem(`${prefix}:output`);
                 if (ov) obox.textContent = ov;
             }
@@ -267,6 +289,29 @@ class AgentStream extends HTMLElement {
                 if (k.startsWith("mans:stream:")) sessionStorage.removeItem(k);
             });
         } catch (e) {}
+    }
+
+    _renderMarkdown(text) {
+        if (!text) return "";
+        let html = text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+        html = html.replace(/__(.+?)__/g, "<strong>$1</strong>");
+        html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
+        html = html.replace(/_(.+?)_/g, "<em>$1</em>");
+        html = html.replace(/^---+$/gm, "<hr>");
+        html = html.replace(/^\*\*\*+$/gm, "<hr>");
+        html = html.replace(/^#{1,6}\s+(.+)$/gm, (match, p1) => {
+            const level = match.match(/^#+/)[0].length;
+            return `<h${level}>${p1}</h${level}>`;
+        });
+        const paragraphs = html.split(/\n\n+/);
+        return paragraphs.map(p => {
+            if (p.startsWith("<h") || p === "<hr>" || p.startsWith("<hr>")) return p;
+            return `<p>${p.replace(/\n/g, "<br>")}</p>`;
+        }).join("");
     }
 
     togglePause() {
@@ -304,7 +349,21 @@ class AgentStream extends HTMLElement {
             const agentLabel = this.querySelector("#reasoning-agent");
             if (agentLabel && agent) agentLabel.textContent = agent;
             if (box) {
-                box.textContent += event.data.content || "";
+                const content = event.data.content || "";
+                // JIT 角色补全状态透传：PortraitDesigner reasoning 时显示特殊提示
+                if (agent === "PortraitDesigner" && content.trim()) {
+                    // 尝试从 reasoning 内容中提取角色名（通常在第一行或引号中）
+                    const match = content.match(/["']([^"']+)["']|角色\s*[:：]\s*(\S+)/);
+                    const roleName = match ? (match[1] || match[2]) : "";
+                    if (roleName && roleName !== this._jitRoleName) {
+                        this._jitRoleName = roleName;
+                        box.textContent += `\n[JIT] 正在补全角色: ${roleName} ...\n`;
+                    } else if (!this._jitRoleName) {
+                        box.textContent += "\n[JIT] 正在补全角色...\n";
+                    }
+                } else {
+                    box.textContent += content;
+                }
                 this._autoScroll(box);
             }
         } else if (event.type === "output") {
@@ -313,14 +372,20 @@ class AgentStream extends HTMLElement {
             if (agentLabel && agent) agentLabel.textContent = agent;
             if (box) {
                 const content = event.data.content || "";
-                // 检测 JSON 结构化输出，显示简化提示而非原始 JSON
-                if (this._isJsonLike(content)) {
+                // Writer 流式输出启用 Markdown 实时渲染
+                if (agent === "Writer") {
+                    this._isWriterActive = true;
+                    this._writerBuffer += content;
+                    box.innerHTML = this._renderMarkdown(this._writerBuffer);
+                    this._autoScroll(box);
+                } else if (this._isJsonLike(content)) {
                     const summary = this._tryExtractJsonSummary(content, agent);
                     box.textContent += summary;
+                    this._autoScroll(box);
                 } else {
                     box.textContent += content;
+                    this._autoScroll(box);
                 }
-                this._autoScroll(box);
             }
         } else if (event.type === "completed") {
             const rbox = this.querySelector("#reasoning-box");
@@ -328,11 +393,21 @@ class AgentStream extends HTMLElement {
             const tc = event.data.tool_calls || [];
             const outputTypes = event.data.output_types || [];
 
+            // JIT 角色补全完成提示
+            if (agent === "PortraitDesigner" && this._jitRoleName) {
+                const summary = this._tryExtractJitSummary(event.data);
+                if (rbox) {
+                    rbox.textContent += `\n[JIT] 角色补全完成: ${this._jitRoleName}${summary ? " · " + summary : ""} · 已落盘\n`;
+                    this._autoScroll(rbox);
+                }
+                this._jitRoleName = null;
+            }
+
             // 在 reasoning-box 中显示本轮输出类型摘要
             const typeNote = outputTypes.length
                 ? `\n[${agent || "Agent"}] 完成 · ${event.data.total_tokens || 0} tokens · 输出类型: ${outputTypes.join(", ")}`
                 : `\n[${agent || "Agent"}] 完成 · ${event.data.total_tokens || 0} tokens`;
-            if (rbox) {
+            if (rbox && agent !== "PortraitDesigner") {
                 rbox.textContent += typeNote;
                 this._autoScroll(rbox);
             }
@@ -444,6 +519,23 @@ class AgentStream extends HTMLElement {
         const trimmed = str.trim();
         return (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
                (trimmed.startsWith("[") && trimmed.endsWith("]"));
+    }
+
+    _tryExtractJitSummary(data) {
+        // 从 PortraitDesigner 的 completed payload 中提取角色摘要
+        const content = data.content || "";
+        if (typeof content === "string" && this._isJsonLike(content)) {
+            try {
+                const parsed = JSON.parse(content.trim());
+                if (parsed.personality_core) {
+                    return parsed.personality_core.slice(0, 30);
+                }
+                if (parsed.name) {
+                    return parsed.name;
+                }
+            } catch (e) {}
+        }
+        return "";
     }
 
     _tryExtractJsonSummary(jsonStr, agentName) {

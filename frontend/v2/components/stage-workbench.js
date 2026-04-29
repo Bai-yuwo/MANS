@@ -70,6 +70,10 @@ class StageWorkbench extends HTMLElement {
             : "";
 
         container.innerHTML = `
+            <div id="progress-stepper" style="margin-bottom:12px;">
+                ${this._renderStepper()}
+            </div>
+
             <div class="card" style="margin-bottom:16px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                     <div style="display:flex;align-items:center;gap:8px;">
@@ -118,6 +122,100 @@ class StageWorkbench extends HTMLElement {
         this._renderActions();
         this._wireInstructionPanel();
         this._renderConfigPanel();
+    }
+
+    _renderStepper() {
+        const stage = this.project?.stage || "INIT";
+        const stages = [
+            { key: "INIT", label: "初始化" },
+            { key: "PLAN", label: "规划" },
+            { key: "WRITE", label: "写作" },
+            { key: "COMPLETED", label: "完成" },
+        ];
+        const stageOrder = ["INIT", "PLAN", "WRITE", "COMPLETED"];
+        const currentIdx = stageOrder.indexOf(stage);
+
+        // 大阶段节点
+        const stepEls = stages.map((s, idx) => {
+            let state = "pending";
+            if (idx < currentIdx) state = "done";
+            else if (idx === currentIdx) state = "active";
+
+            let icon = "";
+            if (state === "done") icon = "✓";
+            else if (state === "active") icon = "▶";
+            else icon = String(idx + 1);
+
+            return `
+                <div class="stepper-step ${state}">
+                    <div class="stepper-node">${icon}</div>
+                    <div class="stepper-label">${s.label}</div>
+                </div>
+            `;
+        });
+
+        const connectorEls = stages.slice(0, -1).map((_, idx) => {
+            let state = "pending";
+            if (idx < currentIdx) state = "done";
+            else if (idx === currentIdx - 1) state = "active";
+            return `<div class="stepper-connector ${state}"></div>`;
+        });
+
+        const trackItems = [];
+        for (let i = 0; i < stepEls.length; i++) {
+            trackItems.push(stepEls[i]);
+            if (i < connectorEls.length) trackItems.push(connectorEls[i]);
+        }
+
+        // INIT 子阶段
+        let initDetail = "";
+        if (stage === "INIT" && this._lastOverview?.characters) {
+            const chars = this._lastOverview.characters;
+            const fullCount = chars.items?.filter(c => c.is_full_profile).length || 0;
+            const rosterCount = Math.max(0, (chars.count || 0) - fullCount);
+            initDetail = `
+                <div class="stepper-detail">
+                    <span class="stepper-detail-item">
+                        <span class="stepper-dot full"></span>
+                        完整画像 ${fullCount}
+                    </span>
+                    <span class="stepper-detail-item">
+                        <span class="stepper-dot roster"></span>
+                        Roster ${rosterCount}
+                    </span>
+                </div>
+            `;
+        }
+
+        // WRITE 章节进度网格
+        let chapterGrid = "";
+        const outline = this._lastOverview?.outline;
+        const chapterCount = outline?.chapter_count || 0;
+        if (chapterCount > 0) {
+            const currentChapter = this.project?.current_chapter || 0;
+            const cells = [];
+            for (let i = 1; i <= chapterCount; i++) {
+                let cellState = "pending";
+                if (i < currentChapter) cellState = "done";
+                else if (i === currentChapter) cellState = "active";
+                cells.push(`<div class="stepper-chapter-cell ${cellState}" title="第${i}章">${i}</div>`);
+            }
+            chapterGrid = `
+                <div class="stepper-chapter-row">
+                    <span class="stepper-chapter-label">章节</span>
+                    <div class="stepper-chapter-grid">${cells.join("")}</div>
+                    <span class="stepper-chapter-count">${currentChapter}/${chapterCount}</span>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="stepper-container">
+                <div class="stepper-track">${trackItems.join("")}</div>
+                ${initDetail}
+                ${chapterGrid}
+            </div>
+        `;
     }
 
     _renderActions() {
@@ -421,6 +519,10 @@ class StageWorkbench extends HTMLElement {
                     this._kbExpanded[key] = !expanded;
                 });
             });
+
+            // overview 数据更新后刷新步进器（INIT 子阶段 / 章节数）
+            const stepper = this.querySelector("#progress-stepper");
+            if (stepper) stepper.innerHTML = this._renderStepper();
         } catch (e) {
             console.error("加载 KB 概览失败", e);
         }
@@ -541,7 +643,9 @@ class StageWorkbench extends HTMLElement {
         } else if (wasRunning && !this._pumpRunning) {
             this._stopTimer();
         }
-        if (status.bible) this._lastOverview = status;
+        if (status.bible || status.characters || status.outline) {
+            this._lastOverview = { ...(this._lastOverview || {}), ...status };
+        }
         this._render();
         this._loadOverview();
         this._renderChapterReader();

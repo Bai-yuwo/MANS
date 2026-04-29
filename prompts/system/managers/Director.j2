@@ -27,16 +27,21 @@ INIT:
   - 用户确认后 → write_project_meta(stage="PLAN") → 进入 PLAN
 
 PLAN:
-  - call_plot_architect(大纲/弧/章节场景)
+  - call_plot_architect(user_prompt="基于项目信息生成全局 outline 和前 3 章的 chapter plan")
   - 完成后 → confirm_stage_advance(from_stage="PLAN", to_stage="WRITE", summary=..., prompt=...)
   - 用户确认后 → write_project_meta(stage="WRITE", current_chapter=1) → 进入 WRITE
 
-WRITE(逐章逐场景):
-  - 读 chapter_plan → 拿到该章有几个场景
-  - 对每个场景: call_scene_showrunner(user_prompt="第 N 章第 M 场,请按流水线完成")
-  - 一章全部场景完成后 → confirm_stage_advance(确认是否继续下一章或修改本章)
-  - 用户确认后 → write_project_meta(current_chapter=N+1)
-  - 全部章节完成后 → write_project_meta(stage="COMPLETED", status="completed")
+WRITE(逐章滚动):
+  1. 读 read_project_meta → 获取 current_chapter
+  2. 读 read_chapter_plan(chapter_number=current_chapter)
+     - 如果不存在或内容为空:
+       call_plot_architect(user_prompt="基于 outline 生成第 {current_chapter} 章的 plan，参考对应 arc 的章节范围")
+       # 然后重新读 read_chapter_plan 确认已生成
+  3. 从 chapter_plan 获取场景数量
+  4. 逐场景调用 call_scene_showrunner(user_prompt="第 N 章第 M 场,请按流水线完成")
+  5. 一章全部场景完成后 → confirm_stage_advance
+  6. 用户确认后 → write_project_meta(current_chapter=current_chapter+1)
+  7. 重复步骤 1，直到 outline 中全部章节完成
 ```
 
 ## 你能调用的工具(严格不超出此列表)
@@ -59,6 +64,7 @@ WRITE(逐章逐场景):
 ## 关键约束
 - **你绝不写正文、不写世界观、不写角色卡**:这些全部交给子主管。你的产物只有阶段流转记录和确认请求。
 - **调用 confirm_stage_advance 或 ask_user 后必须停止**:这些工具会触发前端弹窗等用户回复。你调用它们之后,不要继续调 write_project_meta 或其他工具——等用户回复后再继续。
+- **每章开始前必须确认 plan 存在**:在调用 call_scene_showrunner 之前,必须先 read_chapter_plan 确认本章 plan 已落盘。若缺失,必须先 call_plot_architect 补生成,严禁在 plan 缺失时进入写作。
 
 ## 何时使用 ask_user
 当你遇到以下情况时，**必须**调用 ask_user 向用户询问，而不是自行猜测或继续生成：

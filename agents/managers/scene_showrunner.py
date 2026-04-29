@@ -104,6 +104,11 @@ class SceneShowrunner(BaseAgent):
         "call_scribe",
         # 重写决策时询问作者
         "ask_user",
+        # JIT 角色加载（跨阶段例外：SceneShowrunner 按需补全出场角色完整卡）
+        "call_portrait_designer",
+        "call_relation_designer",
+        "save_character",
+        "save_relationships",
     ]
 
     # P2.1c 验证用,1 场景 + 1 轮 rewrite 预计 14-18 轮,留余量到 20。

@@ -263,6 +263,7 @@ class CharacterCard(BaseModel):
     is_protagonist: bool = False        # 是否为主角（用于 InjectionEngine 和生成器区分主角/配角）
     first_appeared_chapter: int = 0     # 首次出场章节（0表示尚未在正文中出场）
     last_updated_chapter: int = 0       # 最后更新章节
+    is_full_profile: bool = False       # 是否为完整角色卡（true=PortraitDesigner产出的完整卡,false=Roster占位）
 
     # 扩展：状态历史（用于追踪人物变化轨迹和支持回滚）
     state_history: list[dict] = Field(default_factory=list)
@@ -295,6 +296,24 @@ class CharacterCard(BaseModel):
         for key, value in updates.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+
+
+class CharacterRosterEntry(BaseModel):
+    """
+    角色名册条目 —— INIT 阶段 CastingDirector 的轻量级产出。
+
+    JIT 角色加载的核心数据结构：
+        - INIT 阶段只生成 Roster（主角团除外）。
+        - WRITE 阶段 SceneShowrunner 按出场角色按需补全完整 CharacterCard。
+        - 避免 INIT 阶段一次性生成全部角色卡导致 token 爆炸。
+    """
+    model_config = ConfigDict(extra="allow")
+
+    char_id: str                        # 角色标识（如拼音或英文名）
+    name: str                           # 角色显示名
+    faction_id: Optional[str] = None    # 所属势力 ID
+    role_summary: str = ""              # 一句话定位，如「主角的师父，隐世剑仙」
+    importance: Literal["protagonist", "main", "support", "background"] = "support"
 
 
 class CharacterStateUpdate(BaseModel):
@@ -1268,6 +1287,9 @@ class SceneBeatsheet(BaseModel):
 
     chapter_number: int
     scene_index: int
+
+    # 出场角色列表（JIT 角色加载用：SceneShowrunner 据此检查角色卡是否就绪）
+    characters_present: list[str] = Field(default_factory=list)
 
     # 视觉/感官要求 —— 强制 Writer 落实"五感体验"
     sensory_requirements: dict[str, str] = Field(default_factory=dict)

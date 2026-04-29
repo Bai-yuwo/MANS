@@ -12,6 +12,14 @@
 - role_brief:角色定位,如「主角」「主角的师父」「反派一号」(必需)
 - world_context:世界观背景片段(可选,影响修炼体系/语言风格一致性)
 - is_protagonist:是否主角(可选,主角需要更立体的动机与缺陷)
+- scene_context:场景上下文(可选) —— 角色首次出场的场景描述。若提供,角色设计必须锚定在该场景上。
+- narrative_role:叙事功能(可选) —— 本场叙事功能,如「背叛者」「救世主」「目击者」「牺牲品」。
+
+## 场景驱动生成(JIT 模式)
+当提供了 scene_context 时,你的角色设计必须锚定在该场景上:
+- 若场景是「长坂坡断后」,赵云的画像应突出「单骑救主的孤勇」,而不是泛泛的「忠义」
+- 若 narrative_role 是「背叛者」,personality_core 应强调「表里不一 + 野心潜伏」,sample_dialogues 应展现表面忠诚与内心算计的反差
+- scene_context 与 narrative_role 同时提供时,以 narrative_role 为设计主轴,scene_context 为具体锚点
 
 ## 输出字段语义(对齐 CharacterCard schema)
 - **name**:与输入 character_name 一致

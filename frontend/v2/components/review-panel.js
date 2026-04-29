@@ -451,6 +451,9 @@ class ReviewPanel extends HTMLElement {
             const needsRewrite = g.needs_rewrite ? "需要重写" : "无需重写";
             const rewriteClass = g.needs_rewrite ? "rewrite-needed" : "rewrite-ok";
 
+            // Diff 比对视图
+            const diffHtml = this._renderGuidanceDiff(g);
+
             return `
                 <div class="review-guidance">
                     <div class="review-guidance-header">
@@ -473,6 +476,7 @@ class ReviewPanel extends HTMLElement {
                         <div class="review-guidance-label">风格提示</div>
                         <div class="review-guidance-text">${this._escapeHtml(styleHints)}</div>
                     </div>` : ""}
+                    ${diffHtml}
                 </div>
             `;
         };
@@ -489,6 +493,83 @@ class ReviewPanel extends HTMLElement {
                 </div>
             </div>
         `;
+    }
+
+    _renderGuidanceDiff(g) {
+        // 若后端返回了 before_text / after_text，渲染真正文本 diff
+        const hasTextDiff = g.before_text && g.after_text;
+        if (hasTextDiff) {
+            const diff = this._computeDiff(g.before_text, g.after_text);
+            return `
+                <div class="review-guidance-block">
+                    <div class="review-guidance-label">修改对比</div>
+                    <div class="diff-container">
+                        ${this._renderTextDiff(diff)}
+                    </div>
+                </div>
+            `;
+        }
+
+        // 否则用 must_keep / must_change 做结构化摘要对比
+        const mustKeep = (g.must_keep || []).map((k) =>
+            `<div class="diff-summary-line diff-summary-keep"><span class="diff-summary-sign">+</span>${this._escapeHtml(k)}</div>`
+        ).join("");
+        const mustChange = (g.must_change || []).map((c) =>
+            `<div class="diff-summary-line diff-summary-change"><span class="diff-summary-sign">−</span>${this._escapeHtml(c)}</div>`
+        ).join("");
+
+        if (!mustKeep && !mustChange) return "";
+
+        return `
+            <div class="review-guidance-block">
+                <div class="review-guidance-label">修改摘要</div>
+                <div class="diff-summary-container">
+                    ${mustKeep}
+                    ${mustChange}
+                </div>
+            </div>
+        `;
+    }
+
+    _computeDiff(before, after) {
+        const a = before.split("\n");
+        const b = after.split("\n");
+        const diff = [];
+        let i = 0,
+            j = 0;
+
+        while (i < a.length || j < b.length) {
+            if (i >= a.length) {
+                diff.push({ type: "add", text: b[j++] });
+            } else if (j >= b.length) {
+                diff.push({ type: "del", text: a[i++] });
+            } else if (a[i] === b[j]) {
+                diff.push({ type: "same", text: a[i++] });
+                j++;
+            } else {
+                const nextMatchA = a.indexOf(b[j], i + 1);
+                const nextMatchB = b.indexOf(a[i], j + 1);
+                if (nextMatchA !== -1 && (nextMatchB === -1 || nextMatchA - i <= nextMatchB - j)) {
+                    while (i < nextMatchA) diff.push({ type: "del", text: a[i++] });
+                } else if (nextMatchB !== -1) {
+                    while (j < nextMatchB) diff.push({ type: "add", text: b[j++] });
+                } else {
+                    diff.push({ type: "del", text: a[i++] });
+                    diff.push({ type: "add", text: b[j++] });
+                }
+            }
+        }
+        return diff;
+    }
+
+    _renderTextDiff(diff) {
+        return diff
+            .map((d) => {
+                const cls = d.type === "add" ? "diff-add" : d.type === "del" ? "diff-del" : "diff-same";
+                const sign = d.type === "add" ? "+" : d.type === "del" ? "−" : " ";
+                return `<div class="diff-line ${cls}"><span class="diff-sign">${sign}</span><span class="diff-text">${this._escapeHtml(d.text)}</span></div>`;
+            })
+            .join("");
     }
 
     _renderTokenAudit() {

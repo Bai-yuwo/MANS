@@ -47,6 +47,7 @@ class Director(BaseAgent):
         "read_foreshadowing",
         "list_characters",
         "read_outline",
+        "read_chapter_plan",
         "list_arcs",
         "list_chapters",
         # 图结构查询（检查数据完整性）

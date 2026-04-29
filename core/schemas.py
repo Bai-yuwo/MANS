@@ -264,6 +264,7 @@ class CharacterCard(BaseModel):
     first_appeared_chapter: int = 0     # 首次出场章节（0表示尚未在正文中出场）
     last_updated_chapter: int = 0       # 最后更新章节
     is_full_profile: bool = False       # 是否为完整角色卡（true=PortraitDesigner产出的完整卡,false=Roster占位）
+    importance: Literal["protagonist", "main", "support", "background"] = "support"  # 角色重要性分级（JIT加载用）
 
     # 扩展：状态历史（用于追踪人物变化轨迹和支持回滚）
     state_history: list[dict] = Field(default_factory=list)

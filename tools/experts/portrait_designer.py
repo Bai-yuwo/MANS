@@ -38,6 +38,14 @@ class PortraitDesigner(ExpertTool):
                 "description": "世界观背景片段,帮助语言风格、修炼体系一致。",
             },
             "is_protagonist": {"type": "boolean"},
+            "scene_context": {
+                "type": "string",
+                "description": "角色首次出场的场景描述。若提供,画像将锚定在该场景上。",
+            },
+            "narrative_role": {
+                "type": "string",
+                "description": "本场叙事功能,如'背叛者''救世主''目击者'。",
+            },
         },
         "required": ["character_name", "role_brief"],
         "additionalProperties": False,
